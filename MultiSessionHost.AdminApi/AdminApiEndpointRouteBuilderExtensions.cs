@@ -72,6 +72,73 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 return Results.Ok(session.ToDto(metrics));
             });
 
+        endpoints.MapGet(
+            "/sessions/{id}/ui",
+            async Task<IResult> (string id, HttpContext httpContext, IAdminAuthorizationPolicy authorizationPolicy, ISessionCoordinator sessionCoordinator, CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                return Results.Ok((sessionCoordinator.GetSessionUiState(sessionId) ?? SessionUiState.Create(sessionId)).ToUiDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/ui/raw",
+            async Task<IResult> (string id, HttpContext httpContext, IAdminAuthorizationPolicy authorizationPolicy, ISessionCoordinator sessionCoordinator, CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                return Results.Ok((sessionCoordinator.GetSessionUiState(sessionId) ?? SessionUiState.Create(sessionId)).ToUiRawDto());
+            });
+
+        endpoints.MapPost(
+            "/sessions/{id}/ui/refresh",
+            async Task<IResult> (string id, HttpContext httpContext, IAdminAuthorizationPolicy authorizationPolicy, ISessionCoordinator sessionCoordinator, CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var state = await sessionCoordinator.RefreshSessionUiAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(state.ToUiRefreshDto());
+            });
+
         endpoints.MapPost(
             "/sessions/{id}/start",
             async Task<IResult> (string id, StartSessionRequest? request, HttpContext httpContext, IAdminAuthorizationPolicy authorizationPolicy, ISessionCoordinator sessionCoordinator, CancellationToken cancellationToken) =>

@@ -1,4 +1,5 @@
 using MultiSessionHost.Core.Configuration;
+using MultiSessionHost.Core.Enums;
 
 namespace MultiSessionHost.Tests.Common;
 
@@ -12,6 +13,10 @@ public static class TestOptionsFactory
             HealthLogIntervalMs = 1_000,
             EnableAdminApi = false,
             AdminApiUrl = "http://localhost:5088",
+            DriverMode = DriverMode.NoOp,
+            DesktopSessionMatchingMode = DesktopSessionMatchingMode.WindowTitleAndCommandLine,
+            TestAppBasePort = 7100,
+            EnableUiSnapshots = false,
             Sessions = sessions
         };
 

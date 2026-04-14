@@ -1,3 +1,4 @@
+using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 
 namespace MultiSessionHost.Core.Configuration;
@@ -15,6 +16,14 @@ public sealed class SessionHostOptions
     public bool EnableAdminApi { get; init; }
 
     public string AdminApiUrl { get; init; } = "http://localhost:5088";
+
+    public DriverMode DriverMode { get; init; } = DriverMode.NoOp;
+
+    public DesktopSessionMatchingMode DesktopSessionMatchingMode { get; init; } = DesktopSessionMatchingMode.WindowTitleAndCommandLine;
+
+    public int TestAppBasePort { get; init; } = 7100;
+
+    public bool EnableUiSnapshots { get; init; }
 
     public IReadOnlyList<SessionDefinitionOptions> Sessions { get; init; } = [];
 }

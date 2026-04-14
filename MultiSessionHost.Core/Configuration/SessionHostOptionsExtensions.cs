@@ -1,3 +1,4 @@
+using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 
 namespace MultiSessionHost.Core.Configuration;
@@ -46,6 +47,30 @@ public static class SessionHostOptionsExtensions
         if (options.EnableAdminApi && !Uri.TryCreate(options.AdminApiUrl, UriKind.Absolute, out _))
         {
             error = "AdminApiUrl must be a valid absolute URL when EnableAdminApi is true.";
+            return false;
+        }
+
+        if (!Enum.IsDefined(options.DriverMode))
+        {
+            error = $"DriverMode '{options.DriverMode}' is not valid.";
+            return false;
+        }
+
+        if (!Enum.IsDefined(options.DesktopSessionMatchingMode))
+        {
+            error = $"DesktopSessionMatchingMode '{options.DesktopSessionMatchingMode}' is not valid.";
+            return false;
+        }
+
+        if (options.TestAppBasePort is <= 0 or > 65535)
+        {
+            error = "TestAppBasePort must be between 1 and 65535.";
+            return false;
+        }
+
+        if (options.EnableUiSnapshots && options.DriverMode != DriverMode.DesktopTestApp)
+        {
+            error = "EnableUiSnapshots requires DriverMode=DesktopTestApp.";
             return false;
         }
 
@@ -104,6 +129,17 @@ public static class SessionHostOptionsExtensions
             if (session.InitialBackoffMs <= 0)
             {
                 error = $"Session '{session.SessionId}' must have InitialBackoffMs greater than zero.";
+                return false;
+            }
+        }
+
+        if (options.DriverMode == DriverMode.DesktopTestApp)
+        {
+            var maxPort = options.TestAppBasePort + options.Sessions.Count - 1;
+
+            if (maxPort > 65535)
+            {
+                error = "TestAppBasePort plus configured session count exceeds the maximum TCP port.";
                 return false;
             }
         }

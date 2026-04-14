@@ -20,6 +20,7 @@ public sealed class TestRuntimeContext
         Driver = driver;
         Registry = new InMemorySessionRegistry();
         StateStore = new InMemorySessionStateStore();
+        UiStateStore = new InMemorySessionUiStateStore();
         WorkQueue = new ChannelBasedWorkQueue();
         HealthReporter = new DefaultHealthReporter();
         Scheduler = new RoundRobinSessionScheduler();
@@ -35,6 +36,7 @@ public sealed class TestRuntimeContext
             Options,
             Registry,
             StateStore,
+            UiStateStore,
             Scheduler,
             LifecycleManager,
             WorkQueue,
@@ -52,6 +54,8 @@ public sealed class TestRuntimeContext
     public InMemorySessionRegistry Registry { get; }
 
     public InMemorySessionStateStore StateStore { get; }
+
+    public InMemorySessionUiStateStore UiStateStore { get; }
 
     public ChannelBasedWorkQueue WorkQueue { get; }
 

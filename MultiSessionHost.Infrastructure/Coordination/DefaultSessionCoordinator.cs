@@ -11,6 +11,7 @@ public sealed class DefaultSessionCoordinator : ISessionCoordinator
     private readonly SessionHostOptions _options;
     private readonly ISessionRegistry _sessionRegistry;
     private readonly ISessionStateStore _sessionStateStore;
+    private readonly ISessionUiStateStore _sessionUiStateStore;
     private readonly ISessionScheduler _sessionScheduler;
     private readonly ISessionLifecycleManager _sessionLifecycleManager;
     private readonly IWorkQueue _workQueue;
@@ -24,6 +25,7 @@ public sealed class DefaultSessionCoordinator : ISessionCoordinator
         SessionHostOptions options,
         ISessionRegistry sessionRegistry,
         ISessionStateStore sessionStateStore,
+        ISessionUiStateStore sessionUiStateStore,
         ISessionScheduler sessionScheduler,
         ISessionLifecycleManager sessionLifecycleManager,
         IWorkQueue workQueue,
@@ -34,6 +36,7 @@ public sealed class DefaultSessionCoordinator : ISessionCoordinator
         _options = options;
         _sessionRegistry = sessionRegistry;
         _sessionStateStore = sessionStateStore;
+        _sessionUiStateStore = sessionUiStateStore;
         _sessionScheduler = sessionScheduler;
         _sessionLifecycleManager = sessionLifecycleManager;
         _workQueue = workQueue;
@@ -55,6 +58,7 @@ public sealed class DefaultSessionCoordinator : ISessionCoordinator
         {
             await _sessionRegistry.RegisterAsync(definition, cancellationToken).ConfigureAwait(false);
             await _sessionStateStore.InitializeAsync(SessionRuntimeState.Create(definition, now), cancellationToken).ConfigureAwait(false);
+            await _sessionUiStateStore.InitializeAsync(SessionUiState.Create(definition.Id), cancellationToken).ConfigureAwait(false);
             _healthReporter.RecordRegistration(definition);
         }
 
@@ -123,6 +127,47 @@ public sealed class DefaultSessionCoordinator : ISessionCoordinator
     public SessionSnapshot? GetSession(SessionId sessionId) =>
         GetSessions().FirstOrDefault(snapshot => snapshot.SessionId == sessionId);
 
+    public SessionUiState? GetSessionUiState(SessionId sessionId) =>
+        _sessionUiStateStore.GetAll().FirstOrDefault(state => state.SessionId == sessionId);
+
+    public async Task<SessionUiState> RefreshSessionUiAsync(SessionId sessionId, CancellationToken cancellationToken)
+    {
+        if (!_options.EnableUiSnapshots)
+        {
+            throw new InvalidOperationException("UI snapshots are disabled. Set EnableUiSnapshots=true to refresh UI state.");
+        }
+
+        var session = GetSession(sessionId) ?? throw new InvalidOperationException($"Session '{sessionId}' was not found.");
+
+        if (session.Runtime.CurrentStatus is not (SessionStatus.Starting or SessionStatus.Running or SessionStatus.Paused))
+        {
+            throw new InvalidOperationException($"Session '{sessionId}' must be active before requesting a UI refresh.");
+        }
+
+        var requestedAt = _clock.UtcNow;
+
+        await _sessionUiStateStore.UpdateAsync(
+            sessionId,
+            current => current with
+            {
+                LastRefreshRequestedAtUtc = requestedAt,
+                LastRefreshError = null,
+                LastRefreshErrorAtUtc = null
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        await _sessionLifecycleManager.EnqueueAsync(
+            sessionId,
+            SessionWorkItem.Create(sessionId, SessionWorkItemKind.FetchUiSnapshot, requestedAt, "UI refresh requested."),
+            cancellationToken).ConfigureAwait(false);
+        await _sessionLifecycleManager.EnqueueAsync(
+            sessionId,
+            SessionWorkItem.Create(sessionId, SessionWorkItemKind.ProjectUiState, requestedAt, "UI projection requested."),
+            cancellationToken).ConfigureAwait(false);
+
+        return await WaitForUiRefreshAsync(sessionId, requestedAt, cancellationToken).ConfigureAwait(false);
+    }
+
     public ProcessHealthSnapshot GetProcessHealth() =>
         _healthReporter.CreateSnapshot(GetSessions(), _clock.UtcNow);
 
@@ -135,5 +180,28 @@ public sealed class DefaultSessionCoordinator : ISessionCoordinator
 
         _logger.LogInformation("Coordinator shutdown requested. Draining sessions.");
         await _sessionLifecycleManager.StopAllAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<SessionUiState> WaitForUiRefreshAsync(SessionId sessionId, DateTimeOffset requestedAt, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var state = await _sessionUiStateStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"UI state for session '{sessionId}' was not found.");
+
+            if (state.LastRefreshCompletedAtUtc is not null && state.LastRefreshCompletedAtUtc >= requestedAt)
+            {
+                return state;
+            }
+
+            if (state.LastRefreshErrorAtUtc is not null && state.LastRefreshErrorAtUtc >= requestedAt)
+            {
+                return state;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(20), cancellationToken).ConfigureAwait(false);
+        }
     }
 }

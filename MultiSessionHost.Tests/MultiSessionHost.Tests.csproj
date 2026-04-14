@@ -1,7 +1,7 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -26,7 +26,10 @@
     <ProjectReference Include="..\MultiSessionHost.AdminApi\MultiSessionHost.AdminApi.csproj" />
     <ProjectReference Include="..\MultiSessionHost.Contracts\MultiSessionHost.Contracts.csproj" />
     <ProjectReference Include="..\MultiSessionHost.Core\MultiSessionHost.Core.csproj" />
+    <ProjectReference Include="..\MultiSessionHost.Desktop\MultiSessionHost.Desktop.csproj" />
     <ProjectReference Include="..\MultiSessionHost.Infrastructure\MultiSessionHost.Infrastructure.csproj" />
+    <ProjectReference Include="..\MultiSessionHost.TestDesktopApp\MultiSessionHost.TestDesktopApp.csproj" />
+    <ProjectReference Include="..\MultiSessionHost.UiModel\MultiSessionHost.UiModel.csproj" />
     <ProjectReference Include="..\MultiSessionHost.Worker\MultiSessionHost.Worker.csproj" />
   </ItemGroup>
 

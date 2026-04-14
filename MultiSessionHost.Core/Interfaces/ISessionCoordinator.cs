@@ -20,6 +20,10 @@ public interface ISessionCoordinator
 
     SessionSnapshot? GetSession(SessionId sessionId);
 
+    SessionUiState? GetSessionUiState(SessionId sessionId);
+
+    Task<SessionUiState> RefreshSessionUiAsync(SessionId sessionId, CancellationToken cancellationToken);
+
     ProcessHealthSnapshot GetProcessHealth();
 
     Task ShutdownAsync(CancellationToken cancellationToken);

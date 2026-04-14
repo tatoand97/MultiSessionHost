@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.AdminApi;
+using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Infrastructure.DependencyInjection;
 
 namespace MultiSessionHost.Worker;
@@ -56,7 +56,6 @@ public static class Program
         }
 
         var host = hostBuilder.Build();
-
         await host.RunAsync().ConfigureAwait(false);
     }
 
@@ -66,9 +65,9 @@ public static class Program
         var options = new SessionHostOptions();
         builder.Configuration.GetSection(SessionHostOptions.SectionName).Bind(options);
 
-        if (options.EnableAdminApi && !Uri.TryCreate(options.AdminApiUrl, UriKind.Absolute, out _))
+        if (!options.TryValidate(out var error))
         {
-            throw new InvalidOperationException("AdminApiUrl must be a valid absolute URL when EnableAdminApi is true.");
+            throw new InvalidOperationException(error);
         }
 
         return options;
