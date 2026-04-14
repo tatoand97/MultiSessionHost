@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using MultiSessionHost.Core.Configuration;
+using MultiSessionHost.AdminApi;
 using MultiSessionHost.Infrastructure.DependencyInjection;
 
 namespace MultiSessionHost.Worker;
@@ -7,7 +10,8 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
-        var host = Host.CreateDefaultBuilder(args)
+        var bootstrapOptions = LoadBootstrapOptions(args);
+        var hostBuilder = Host.CreateDefaultBuilder(args)
             .UseWindowsService(options => options.ServiceName = "MultiSessionHost.Worker")
             .ConfigureLogging(
                 logging =>
@@ -32,10 +36,41 @@ public static class Program
 
                     services.AddSingleton(static serviceProvider => serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<SessionHostOptions>>().Value);
                     services.AddMultiSessionHostRuntime();
+                    services.AddAdminApiServices();
                     services.AddHostedService<WorkerHostService>();
-                })
-            .Build();
+                });
+
+        if (bootstrapOptions.EnableAdminApi)
+        {
+            hostBuilder.ConfigureWebHostDefaults(
+                webBuilder =>
+                {
+                    webBuilder.UseUrls(bootstrapOptions.AdminApiUrl);
+                    webBuilder.Configure(
+                        app =>
+                        {
+                            app.UseRouting();
+                            app.UseEndpoints(static endpoints => endpoints.MapAdminApiEndpoints());
+                        });
+                });
+        }
+
+        var host = hostBuilder.Build();
 
         await host.RunAsync().ConfigureAwait(false);
+    }
+
+    private static SessionHostOptions LoadBootstrapOptions(string[] args)
+    {
+        var builder = Host.CreateApplicationBuilder(args);
+        var options = new SessionHostOptions();
+        builder.Configuration.GetSection(SessionHostOptions.SectionName).Bind(options);
+
+        if (options.EnableAdminApi && !Uri.TryCreate(options.AdminApiUrl, UriKind.Absolute, out _))
+        {
+            throw new InvalidOperationException("AdminApiUrl must be a valid absolute URL when EnableAdminApi is true.");
+        }
+
+        return options;
     }
 }

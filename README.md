@@ -1,37 +1,48 @@
 # MultiSessionHost
 
-## 1. Resumen del proyecto
+## Resumen
 
-`MultiSessionHost` es una base Worker-first para orquestar multiples sesiones logicas concurrentes sobre `Generic Host` en .NET 10. El enfoque esta centrado en el runtime del host, el scheduler, el registro de sesiones, el lifecycle, la observabilidad y la extensibilidad, sin incluir logica de bot, automatizacion real ni integraciones con clientes de terceros.
+`MultiSessionHost` es una base **Worker-first** sobre `Generic Host` en .NET 10 para orquestar multiples sesiones logicas concurrentes. El `Worker` es el proceso principal: ejecuta el loop del scheduler, el loop de health, el runtime de sesiones y, cuando se habilita, tambien hospeda la API HTTP de administracion en el **mismo proceso** y sobre el **mismo contenedor DI**.
 
-Caracteristicas principales:
+Este repositorio no incluye logica de bot, OCR, input simulation, hooks, lectura de memoria, integracion con juegos ni UI visual. El foco esta en runtime, coordinacion, lifecycle, colas, health y extensibilidad.
 
-- `Generic Host` como base comun.
-- `Worker Service` como runtime principal.
-- soporte para ejecucion como consola y como `Windows Service`.
-- scheduler round-robin con fairness basica.
-- colas por sesion con `System.Threading.Channels`.
-- health y metricas simples en memoria.
-- `AdminApi` opcional y separada del Worker.
-- implementaciones `in-memory` y drivers mock/no-op listos para reemplazar.
+## Arquitectura actual
 
-## 2. Arquitectura
+### Principio clave
 
-La solucion separa contratos, core, infraestructura y hosts. `MultiSessionHost.Worker` es el entrypoint principal y coordina el runtime del proceso. `MultiSessionHost.Core` modela sesiones, estados, snapshots, scheduler decisions e interfaces. `MultiSessionHost.Infrastructure` implementa registro, state store, colas, scheduler, lifecycle manager, coordinator y drivers. `MultiSessionHost.AdminApi` expone administracion local opcional sobre el mismo conjunto de servicios.
+Ya no existe el problema de "runtime separado in-memory".
 
-## 3. Arbol de archivos
+- `MultiSessionHost.Worker` es el unico proceso principal.
+- `MultiSessionHost.AdminApi` ya no crea host propio ni runtime propio.
+- `MultiSessionHost.AdminApi` ahora es una libreria compartida que expone:
+  - `AddAdminApiServices()`
+  - `MapAdminApiEndpoints()`
+- Cuando `EnableAdminApi=true`, el Worker agrega Kestrel y mapea esos endpoints dentro del mismo proceso.
+- Cuando `EnableAdminApi=false`, el Worker no registra servidor HTTP ni expone endpoints.
+
+### Fuente unica de verdad
+
+El Worker y la API comparten exactamente las mismas instancias singleton para:
+
+- `ISessionCoordinator`
+- `ISessionRegistry`
+- `ISessionStateStore`
+- `IWorkQueue`
+- health y metricas
+
+Eso significa que un `POST /sessions/{id}/start` impacta el runtime real del Worker y no un segundo runtime aislado.
+
+## Estructura de la solucion
 
 ```text
 MultiSessionHost.sln
 README.md
 MultiSessionHost.AdminApi/
-  AdminApiRuntimeService.cs
-  appsettings.Development.json
-  appsettings.json
+  AdminApiEndpointRouteBuilderExtensions.cs
+  AdminApiServiceCollectionExtensions.cs
   Mapping/
     DtoMappingExtensions.cs
   MultiSessionHost.AdminApi.csproj
-  Program.cs
   Security/
     AllowAllAdminAuthorizationPolicy.cs
     IAdminAuthorizationPolicy.cs
@@ -108,10 +119,12 @@ MultiSessionHost.Tests/
     FakeClock.cs
     TestOptionsFactory.cs
     TestRuntimeContext.cs
-    TestSessionDriver.cs
     TestWait.cs
+    WorkerHostHarness.cs
   Coordination/
     SessionCoordinatorTests.cs
+  Hosting/
+    WorkerAdminApiIntegrationTests.cs
   Lifecycle/
     GracefulShutdownTests.cs
     SessionIsolationTests.cs
@@ -133,14 +146,126 @@ MultiSessionHost.Worker/
   WorkerHostService.cs
 ```
 
-## 4. Como ejecutar en consola
+## Flujo de hosting
+
+### `EnableAdminApi=false`
+
+```text
+Worker process
+  -> Generic Host
+  -> WorkerHostService
+  -> scheduler loop
+  -> health loop
+  -> session runtime
+  -> sin servidor HTTP
+```
+
+### `EnableAdminApi=true`
+
+```text
+Worker process
+  -> Generic Host
+  -> WorkerHostService
+  -> scheduler loop
+  -> health loop
+  -> session runtime
+  -> Kestrel en el mismo proceso
+  -> endpoints Admin API usando el mismo ISessionCoordinator
+```
+
+## Diagrama ASCII
+
+```text
+MultiSessionHost.Worker (single process)
+  |
+  +-- Generic Host
+      |
+      +-- WorkerHostService
+      |    |
+      |    +-- scheduler loop
+      |    +-- health loop
+      |    +-- ISessionCoordinator (DefaultSessionCoordinator)
+      |
+      +-- Optional in-process Kestrel (only when EnableAdminApi=true)
+           |
+           +-- Admin API endpoints
+                |
+                +-- IAdminAuthorizationPolicy
+                +-- ISessionCoordinator  -----+
+                +-- ISessionRegistry      --- |
+                +-- ISessionStateStore    --- | shared singleton runtime
+                +-- IWorkQueue            --- |
+                +-- health / metrics      ---+
+```
+
+## Configuracion
+
+La seccion de configuracion sigue siendo `MultiSessionHost`.
+
+```json
+{
+  "MultiSessionHost": {
+    "MaxGlobalParallelSessions": 2,
+    "SchedulerIntervalMs": 250,
+    "HealthLogIntervalMs": 5000,
+    "EnableAdminApi": true,
+    "AdminApiUrl": "http://localhost:5088",
+    "Sessions": [
+      {
+        "SessionId": "alpha",
+        "DisplayName": "Alpha Session",
+        "Enabled": true,
+        "TickIntervalMs": 1000,
+        "StartupDelayMs": 250,
+        "MaxParallelWorkItems": 1,
+        "MaxRetryCount": 3,
+        "InitialBackoffMs": 1000,
+        "Tags": [ "primary", "mock" ]
+      }
+    ]
+  }
+}
+```
+
+### Reglas de Admin API
+
+- `EnableAdminApi=false`: el Worker no expone HTTP.
+- `EnableAdminApi=true`: el Worker expone la API local en `AdminApiUrl`.
+- `AdminApiUrl` debe ser URL absoluta valida cuando la API esta habilitada.
+
+## Endpoints preservados
+
+Cuando la API esta habilitada, el Worker expone:
+
+- `GET /health`
+- `GET /sessions`
+- `GET /sessions/{id}`
+- `POST /sessions/{id}/start`
+- `POST /sessions/{id}/stop`
+- `POST /sessions/{id}/pause`
+- `POST /sessions/{id}/resume`
+- `GET /metrics`
+
+Todos operan contra el mismo `ISessionCoordinator` del Worker.
+
+## Seguridad
+
+La politica por defecto sigue siendo simple:
+
+- `AllowAllAdminAuthorizationPolicy`
+
+Se mantiene desacoplada por `IAdminAuthorizationPolicy` para poder reemplazarla despues sin tocar el wiring del Worker ni los endpoints.
+
+## Como correr en consola
 
 ```powershell
 dotnet build .\MultiSessionHost.sln
 dotnet run --project .\MultiSessionHost.Worker\MultiSessionHost.Worker.csproj
 ```
 
-## 5. Como instalar como Windows Service
+Si `EnableAdminApi=true`, la API queda disponible en `AdminApiUrl` dentro del mismo proceso del Worker.
+
+## Como correr como Windows Service
 
 Publica primero el Worker:
 
@@ -176,110 +301,51 @@ Stop-Service -Name "MultiSessionHost"
 sc.exe delete MultiSessionHost
 ```
 
-## 6. Como ejecutar la AdminApi
+## Como probar localmente
+
+### Verificar build y tests
 
 ```powershell
-dotnet run --project .\MultiSessionHost.AdminApi\MultiSessionHost.AdminApi.csproj
+dotnet build .\MultiSessionHost.sln
+dotnet test .\MultiSessionHost.Tests\MultiSessionHost.Tests.csproj
 ```
 
-Endpoints:
+### Probar la API en el mismo proceso del Worker
 
-- `GET /health`
-- `GET /sessions`
-- `GET /sessions/{id}`
-- `POST /sessions/{id}/start`
-- `POST /sessions/{id}/stop`
-- `POST /sessions/{id}/pause`
-- `POST /sessions/{id}/resume`
-- `GET /metrics`
-
-Nota: la `AdminApi` es un host opcional separado. En esta base comparte la misma infraestructura `in-memory`, asi que cuando corre aparte administra su propio runtime local.
-
-## 7. Como agregar una nueva implementacion de `ISessionDriver`
-
-1. crear una clase en `MultiSessionHost.Infrastructure/Drivers/` que implemente `ISessionDriver`.
-2. implementar `AttachAsync`, `DetachAsync` y `ExecuteWorkItemAsync`.
-3. registrar la implementacion en `ServiceCollectionExtensions.cs`.
-4. reemplazar el binding por defecto de `ISessionDriver` si quieres que sea la activa.
-5. agregar pruebas usando `MultiSessionHost.Tests/Common/TestRuntimeContext.cs` como referencia.
-
-## 8. Que partes son mock/stub
-
-- `NoOpSessionDriver`: no hace trabajo real.
-- `MockDesktopSessionAdapter`: solo simula attach/detach/ticks.
-- `InMemorySessionRegistry`: no persiste fuera del proceso.
-- `InMemorySessionStateStore`: no persiste fuera del proceso.
-- `DefaultHealthReporter`: metricas simples solo en memoria.
-- `AdminApi`: sin autenticacion real; usa `AllowAllAdminAuthorizationPolicy`.
-
-## 9. Futuras extensiones
-
-- store persistente para estado y metricas.
-- scheduler con prioridades y quotas.
-- policy engine por tags o grupos.
-- autenticacion y autorizacion real en `AdminApi`.
-- exportacion de metricas a OpenTelemetry/Prometheus.
-- drivers especializados por dominio a traves de `ISessionDriver`.
-- coordinacion distribuida y stores remotos.
-
-## 10. Diagrama ASCII de arquitectura
-
-```text
-MultiSessionHost.Worker
-  |
-  +-- WorkerHostService
-      |
-      +-- ISessionCoordinator (DefaultSessionCoordinator)
-          |
-          +-- ISessionRegistry (InMemorySessionRegistry)
-          +-- ISessionStateStore (InMemorySessionStateStore)
-          +-- ISessionScheduler (RoundRobinSessionScheduler)
-          +-- ISessionLifecycleManager (DefaultSessionLifecycleManager)
-          |    |
-          |    +-- IWorkQueue (ChannelBasedWorkQueue)
-          |    +-- ISessionDriver (NoOpSessionDriver / MockDesktopSessionAdapter)
-          |
-          +-- IHealthReporter (DefaultHealthReporter)
-          +-- IClock (SystemClock)
-
-MultiSessionHost.AdminApi
-  |
-  +-- Minimal API endpoints
-      |
-      +-- IAdminAuthorizationPolicy
-      +-- ISessionCoordinator
-```
-
-## Configuracion de ejemplo
+1. En `MultiSessionHost.Worker/appsettings.json` o `appsettings.Development.json`, fija:
 
 ```json
 {
   "MultiSessionHost": {
-    "MaxGlobalParallelSessions": 2,
-    "SchedulerIntervalMs": 250,
-    "HealthLogIntervalMs": 5000,
     "EnableAdminApi": true,
-    "AdminApiUrl": "http://localhost:5088",
-    "Sessions": [
-      {
-        "SessionId": "alpha",
-        "DisplayName": "Alpha Session",
-        "Enabled": true,
-        "TickIntervalMs": 1000,
-        "StartupDelayMs": 250,
-        "MaxParallelWorkItems": 1,
-        "MaxRetryCount": 3,
-        "InitialBackoffMs": 1000,
-        "Tags": [ "primary", "mock" ]
-      }
-    ]
+    "AdminApiUrl": "http://localhost:5088"
   }
 }
 ```
 
-## Estado actual
+2. Inicia el Worker:
 
-La solucion compila y la suite de pruebas cubre:
+```powershell
+dotnet run --project .\MultiSessionHost.Worker\MultiSessionHost.Worker.csproj
+```
+
+3. Llama los endpoints:
+
+```powershell
+Invoke-RestMethod http://localhost:5088/health
+Invoke-RestMethod http://localhost:5088/sessions
+Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/start
+Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/pause
+Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/resume
+Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/stop
+Invoke-RestMethod http://localhost:5088/metrics
+```
+
+4. Para deshabilitar la API, cambia `EnableAdminApi` a `false` y reinicia el Worker.
+
+## Estado actual de pruebas
+
+La suite valida:
 
 - scheduler round-robin
 - transiciones de estado
@@ -289,3 +355,7 @@ La solucion compila y la suite de pruebas cubre:
 - aislamiento entre sesiones
 - graceful shutdown
 - queue draining
+- `EnableAdminApi=false` no expone servidor HTTP
+- `EnableAdminApi=true` expone la API en el mismo proceso del Worker
+- `start/stop/pause/resume` cambian el estado real del Worker
+- `/health` y `/metrics` reflejan el mismo estado interno del Worker

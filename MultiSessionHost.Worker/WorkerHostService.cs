@@ -26,7 +26,7 @@ public sealed class WorkerHostService : BackgroundService
         if (_options.EnableAdminApi)
         {
             _logger.LogInformation(
-                "Admin API is enabled in configuration and expected to run separately at {AdminApiUrl}.",
+                "Admin API is enabled and running in-process at {AdminApiUrl}.",
                 _options.AdminApiUrl);
         }
 

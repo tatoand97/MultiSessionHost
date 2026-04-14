@@ -16,4 +16,19 @@ public static class TestWait
             await Task.Delay(20);
         }
     }
+
+    public static async Task UntilAsync(Func<Task<bool>> predicate, TimeSpan timeout, string failureMessage)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+
+        while (!await predicate().ConfigureAwait(false))
+        {
+            if (DateTimeOffset.UtcNow - startedAt > timeout)
+            {
+                throw new Xunit.Sdk.XunitException(failureMessage);
+            }
+
+            await Task.Delay(20).ConfigureAwait(false);
+        }
+    }
 }
