@@ -206,4 +206,59 @@ public sealed class SessionHostOptionsValidationTests
         Assert.False(valid);
         Assert.Contains("MaxConcurrentGlobalTargetOperations", error);
     }
+
+    [Fact]
+    public void TryValidate_AcceptsConfiguredRiskRules()
+    {
+        var options = new SessionHostOptions
+        {
+            RiskClassification = TestOptionsFactory.GenericRiskClassification(),
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.True(valid, error);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenRiskClassificationHasNoRules()
+    {
+        var options = new SessionHostOptions
+        {
+            RiskClassification = new RiskClassificationOptions
+            {
+                EnableRiskClassification = true
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("Rules", error);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenRiskRuleNamesAreDuplicated()
+    {
+        var options = new SessionHostOptions
+        {
+            RiskClassification = new RiskClassificationOptions
+            {
+                EnableRiskClassification = true,
+                Rules =
+                [
+                    new RiskRuleOptions { RuleName = "dup", MatchByName = ["safe"] },
+                    new RiskRuleOptions { RuleName = "dup", MatchByType = ["Warning"] }
+                ]
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("duplicated", error, StringComparison.OrdinalIgnoreCase);
+    }
 }

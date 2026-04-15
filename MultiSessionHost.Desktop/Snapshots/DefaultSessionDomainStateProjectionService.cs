@@ -3,6 +3,7 @@ using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Targets;
 
 namespace MultiSessionHost.Desktop.Snapshots;
@@ -16,9 +17,10 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
         SessionUiState? uiState,
         DesktopSessionAttachment? attachment,
         UiSemanticExtractionResult? semanticExtraction,
+        RiskAssessmentResult? riskAssessment,
         DateTimeOffset now)
     {
-        var warnings = BuildWarnings(snapshot, uiState, attachment, semanticExtraction);
+        var warnings = BuildWarnings(snapshot, uiState, attachment, semanticExtraction, riskAssessment);
         var hasPlannedWork = uiState?.PlannedWorkItems.Count > 0;
         var semanticTransit = semanticExtraction?.TransitStates
             .OrderByDescending(static state => state.Confidence)
@@ -42,6 +44,17 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
             .Where(static alert => alert.Visible)
             .OrderByDescending(static alert => alert.Severity)
             .ThenByDescending(static alert => alert.Confidence)
+            .FirstOrDefault();
+        var strongestThreat = riskAssessment?.Entities
+            .Where(static entity => entity.Disposition == RiskDisposition.Threat)
+            .OrderByDescending(static entity => entity.Severity)
+            .ThenByDescending(static entity => entity.Priority)
+            .ThenByDescending(static entity => entity.Confidence)
+            .FirstOrDefault();
+        var topRiskEntity = riskAssessment?.Entities
+            .OrderByDescending(static entity => entity.Priority)
+            .ThenByDescending(static entity => entity.Severity)
+            .ThenByDescending(static entity => entity.Confidence)
             .FirstOrDefault();
         var strongestResource = semanticExtraction?.Resources
             .OrderByDescending(static resource => resource.Critical)
@@ -81,11 +94,18 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
             },
             Threat = current.Threat with
             {
-                Severity = MapThreatSeverity(semanticAlert?.Severity),
-                UnknownCount = presence?.Count,
-                IsSafe = semanticAlert is null && (semanticExtraction?.Alerts.Count ?? 0) == 0 ? true : null,
-                LastThreatChangedAtUtc = semanticAlert is not null ? now : current.Threat.LastThreatChangedAtUtc,
-                Signals = BuildThreatSignals(warnings, semanticAlert, semanticExtraction)
+                Severity = MapThreatSeverity(strongestThreat?.Severity, semanticAlert?.Severity),
+                UnknownCount = riskAssessment?.Summary.UnknownCount ?? presence?.Count,
+                NeutralCount = riskAssessment?.Summary.SafeCount ?? current.Threat.NeutralCount,
+                HostileCount = riskAssessment?.Summary.ThreatCount ?? current.Threat.HostileCount,
+                IsSafe = riskAssessment is not null
+                    ? riskAssessment.Summary.ThreatCount == 0 && riskAssessment.Summary.UnknownCount == 0
+                    : semanticAlert is null && (semanticExtraction?.Alerts.Count ?? 0) == 0 ? true : null,
+                LastThreatChangedAtUtc = strongestThreat is not null || semanticAlert is not null ? now : current.Threat.LastThreatChangedAtUtc,
+                Signals = BuildThreatSignals(warnings, semanticAlert, semanticExtraction, riskAssessment),
+                TopSuggestedPolicy = topRiskEntity?.SuggestedPolicy.ToString(),
+                TopEntityLabel = topRiskEntity?.Name,
+                TopEntityType = topRiskEntity?.Type
             },
             Target = current.Target with
             {
@@ -170,7 +190,8 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
         SessionSnapshot snapshot,
         SessionUiState? uiState,
         DesktopSessionAttachment? attachment,
-        UiSemanticExtractionResult? semanticExtraction)
+        UiSemanticExtractionResult? semanticExtraction,
+        RiskAssessmentResult? riskAssessment)
     {
         var warnings = new List<string>();
 
@@ -215,13 +236,23 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
             warnings.AddRange(semanticExtraction.Warnings);
         }
 
+        if (riskAssessment is null)
+        {
+            warnings.Add("No risk assessment result was available during domain projection.");
+        }
+        else
+        {
+            warnings.AddRange(riskAssessment.Warnings);
+        }
+
         return warnings.ToArray();
     }
 
     private static IReadOnlyList<string> BuildThreatSignals(
         IReadOnlyList<string> warnings,
         DetectedAlert? alert,
-        UiSemanticExtractionResult? semanticExtraction)
+        UiSemanticExtractionResult? semanticExtraction,
+        RiskAssessmentResult? riskAssessment)
     {
         var signals = new List<string>(warnings);
 
@@ -235,11 +266,40 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
             signals.Add($"Presence entities detected: {semanticExtraction.PresenceEntities.Count}");
         }
 
+        if (riskAssessment?.Summary is { } summary)
+        {
+            signals.Add($"Risk summary: safe={summary.SafeCount}, unknown={summary.UnknownCount}, threat={summary.ThreatCount}, highest={summary.HighestSeverity}, priority={summary.HighestPriority}, policy={summary.TopSuggestedPolicy}.");
+        }
+
+        foreach (var entity in riskAssessment?.Entities.Take(3) ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(entity.MatchedRuleName))
+            {
+                signals.Add($"Risk rule '{entity.MatchedRuleName}' matched '{entity.Name}' with policy {entity.SuggestedPolicy}.");
+            }
+
+            foreach (var reason in entity.Reasons.Take(2))
+            {
+                signals.Add($"Risk reason for '{entity.Name}': {reason}");
+            }
+        }
+
         return signals.Distinct(StringComparer.Ordinal).ToArray();
     }
 
-    private static ThreatSeverity MapThreatSeverity(AlertSeverity? severity) =>
-        severity switch
+    private static ThreatSeverity MapThreatSeverity(RiskSeverity? riskSeverity, AlertSeverity? alertSeverity) =>
+        riskSeverity switch
+        {
+            RiskSeverity.Low => ThreatSeverity.Low,
+            RiskSeverity.Moderate => ThreatSeverity.Moderate,
+            RiskSeverity.High => ThreatSeverity.High,
+            RiskSeverity.Critical => ThreatSeverity.Critical,
+            RiskSeverity.Unknown => MapThreatSeverity(alertSeverity),
+            _ => MapThreatSeverity(alertSeverity)
+        };
+
+    private static ThreatSeverity MapThreatSeverity(AlertSeverity? alertSeverity) =>
+        alertSeverity switch
         {
             AlertSeverity.Info => ThreatSeverity.Low,
             AlertSeverity.Warning => ThreatSeverity.Moderate,

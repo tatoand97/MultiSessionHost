@@ -117,6 +117,20 @@ No incluye ni pretende incluir:
 - `ISessionSemanticExtractionStore`
   - mantiene el último resultado semántico por `SessionId`
   - permite inspección Admin API separada del estado de dominio final
+- `IRiskClassificationPipeline`
+  - capa dedicada encima de la extracción semántica
+  - construye candidatos de riesgo, aplica reglas configuradas y persiste `RiskAssessmentResult`
+- `IRiskCandidateBuilder`
+  - convierte `DetectedTarget`, `DetectedPresenceEntity`, `DetectedAlert` y otras señales semánticas en `RiskCandidate`
+- `IRiskRuleProvider`
+  - carga reglas configurables por nombre, tipo y tags
+  - valida nombres duplicados, prioridades y matchers vacíos
+- `IRiskClassifier`
+  - clasifica entidades como `Safe`, `Unknown` o `Threat`
+  - asigna severidad, prioridad y política sugerida
+- `ISessionRiskAssessmentStore`
+  - mantiene la última evaluación de riesgo por `SessionId`
+  - permite inspección Admin API separada de la extracción semántica raw
 
 ## Flujo runtime
 
@@ -130,6 +144,11 @@ Worker session
   -> detector extractors
   -> UiSemanticExtractionResult
   -> semantic extraction store
+  -> risk candidate builder
+  -> risk rules
+  -> risk classifier
+  -> RiskAssessmentResult
+  -> risk assessment store
   -> planned work items
   -> domain projection
   -> SessionDomainStateStore
@@ -161,6 +180,7 @@ Esto evita que `DefaultSessionDomainStateProjectionService` acumule traversal ra
 - metadata runtime
 - `SessionUiState`
 - `UiSemanticExtractionResult`
+- `RiskAssessmentResult`
 - fallbacks conservadores
 
 ### Extracción semántica
@@ -182,6 +202,82 @@ Detectores incluidos:
 - `ResourceCapabilityDetectorExtractor`: recursos con porcentajes/valores y capacidades enabled/disabled/active/cooling-down.
 - `PresenceEntityDetectorExtractor`: colecciones de entidades presentes/cercanas.
 
+### Clasificación de riesgo
+
+La clasificación de riesgo vive en `MultiSessionHost.Desktop/Risk` y es una capa separada de los extractores. No reemplaza `IUiSemanticExtractionPipeline` ni agrega lógica de clasificación a los detectores: toma el `UiSemanticExtractionResult` ya producido y lo transforma en candidatos genéricos evaluables.
+
+Modelos principales:
+
+- `RiskCandidate`: entidad candidata con `CandidateId`, `SessionId`, `Source`, `Name`, `Type`, `Tags`, `Signals`, `Confidence` y metadata.
+- `RiskRule`: regla configurada por nombre, tipo y tags.
+- `RiskEntityAssessment`: clasificación por entidad con disposition, severity, priority, suggested policy, regla aplicada y razones.
+- `RiskAssessmentSummary`: conteos safe/unknown/threat, severidad más alta, prioridad más alta, política superior y top candidate.
+- `RiskAssessmentResult`: resultado persistido por sesión.
+
+Las fuentes soportadas son genéricas: `Target`, `Presence`, `Alert`, `Transit`, `Resource` y `Capability`. Los targets derivan nombre desde label, tipo desde kind y tags como `selected`, `active` o `focused`. Las presencias derivan nombre/tipo/membership/status/count. Las alertas usan message, severity/source y tags como `alert`, `warning`, `error` o `critical`.
+
+### Reglas de riesgo
+
+La configuración vive bajo `MultiSessionHost:RiskClassification`:
+
+```json
+{
+  "EnableRiskClassification": true,
+  "DefaultUnknownDisposition": "Unknown",
+  "DefaultUnknownSeverity": "Unknown",
+  "DefaultUnknownPolicy": "Observe",
+  "MaxReturnedEntities": 100,
+  "RequireExplicitSafeMatch": true,
+  "Rules": [
+    {
+      "RuleName": "safe-label",
+      "Enabled": true,
+      "MatchByName": [ "trusted", "safe", "allowed" ],
+      "NameMatchMode": "Contains",
+      "Disposition": "Safe",
+      "Severity": "Low",
+      "Priority": 10,
+      "SuggestedPolicy": "Ignore",
+      "Reason": "Configured safe label."
+    },
+    {
+      "RuleName": "unknown-tag",
+      "Enabled": true,
+      "MatchByTags": [ "unknown" ],
+      "Disposition": "Unknown",
+      "Severity": "Low",
+      "Priority": 100,
+      "SuggestedPolicy": "Observe",
+      "Reason": "Unknown-tagged candidates should be observed."
+    },
+    {
+      "RuleName": "warning-type",
+      "Enabled": true,
+      "MatchByType": [ "Warning", "Critical" ],
+      "TypeMatchMode": "Exact",
+      "Disposition": "Threat",
+      "Severity": "Critical",
+      "Priority": 800,
+      "SuggestedPolicy": "Withdraw",
+      "Reason": "Warning and critical typed candidates require withdrawal."
+    },
+    {
+      "RuleName": "priority-label",
+      "Enabled": true,
+      "MatchByName": [ "priority" ],
+      "NameMatchMode": "Contains",
+      "Disposition": "Threat",
+      "Severity": "High",
+      "Priority": 900,
+      "SuggestedPolicy": "Prioritize",
+      "Reason": "Priority-labeled candidates should be handled first."
+    }
+  ]
+}
+```
+
+Matching is deterministic. Rules are evaluated in configured order and first match wins. When a rule supplies more than one matcher family, the families combine with AND semantics: name must match if configured, type must match if configured, and tags must match if configured. `MatchByTags` defaults to any tag; set `RequireAllTags=true` to require every configured tag. Name/type match modes are `Exact`, `Contains`, `StartsWith` and `EndsWith`. If no rule matches, the candidate is classified from the default unknown settings and carries a reason explaining that no explicit rule matched.
+
 ### Integración en refresh
 
 La actualización ocurre en `DefaultSessionUiRefreshService.ProjectAsync`, después de:
@@ -193,7 +289,9 @@ La actualización ocurre en `DefaultSessionUiRefreshService.ProjectAsync`, despu
 5. persistir `SessionUiState`
 6. ejecutar `IUiSemanticExtractionPipeline` sobre el `UiTree`
 7. persistir `UiSemanticExtractionResult` en `ISessionSemanticExtractionStore`
-8. proyectar y persistir `SessionDomainState`
+8. ejecutar `IRiskClassificationPipeline`
+9. persistir `RiskAssessmentResult` en `ISessionRiskAssessmentStore`
+10. proyectar y persistir `SessionDomainState` usando extracción semántica y evaluación de riesgo
 
 Diagrama actualizado:
 
@@ -205,10 +303,17 @@ Ui snapshot
   -> detector extractors
   -> UiSemanticExtractionResult
   -> semantic extraction store
+  -> risk candidate builder
+  -> risk rules
+  -> risk classifier
+  -> RiskAssessmentResult
+  -> risk assessment store
   -> domain projection
   -> SessionDomainState
   -> Admin API inspection
 ```
+
+`DefaultSessionDomainStateProjectionService` consume `RiskAssessmentResult` de forma opcional. Cuando existe, `ThreatState.Severity` viene de la amenaza clasificada más fuerte, `UnknownCount` viene del summary unknown, `HostileCount` del summary threat, `NeutralCount` del summary safe, `IsSafe` solo es true cuando no quedan threats ni unknowns, y `Signals` incluye razones, reglas y políticas superiores. `ThreatState` también expone `TopSuggestedPolicy`, `TopEntityLabel` y `TopEntityType`.
 
 Si la proyección UI falla, el mismo servicio registra el error en `SessionUiState` y degrada el snapshot de dominio con `Source=UiRefreshFailure` y warnings.
 
@@ -391,6 +496,36 @@ La sección sigue siendo `MultiSessionHost`.
       ],
       "GlobalExclusiveOperationKinds": []
     },
+    "RiskClassification": {
+      "EnableRiskClassification": true,
+      "DefaultUnknownDisposition": "Unknown",
+      "DefaultUnknownSeverity": "Unknown",
+      "DefaultUnknownPolicy": "Observe",
+      "MaxReturnedEntities": 100,
+      "RequireExplicitSafeMatch": true,
+      "Rules": [
+        {
+          "RuleName": "safe-label",
+          "MatchByName": [ "trusted", "safe", "allowed" ],
+          "NameMatchMode": "Contains",
+          "Disposition": "Safe",
+          "Severity": "Low",
+          "Priority": 10,
+          "SuggestedPolicy": "Ignore",
+          "Reason": "Configured safe label."
+        },
+        {
+          "RuleName": "warning-type",
+          "MatchByType": [ "Warning", "Critical" ],
+          "TypeMatchMode": "Exact",
+          "Disposition": "Threat",
+          "Severity": "Critical",
+          "Priority": 800,
+          "SuggestedPolicy": "Withdraw",
+          "Reason": "Warning and critical typed candidates require withdrawal."
+        }
+      ]
+    },
     "DesktopTargets": [
       {
         "ProfileName": "test-app",
@@ -467,6 +602,8 @@ La sección sigue siendo `MultiSessionHost`.
 - `ExecutionCoordination.MaxConcurrentGlobalTargetOperations` debe ser mayor que cero.
 - `ExecutionCoordination.WaitWarningThresholdMs` no puede ser negativo.
 - los operation kinds configurados para coordinación deben existir.
+- si `RiskClassification.EnableRiskClassification=true`, debe existir al menos una regla activa.
+- cada regla de riesgo activa debe tener `RuleName` único, prioridad entre 0 y 1000 y al menos un matcher por nombre, tipo o tag.
 
 ## Admin API
 
@@ -492,6 +629,11 @@ Endpoints existentes mantenidos:
 - `GET /sessions/{id}/semantic/summary`
 - `GET /sessions/{id}/semantic/lists`
 - `GET /sessions/{id}/semantic/alerts`
+- `GET /risk`
+- `GET /sessions/{id}/risk`
+- `GET /sessions/{id}/risk/summary`
+- `GET /sessions/{id}/risk/entities`
+- `GET /sessions/{id}/risk/threats`
 
 Endpoints nuevos de inspección:
 
@@ -545,6 +687,11 @@ Invoke-RestMethod http://localhost:5088/sessions/alpha/semantic
 Invoke-RestMethod http://localhost:5088/sessions/alpha/semantic/summary
 Invoke-RestMethod http://localhost:5088/sessions/alpha/semantic/lists
 Invoke-RestMethod http://localhost:5088/sessions/alpha/semantic/alerts
+Invoke-RestMethod http://localhost:5088/risk
+Invoke-RestMethod http://localhost:5088/sessions/alpha/risk
+Invoke-RestMethod http://localhost:5088/sessions/alpha/risk/summary
+Invoke-RestMethod http://localhost:5088/sessions/alpha/risk/entities
+Invoke-RestMethod http://localhost:5088/sessions/alpha/risk/threats
 ```
 
 Escenarios esperados:
@@ -670,6 +817,9 @@ Invoke-RestMethod http://localhost:5088/coordination/sessions/alpha
 Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/ui/refresh
 Invoke-RestMethod http://localhost:5088/sessions/alpha/ui
 Invoke-RestMethod http://localhost:5088/sessions/alpha/ui/raw
+Invoke-RestMethod http://localhost:5088/sessions/alpha/risk
+Invoke-RestMethod http://localhost:5088/sessions/alpha/risk/summary
+Invoke-RestMethod http://localhost:5088/sessions/alpha/risk/threats
 ```
 
 Ejemplos de comandos semánticos:
@@ -760,3 +910,18 @@ La suite cubre ahora:
 - actualización de dominio después de `ui/refresh`
 - aislamiento de snapshots de dominio entre sesiones
 - lectura de dominio después de cambios runtime de binding
+- extracción semántica genérica desde targets, alerts, transit, resources, capabilities y presence
+- store e inspección de extracción semántica por sesión
+- candidate builder de riesgo desde targets, presence y alerts
+- reglas de riesgo por nombre, tipo y tags
+- precedencia first-match-wins y fallback unknown
+- clasificación safe, unknown, threat y prioritized threat
+- agregación de severity, priority y top policy
+- store de risk assessment aislado por sesión
+- endpoints `GET /risk`
+- endpoints `GET /sessions/{id}/risk`
+- endpoints `GET /sessions/{id}/risk/summary`
+- endpoints `GET /sessions/{id}/risk/entities`
+- endpoints `GET /sessions/{id}/risk/threats`
+- flujo integrado `ui/refresh` -> semantic extraction -> risk classification -> domain projection
+- dominio alimentado por severidad, conteos y señales de riesgo

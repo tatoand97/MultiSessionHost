@@ -27,6 +27,8 @@ public sealed class SessionHostOptions
 
     public ExecutionCoordinationOptions ExecutionCoordination { get; init; } = new();
 
+    public RiskClassificationOptions RiskClassification { get; init; } = new();
+
     public IReadOnlyList<DesktopTargetProfileOptions> DesktopTargets { get; init; } = [];
 
     public IReadOnlyList<SessionTargetBindingOptions> SessionTargetBindings { get; init; } = [];
@@ -106,4 +108,50 @@ public sealed class DesktopTargetProfileOverrideOptions
     public bool? SupportsUiSnapshots { get; init; }
 
     public bool? SupportsStateEndpoint { get; init; }
+}
+
+public sealed class RiskClassificationOptions
+{
+    public bool EnableRiskClassification { get; init; }
+
+    public IReadOnlyList<RiskRuleOptions> Rules { get; init; } = [];
+
+    public RiskDisposition DefaultUnknownDisposition { get; init; } = RiskDisposition.Unknown;
+
+    public RiskSeverity DefaultUnknownSeverity { get; init; } = RiskSeverity.Unknown;
+
+    public RiskPolicySuggestion DefaultUnknownPolicy { get; init; } = RiskPolicySuggestion.Observe;
+
+    public int MaxReturnedEntities { get; init; } = 100;
+
+    public bool RequireExplicitSafeMatch { get; init; } = true;
+}
+
+public sealed class RiskRuleOptions
+{
+    public string RuleName { get; init; } = string.Empty;
+
+    public bool Enabled { get; init; } = true;
+
+    public IReadOnlyList<string> MatchByName { get; init; } = [];
+
+    public RiskRuleMatchMode NameMatchMode { get; init; } = RiskRuleMatchMode.Contains;
+
+    public IReadOnlyList<string> MatchByType { get; init; } = [];
+
+    public RiskRuleMatchMode TypeMatchMode { get; init; } = RiskRuleMatchMode.Exact;
+
+    public IReadOnlyList<string> MatchByTags { get; init; } = [];
+
+    public bool RequireAllTags { get; init; }
+
+    public RiskDisposition Disposition { get; init; } = RiskDisposition.Unknown;
+
+    public RiskSeverity Severity { get; init; } = RiskSeverity.Unknown;
+
+    public int Priority { get; init; }
+
+    public RiskPolicySuggestion SuggestedPolicy { get; init; } = RiskPolicySuggestion.Observe;
+
+    public string Reason { get; init; } = string.Empty;
 }

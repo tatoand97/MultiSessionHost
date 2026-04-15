@@ -82,6 +82,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidateRiskClassification(options.RiskClassification, out error))
+        {
+            return false;
+        }
+
         if (options.Sessions.Count == 0)
         {
             error = "At least one session must be configured.";
@@ -496,6 +501,126 @@ public static class SessionHostOptionsExtensions
             !TryValidateExecutionOperationKinds(options.GlobalExclusiveOperationKinds, nameof(ExecutionCoordinationOptions.GlobalExclusiveOperationKinds), out error))
         {
             return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateRiskClassification(
+        RiskClassificationOptions options,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (!Enum.IsDefined(options.DefaultUnknownDisposition))
+        {
+            error = $"RiskClassification.DefaultUnknownDisposition contains an invalid risk disposition '{options.DefaultUnknownDisposition}'.";
+            return false;
+        }
+
+        if (!Enum.IsDefined(options.DefaultUnknownSeverity))
+        {
+            error = $"RiskClassification.DefaultUnknownSeverity contains an invalid risk severity '{options.DefaultUnknownSeverity}'.";
+            return false;
+        }
+
+        if (!Enum.IsDefined(options.DefaultUnknownPolicy))
+        {
+            error = $"RiskClassification.DefaultUnknownPolicy contains an invalid risk policy suggestion '{options.DefaultUnknownPolicy}'.";
+            return false;
+        }
+
+        if (options.MaxReturnedEntities <= 0)
+        {
+            error = "RiskClassification.MaxReturnedEntities must be greater than zero.";
+            return false;
+        }
+
+        if (!options.EnableRiskClassification)
+        {
+            error = null;
+            return true;
+        }
+
+        if (options.Rules.Count == 0)
+        {
+            error = "RiskClassification.Rules must contain at least one rule when risk classification is enabled.";
+            return false;
+        }
+
+        var ruleNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rule in options.Rules)
+        {
+            if (!rule.Enabled)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(rule.RuleName))
+            {
+                error = "Each enabled risk rule must define RuleName.";
+                return false;
+            }
+
+            var ruleName = rule.RuleName.Trim();
+
+            if (!ruleNames.Add(ruleName))
+            {
+                error = $"Risk rule '{rule.RuleName}' is duplicated.";
+                return false;
+            }
+
+            if (rule.Priority < 0 || rule.Priority > 1000)
+            {
+                error = $"Risk rule '{ruleName}' must have Priority between 0 and 1000.";
+                return false;
+            }
+
+            if (!Enum.IsDefined(rule.NameMatchMode))
+            {
+                error = $"Risk rule '{ruleName}' has an invalid NameMatchMode '{rule.NameMatchMode}'.";
+                return false;
+            }
+
+            if (!Enum.IsDefined(rule.TypeMatchMode))
+            {
+                error = $"Risk rule '{ruleName}' has an invalid TypeMatchMode '{rule.TypeMatchMode}'.";
+                return false;
+            }
+
+            if (!Enum.IsDefined(rule.Disposition))
+            {
+                error = $"Risk rule '{ruleName}' has an invalid Disposition '{rule.Disposition}'.";
+                return false;
+            }
+
+            if (!Enum.IsDefined(rule.Severity))
+            {
+                error = $"Risk rule '{ruleName}' has an invalid Severity '{rule.Severity}'.";
+                return false;
+            }
+
+            if (!Enum.IsDefined(rule.SuggestedPolicy))
+            {
+                error = $"Risk rule '{ruleName}' has an invalid SuggestedPolicy '{rule.SuggestedPolicy}'.";
+                return false;
+            }
+
+            if (rule.MatchByName.Count == 0 && rule.MatchByType.Count == 0 && rule.MatchByTags.Count == 0)
+            {
+                error = $"Risk rule '{ruleName}' must define at least one name, type, or tag matcher.";
+                return false;
+            }
+
+            if (rule.MatchByName.Any(static value => string.IsNullOrWhiteSpace(value)) ||
+                rule.MatchByType.Any(static value => string.IsNullOrWhiteSpace(value)) ||
+                rule.MatchByTags.Any(static value => string.IsNullOrWhiteSpace(value)))
+            {
+                error = $"Risk rule '{ruleName}' contains an empty matcher value.";
+                return false;
+            }
         }
 
         error = null;

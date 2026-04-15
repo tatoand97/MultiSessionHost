@@ -39,7 +39,10 @@ public sealed record ThreatStateDto(
     int? HostileCount,
     bool? IsSafe,
     DateTimeOffset? LastThreatChangedAtUtc,
-    IReadOnlyList<string> Signals);
+    IReadOnlyList<string> Signals,
+    string? TopSuggestedPolicy,
+    string? TopEntityLabel,
+    string? TopEntityType);
 
 public sealed record TargetStateDto(
     bool HasActiveTarget,

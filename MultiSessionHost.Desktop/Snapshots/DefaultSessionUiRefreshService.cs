@@ -5,6 +5,7 @@ using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Targets;
 using MultiSessionHost.UiModel.Interfaces;
 using MultiSessionHost.UiModel.Models;
@@ -24,6 +25,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly ISessionDomainStateProjectionService _domainStateProjectionService;
     private readonly IUiSemanticExtractionPipeline _semanticExtractionPipeline;
     private readonly ISessionSemanticExtractionStore _semanticExtractionStore;
+    private readonly IRiskClassificationPipeline _riskClassificationPipeline;
     private readonly IClock _clock;
     private readonly ILogger<DefaultSessionUiRefreshService> _logger;
 
@@ -39,6 +41,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         ISessionDomainStateProjectionService domainStateProjectionService,
         IUiSemanticExtractionPipeline semanticExtractionPipeline,
         ISessionSemanticExtractionStore semanticExtractionStore,
+        IRiskClassificationPipeline riskClassificationPipeline,
         IClock clock,
         ILogger<DefaultSessionUiRefreshService> logger)
     {
@@ -53,6 +56,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _domainStateProjectionService = domainStateProjectionService;
         _semanticExtractionPipeline = semanticExtractionPipeline;
         _semanticExtractionStore = semanticExtractionStore;
+        _riskClassificationPipeline = riskClassificationPipeline;
         _clock = clock;
         _logger = logger;
     }
@@ -175,6 +179,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 now);
             var semanticExtraction = await _semanticExtractionPipeline.ExtractAsync(semanticContext, cancellationToken).ConfigureAwait(false);
             await _semanticExtractionStore.UpdateAsync(snapshot.SessionId, semanticExtraction, cancellationToken).ConfigureAwait(false);
+            var riskAssessment = await _riskClassificationPipeline.AssessAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
 
             await _sessionDomainStateStore.UpdateAsync(
                 snapshot.SessionId,
@@ -185,6 +190,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     projectedUiState,
                     attachment,
                     semanticExtraction,
+                    riskAssessment,
                     _clock.UtcNow),
                 cancellationToken).ConfigureAwait(false);
 

@@ -6,6 +6,7 @@ using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Risk;
 
 namespace MultiSessionHost.AdminApi.Mapping;
 
@@ -138,7 +139,10 @@ public static class DtoMappingExtensions
             state.HostileCount,
             state.IsSafe,
             state.LastThreatChangedAtUtc,
-            state.Signals);
+            state.Signals,
+            state.TopSuggestedPolicy,
+            state.TopEntityLabel,
+            state.TopEntityType);
 
     public static TargetStateDto ToDto(this TargetState state) =>
         new(
@@ -295,6 +299,43 @@ public static class DtoMappingExtensions
             result.PresenceEntities.Count,
             result.Warnings,
             result.ConfidenceSummary.ToDictionary(static pair => pair.Key, static pair => pair.Value.ToString(), StringComparer.Ordinal));
+
+    public static RiskAssessmentResultDto ToDto(this RiskAssessmentResult result) =>
+        new(
+            result.SessionId.Value,
+            result.AssessedAtUtc,
+            result.Entities.Select(static entity => entity.ToDto()).ToArray(),
+            result.Summary.ToDto(),
+            result.Warnings);
+
+    public static RiskAssessmentSummaryDto ToDto(this RiskAssessmentSummary summary) =>
+        new(
+            summary.SafeCount,
+            summary.UnknownCount,
+            summary.ThreatCount,
+            summary.HighestSeverity.ToString(),
+            summary.HighestPriority,
+            summary.HasWithdrawPolicy,
+            summary.TopCandidateId,
+            summary.TopCandidateName,
+            summary.TopCandidateType,
+            summary.TopSuggestedPolicy.ToString());
+
+    public static RiskEntityAssessmentDto ToDto(this RiskEntityAssessment entity) =>
+        new(
+            entity.CandidateId,
+            entity.Source.ToString(),
+            entity.Name,
+            entity.Type,
+            entity.Tags,
+            entity.Disposition.ToString(),
+            entity.Severity.ToString(),
+            entity.Priority,
+            entity.SuggestedPolicy.ToString(),
+            entity.MatchedRuleName,
+            entity.Reasons,
+            entity.Confidence,
+            entity.Metadata);
 
     public static DetectedListDto ToDto(this DetectedList item) =>
         new(

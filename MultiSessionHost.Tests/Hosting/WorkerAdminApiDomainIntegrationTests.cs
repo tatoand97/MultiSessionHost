@@ -256,6 +256,110 @@ public sealed class WorkerAdminApiDomainIntegrationTests
     }
 
     [Fact]
+    public async Task UiRefresh_PopulatesRiskAssessmentAndFeedsDomainThreatState()
+    {
+        const int basePort = 7910;
+        const string sessionId = "api-risk-refresh";
+
+        await using var app = await TestDesktopAppProcessHost.StartAsync(sessionId, basePort);
+        var options = TestOptionsFactory.CreateDesktopTestAppOptionsWithRisk(
+            basePort,
+            true,
+            "http://127.0.0.1:0",
+            TestOptionsFactory.GenericRiskClassification(),
+            TestOptionsFactory.Session(sessionId, startupDelayMs: 0));
+
+        await using var harness = await WorkerHostHarness.StartAsync(options);
+        var client = Assert.IsType<HttpClient>(harness.Client);
+
+        await WaitUntilRunningAsync(harness, sessionId);
+
+        (await client.PostAsync($"/sessions/{sessionId}/ui/refresh", content: null)).EnsureSuccessStatusCode();
+        var initialRisk = await client.GetFromJsonAsync<RiskAssessmentResultDto>($"/sessions/{sessionId}/risk");
+
+        Assert.NotNull(initialRisk);
+        Assert.Contains(initialRisk!.Entities, entity => entity.Disposition == "Safe" && entity.SuggestedPolicy == "Ignore");
+
+        (await client.PostAsync($"/sessions/{sessionId}/nodes/tickButton/invoke", content: null)).EnsureSuccessStatusCode();
+        (await client.PostAsync($"/sessions/{sessionId}/ui/refresh", content: null)).EnsureSuccessStatusCode();
+
+        var warningSummary = await client.GetFromJsonAsync<RiskAssessmentSummaryDto>($"/sessions/{sessionId}/risk/summary");
+        var warningDomain = await client.GetFromJsonAsync<SessionDomainStateDto>($"/sessions/{sessionId}/domain");
+
+        Assert.NotNull(warningSummary);
+        Assert.NotNull(warningDomain);
+        Assert.Equal("Critical", warningSummary!.HighestSeverity);
+        Assert.True(warningSummary.ThreatCount > 0);
+        Assert.Equal("Critical", warningDomain!.Threat.Severity);
+        Assert.True(warningDomain.Threat.HostileCount > 0);
+        Assert.Contains(warningDomain.Threat.Signals, signal => signal.Contains("warning-alert", StringComparison.Ordinal));
+
+        var selectResponse = await client.PostAsJsonAsync(
+            $"/sessions/{sessionId}/nodes/itemsListBox/select",
+            new NodeSelectCommandRequest($"{sessionId}-item-2", Metadata: null));
+        selectResponse.EnsureSuccessStatusCode();
+        (await client.PostAsync($"/sessions/{sessionId}/ui/refresh", content: null)).EnsureSuccessStatusCode();
+
+        var prioritized = await client.GetFromJsonAsync<RiskAssessmentSummaryDto>($"/sessions/{sessionId}/risk/summary");
+        var entities = await client.GetFromJsonAsync<RiskEntityAssessmentDto[]>($"/sessions/{sessionId}/risk/entities");
+
+        Assert.NotNull(prioritized);
+        Assert.NotNull(entities);
+        Assert.Equal("Prioritize", prioritized!.TopSuggestedPolicy);
+        Assert.Contains(entities!, entity => entity.MatchedRuleName == "priority-selection" && entity.SuggestedPolicy == "Prioritize");
+    }
+
+    [Fact]
+    public async Task RiskAssessment_RemainsSessionIsolatedAndSurvivesBindingChanges()
+    {
+        const int basePort = 7920;
+        const string alphaId = "api-risk-alpha";
+        const string betaId = "api-risk-beta";
+
+        await using var alphaApp = await TestDesktopAppProcessHost.StartAsync(alphaId, basePort);
+        await using var betaApp = await TestDesktopAppProcessHost.StartAsync(betaId, basePort + 1);
+        var options = TestOptionsFactory.CreateDesktopTestAppOptionsWithRisk(
+            basePort,
+            true,
+            "http://127.0.0.1:0",
+            TestOptionsFactory.GenericRiskClassification(),
+            TestOptionsFactory.Session(alphaId, startupDelayMs: 0),
+            TestOptionsFactory.Session(betaId, startupDelayMs: 0));
+
+        await using var harness = await WorkerHostHarness.StartAsync(options);
+        var client = Assert.IsType<HttpClient>(harness.Client);
+
+        await TestWait.UntilAsync(
+            () =>
+            {
+                var alpha = harness.Coordinator.GetSession(new SessionId(alphaId));
+                var beta = harness.Coordinator.GetSession(new SessionId(betaId));
+                return alpha?.Runtime.CurrentStatus == SessionStatus.Running && beta?.Runtime.CurrentStatus == SessionStatus.Running;
+            },
+            TimeSpan.FromSeconds(10),
+            "The worker runtime did not start both desktop-backed sessions in time.");
+
+        (await client.PostAsync($"/sessions/{alphaId}/ui/refresh", content: null)).EnsureSuccessStatusCode();
+        (await client.PutAsJsonAsync(
+            $"/bindings/{alphaId}",
+            new SessionTargetBindingUpsertRequest(
+                "test-app",
+                new Dictionary<string, string> { ["Port"] = basePort.ToString() },
+                null))).EnsureSuccessStatusCode();
+
+        var alphaRisk = await client.GetFromJsonAsync<RiskAssessmentResultDto>($"/sessions/{alphaId}/risk");
+        var betaRiskResponse = await client.GetAsync($"/sessions/{betaId}/risk");
+        var allRisk = await client.GetFromJsonAsync<RiskAssessmentResultDto[]>("/risk");
+
+        Assert.NotNull(alphaRisk);
+        Assert.Equal(alphaId, alphaRisk!.SessionId);
+        Assert.Equal(HttpStatusCode.NotFound, betaRiskResponse.StatusCode);
+        Assert.NotNull(allRisk);
+        Assert.Single(allRisk!);
+        Assert.Equal(alphaId, allRisk[0].SessionId);
+    }
+
+    [Fact]
     public async Task SemanticInspection_SurvivesBindingAndCoordinationEndpointsAndChangesAfterCommands()
     {
         const int basePort = 7900;

@@ -46,6 +46,33 @@ public static class TestOptionsFactory
             Sessions = sessions
         };
 
+    public static SessionHostOptions CreateDesktopTestAppOptionsWithRisk(
+        int basePort,
+        bool enableAdminApi,
+        string adminApiUrl,
+        RiskClassificationOptions riskClassification,
+        params SessionDefinitionOptions[] sessions) =>
+        new()
+        {
+            MaxGlobalParallelSessions = sessions.Length,
+            SchedulerIntervalMs = 50,
+            HealthLogIntervalMs = 1_000,
+            EnableAdminApi = enableAdminApi,
+            AdminApiUrl = adminApiUrl,
+            DriverMode = DriverMode.DesktopTargetAdapter,
+            EnableUiSnapshots = true,
+            RiskClassification = riskClassification,
+            DesktopTargets = [DesktopTestAppProfile()],
+            SessionTargetBindings = sessions
+                .Select(
+                    (session, index) => SessionTargetBinding(
+                        session.SessionId,
+                        "test-app",
+                        (basePort + index).ToString()))
+                .ToArray(),
+            Sessions = sessions
+        };
+
     public static SessionDefinitionOptions Session(
         string id,
         bool enabled = true,
@@ -100,5 +127,61 @@ public static class TestOptionsFactory
                 ["Port"] = port
             },
             Overrides = overrides
+        };
+
+    public static RiskClassificationOptions GenericRiskClassification() =>
+        new()
+        {
+            EnableRiskClassification = true,
+            DefaultUnknownDisposition = RiskDisposition.Unknown,
+            DefaultUnknownSeverity = RiskSeverity.Unknown,
+            DefaultUnknownPolicy = RiskPolicySuggestion.Observe,
+            MaxReturnedEntities = 50,
+            RequireExplicitSafeMatch = true,
+            Rules =
+            [
+                new RiskRuleOptions
+                {
+                    RuleName = "safe-presence",
+                    MatchByName = ["presence"],
+                    NameMatchMode = RiskRuleMatchMode.Contains,
+                    Disposition = RiskDisposition.Safe,
+                    Severity = RiskSeverity.Low,
+                    Priority = 10,
+                    SuggestedPolicy = RiskPolicySuggestion.Ignore,
+                    Reason = "Presence-labeled entities are safe in this test configuration."
+                },
+                new RiskRuleOptions
+                {
+                    RuleName = "priority-selection",
+                    MatchByTags = ["active"],
+                    Disposition = RiskDisposition.Threat,
+                    Severity = RiskSeverity.High,
+                    Priority = 900,
+                    SuggestedPolicy = RiskPolicySuggestion.Prioritize,
+                    Reason = "Selected item-2 is prioritized in this test configuration."
+                },
+                new RiskRuleOptions
+                {
+                    RuleName = "warning-alert",
+                    MatchByType = ["Warning", "Critical"],
+                    TypeMatchMode = RiskRuleMatchMode.Exact,
+                    Disposition = RiskDisposition.Threat,
+                    Severity = RiskSeverity.Critical,
+                    Priority = 800,
+                    SuggestedPolicy = RiskPolicySuggestion.Withdraw,
+                    Reason = "Warning and critical alert types require withdrawal in this test configuration."
+                },
+                new RiskRuleOptions
+                {
+                    RuleName = "unknown-tag",
+                    MatchByTags = ["unknown"],
+                    Disposition = RiskDisposition.Unknown,
+                    Severity = RiskSeverity.Low,
+                    Priority = 100,
+                    SuggestedPolicy = RiskPolicySuggestion.Observe,
+                    Reason = "Unknown-tagged candidates should be observed."
+                }
+            ]
         };
 }

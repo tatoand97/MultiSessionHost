@@ -24,7 +24,7 @@ public sealed class SessionDomainStateProjectionServiceTests
         };
         var service = new DefaultSessionDomainStateProjectionService();
 
-        var projected = service.Project(current, snapshot, context, uiState, attachment: null, semanticExtraction: null, now);
+        var projected = service.Project(current, snapshot, context, uiState, attachment: null, semanticExtraction: null, riskAssessment: null, now);
 
         Assert.Equal(DomainSnapshotSource.UiProjection, projected.Source);
         Assert.Equal(2, projected.Version);
@@ -47,7 +47,7 @@ public sealed class SessionDomainStateProjectionServiceTests
         var context = CreateContext(sessionId);
         var service = new DefaultSessionDomainStateProjectionService();
 
-        var projected = service.Project(current, snapshot, context, uiState: null, attachment: null, semanticExtraction: null, now);
+        var projected = service.Project(current, snapshot, context, uiState: null, attachment: null, semanticExtraction: null, riskAssessment: null, now);
 
         Assert.Equal(DomainSnapshotSource.UiProjection, projected.Source);
         Assert.Equal(NavigationStatus.InProgress, projected.Navigation.Status);
@@ -70,7 +70,7 @@ public sealed class SessionDomainStateProjectionServiceTests
         };
         var service = new DefaultSessionDomainStateProjectionService();
 
-        var projected = service.Project(current, snapshot, context, uiState, attachment: null, semanticExtraction: null, now);
+        var projected = service.Project(current, snapshot, context, uiState, attachment: null, semanticExtraction: null, riskAssessment: null, now);
 
         Assert.True(projected.Resources.IsDegraded);
         Assert.Contains(projected.Warnings, warning => warning.Contains("No raw UI snapshot", StringComparison.Ordinal));

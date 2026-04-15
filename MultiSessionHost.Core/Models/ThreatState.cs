@@ -9,7 +9,10 @@ public sealed record ThreatState(
     int? HostileCount,
     bool? IsSafe,
     DateTimeOffset? LastThreatChangedAtUtc,
-    IReadOnlyList<string> Signals)
+    IReadOnlyList<string> Signals,
+    string? TopSuggestedPolicy = null,
+    string? TopEntityLabel = null,
+    string? TopEntityType = null)
 {
     public static ThreatState CreateDefault() =>
         new(

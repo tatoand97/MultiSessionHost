@@ -10,6 +10,7 @@ using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
+using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.UiModel.Models;
 
 namespace MultiSessionHost.AdminApi;
@@ -317,6 +318,141 @@ public static class AdminApiEndpointRouteBuilderExtensions
 
                 var results = await semanticExtractionStore.GetAllAsync(cancellationToken).ConfigureAwait(false);
                 return Results.Ok(results.Select(static result => result.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/risk",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionRiskAssessmentStore riskAssessmentStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var results = await riskAssessmentStore.GetAllAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(results.Select(static result => result.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/risk",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionRiskAssessmentStore riskAssessmentStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var result = await riskAssessmentStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return result is null ? Results.NotFound() : Results.Ok(result.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/risk/summary",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionRiskAssessmentStore riskAssessmentStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var result = await riskAssessmentStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return result is null ? Results.NotFound() : Results.Ok(result.Summary.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/risk/entities",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionRiskAssessmentStore riskAssessmentStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var result = await riskAssessmentStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return result is null ? Results.NotFound() : Results.Ok(result.Entities.Select(static entity => entity.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/risk/threats",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionRiskAssessmentStore riskAssessmentStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var result = await riskAssessmentStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return result is null
+                    ? Results.NotFound()
+                    : Results.Ok(result.Entities.Where(static entity => entity.Disposition == RiskDisposition.Threat).Select(static entity => entity.ToDto()).ToArray());
             });
 
         endpoints.MapGet(
