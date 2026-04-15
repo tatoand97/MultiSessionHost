@@ -385,6 +385,66 @@ public static class DtoMappingExtensions
             summary.ReturnedDirectiveCount,
             summary.SuppressedDirectiveCounts);
 
+    public static PolicyRuleSetDto ToDto(this PolicyRuleSet rules) =>
+        new(
+            rules.SiteSelectionRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.ThreatResponseRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.TargetPriorityRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.ResourceUsageRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.TransitRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.AbortRules.Select(static rule => rule.ToDto()).ToArray());
+
+    public static PolicyRuleDto ToDto(this PolicyRule rule) =>
+        new(
+            rule.RuleName,
+            rule.Family.ToString(),
+            rule.MatchLabels,
+            rule.LabelMatchMode.ToString(),
+            rule.MatchTypes,
+            rule.TypeMatchMode.ToString(),
+            rule.MatchTags,
+            rule.RequireAllTags,
+            rule.AllowedThreatSeverities.Select(static value => value.ToString()).ToArray(),
+            rule.MinThreatSeverity?.ToString(),
+            rule.MinRiskSeverity?.ToString(),
+            rule.MatchSuggestedPolicies.Select(static value => value.ToString()).ToArray(),
+            rule.MatchSessionStatuses.Select(static value => value.ToString()).ToArray(),
+            rule.MatchNavigationStatuses.Select(static value => value.ToString()).ToArray(),
+            rule.RequireTransitioning,
+            rule.RequireDestination,
+            rule.RequireIdleNavigation,
+            rule.RequireIdleActivity,
+            rule.RequireNoActiveTarget,
+            rule.RequireActiveTarget,
+            rule.MatchResourceCritical,
+            rule.MatchResourceDegraded,
+            rule.RequireDefensivePosture,
+            rule.MinProgressPercent,
+            rule.MaxProgressPercent,
+            rule.MinResourcePercent,
+            rule.MaxResourcePercent,
+            rule.MinWarningCount,
+            rule.MaxWarningCount,
+            rule.MinUnknownCount,
+            rule.MaxUnknownCount,
+            rule.MinAvailableCount,
+            rule.MaxAvailableCount,
+            rule.MinConfidence,
+            rule.MaxConfidence,
+            rule.MetricName,
+            rule.MinMetricValue,
+            rule.MaxMetricValue,
+            rule.DirectiveKind.ToString(),
+            rule.Priority,
+            rule.SuggestedPolicy,
+            rule.Blocks,
+            rule.Aborts,
+            rule.MinimumWait.TotalMilliseconds,
+            rule.ThresholdName,
+            rule.PolicyMode,
+            rule.TargetLabelTemplate,
+            rule.Reason);
+
     public static DetectedListDto ToDto(this DetectedList item) =>
         new(
             item.NodeId,

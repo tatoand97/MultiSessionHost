@@ -193,6 +193,8 @@ public sealed class PolicyEngineOptions
     public TargetPrioritizationPolicyOptions TargetPrioritizationPolicy { get; init; } = new();
 
     public SelectNextSitePolicyOptions SelectNextSitePolicy { get; init; } = new();
+
+    public BehaviorRulesOptions Rules { get; init; } = new();
 }
 
 public sealed class AbortPolicyOptions
@@ -200,6 +202,8 @@ public sealed class AbortPolicyOptions
     public int AbortPriority { get; init; } = 1000;
 
     public int PausePriority { get; init; } = 950;
+
+    public AbortRulesOptions Rules { get; init; } = new();
 }
 
 public sealed class ThreatResponsePolicyOptions
@@ -213,6 +217,8 @@ public sealed class ThreatResponsePolicyOptions
     public int AvoidPriority { get; init; } = 740;
 
     public int ObservePriority { get; init; } = 300;
+
+    public ThreatResponseRulesOptions Rules { get; init; } = new();
 }
 
 public sealed class TransitPolicyOptions
@@ -222,6 +228,8 @@ public sealed class TransitPolicyOptions
     public int NavigatePriority { get; init; } = 500;
 
     public int BlockedPriority { get; init; } = 700;
+
+    public TransitRulesOptions Rules { get; init; } = new();
 }
 
 public sealed class ResourceUsagePolicyOptions
@@ -233,6 +241,8 @@ public sealed class ResourceUsagePolicyOptions
     public double CriticalPercentThreshold { get; init; } = 15;
 
     public double DegradedPercentThreshold { get; init; } = 35;
+
+    public ResourceUsageRulesOptions Rules { get; init; } = new();
 }
 
 public sealed class TargetPrioritizationPolicyOptions
@@ -242,6 +252,8 @@ public sealed class TargetPrioritizationPolicyOptions
     public int SelectPriority { get; init; } = 520;
 
     public int AvoidPriority { get; init; } = 540;
+
+    public TargetPrioritizationRulesOptions Rules { get; init; } = new();
 }
 
 public sealed class SelectNextSitePolicyOptions
@@ -249,4 +261,411 @@ public sealed class SelectNextSitePolicyOptions
     public int SelectSitePriority { get; init; } = 250;
 
     public int ObservePriority { get; init; } = 150;
+
+    public SiteSelectionRulesOptions Rules { get; init; } = new();
 }
+
+public sealed class BehaviorRulesOptions
+{
+    public SiteSelectionRulesOptions SiteSelection { get; init; } = new();
+
+    public ThreatResponseRulesOptions ThreatResponse { get; init; } = new();
+
+    public TargetPrioritizationRulesOptions TargetPrioritization { get; init; } = new();
+
+    public ResourceUsageRulesOptions ResourceUsage { get; init; } = new();
+
+    public TransitRulesOptions Transit { get; init; } = new();
+
+    public AbortRulesOptions Abort { get; init; } = new();
+}
+
+public sealed class SiteSelectionRulesOptions
+{
+    public IReadOnlyList<AllowRuleOptions> AllowRules { get; init; } =
+    [
+        new()
+        {
+            RuleName = "default-site-selection",
+            RequireIdleNavigation = true,
+            RequireIdleActivity = true,
+            RequireNoActiveTarget = true,
+            AllowedThreatSeverities =
+            [
+                ThreatSeverity.None,
+                ThreatSeverity.Low,
+                ThreatSeverity.Unknown
+            ],
+            DirectiveKind = "SelectSite",
+            Priority = 250,
+            SuggestedPolicy = "SelectSite",
+            TargetLabelTemplate = "{siteLabel}",
+            Reason = "Configured site selection rule matched."
+        }
+    ];
+
+    public bool IgnoreNonAllowlistedSites { get; init; } = true;
+
+    public string NoAllowedCandidateDirectiveKind { get; init; } = "Observe";
+
+    public int NoAllowedCandidatePriority { get; init; } = 150;
+
+    public int MinimumWaitMs { get; init; }
+
+    public string UnknownSiteLabel { get; init; } = "unknown-worksite";
+
+    public string DefaultSiteLabel { get; init; } = "worksite";
+}
+
+public sealed class ThreatResponseRulesOptions
+{
+    public IReadOnlyList<DenyRuleOptions> DenyRules { get; init; } = [];
+
+    public IReadOnlyList<RetreatRuleOptions> RetreatRules { get; init; } =
+    [
+        new()
+        {
+            RuleName = "default-withdraw-suggestion",
+            MatchSuggestedPolicies = [RiskPolicySuggestion.Withdraw],
+            DirectiveKind = "Withdraw",
+            Priority = 900,
+            SuggestedPolicy = "Withdraw",
+            Blocks = true,
+            Reason = "Configured withdrawal rule matched."
+        },
+        new()
+        {
+            RuleName = "default-critical-threat",
+            MinThreatSeverity = ThreatSeverity.Critical,
+            DirectiveKind = "Withdraw",
+            Priority = 900,
+            SuggestedPolicy = "Withdraw",
+            Blocks = true,
+            Reason = "Configured critical-threat rule matched."
+        },
+        new()
+        {
+            RuleName = "default-pause-suggestion",
+            MatchSuggestedPolicies = [RiskPolicySuggestion.PauseActivity],
+            DirectiveKind = "PauseActivity",
+            Priority = 850,
+            SuggestedPolicy = "PauseActivity",
+            Blocks = true,
+            Reason = "Configured pause rule matched."
+        },
+        new()
+        {
+            RuleName = "default-prioritize-threat",
+            MatchSuggestedPolicies = [RiskPolicySuggestion.Prioritize],
+            DirectiveKind = "PrioritizeTarget",
+            Priority = 760,
+            SuggestedPolicy = "Prioritize",
+            Reason = "Configured prioritization rule matched."
+        },
+        new()
+        {
+            RuleName = "default-avoid-threat",
+            MatchSuggestedPolicies = [RiskPolicySuggestion.Avoid],
+            DirectiveKind = "AvoidTarget",
+            Priority = 740,
+            SuggestedPolicy = "Avoid",
+            Reason = "Configured avoid rule matched."
+        },
+        new()
+        {
+            RuleName = "default-observe-unknown-threat",
+            MinUnknownCount = 1,
+            DirectiveKind = "Observe",
+            Priority = 300,
+            SuggestedPolicy = "Observe",
+            Reason = "Configured unknown-threat observation rule matched."
+        }
+    ];
+}
+
+public sealed class TargetPrioritizationRulesOptions
+{
+    public IReadOnlyList<DenyRuleOptions> DenyRules { get; init; } = [];
+
+    public IReadOnlyList<AllowRuleOptions> PriorityRules { get; init; } =
+    [
+        new()
+        {
+            RuleName = "default-risk-prioritize",
+            MatchSuggestedPolicies = [RiskPolicySuggestion.Prioritize],
+            DirectiveKind = "PrioritizeTarget",
+            Priority = 600,
+            SuggestedPolicy = "Prioritize",
+            Reason = "Configured target priority rule matched."
+        },
+        new()
+        {
+            RuleName = "default-risk-avoid",
+            MatchSuggestedPolicies =
+            [
+                RiskPolicySuggestion.Avoid,
+                RiskPolicySuggestion.Deprioritize
+            ],
+            DirectiveKind = "AvoidTarget",
+            Priority = 540,
+            SuggestedPolicy = "Avoid",
+            Reason = "Configured target avoid rule matched."
+        },
+        new()
+        {
+            RuleName = "default-active-target",
+            RequireActiveTarget = true,
+            DirectiveKind = "SelectTarget",
+            Priority = 520,
+            SuggestedPolicy = "SelectTarget",
+            Reason = "Configured active-target rule matched."
+        },
+        new()
+        {
+            RuleName = "default-semantic-target",
+            MinConfidence = 0,
+            DirectiveKind = "SelectTarget",
+            Priority = 520,
+            SuggestedPolicy = "SelectTarget",
+            Reason = "Configured semantic-target rule matched."
+        }
+    ];
+}
+
+public sealed class ResourceUsageRulesOptions
+{
+    public IReadOnlyList<AllowRuleOptions> Rules { get; init; } =
+    [
+        new()
+        {
+            RuleName = "default-critical-resource",
+            MatchResourceCritical = true,
+            MaxResourcePercent = 15,
+            MaxAvailableCount = 0,
+            ThresholdName = "critical-resource",
+            DirectiveKind = "Withdraw",
+            Priority = 720,
+            SuggestedPolicy = "Withdraw",
+            Blocks = true,
+            Reason = "Configured critical-resource rule matched."
+        },
+        new()
+        {
+            RuleName = "default-degraded-resource",
+            MatchResourceDegraded = true,
+            MaxResourcePercent = 35,
+            ThresholdName = "degraded-resource",
+            DirectiveKind = "ConserveResource",
+            Priority = 560,
+            SuggestedPolicy = "ConserveResource",
+            Reason = "Configured degraded-resource rule matched."
+        },
+        new()
+        {
+            RuleName = "default-defensive-resource-use",
+            RequireDefensivePosture = true,
+            DirectiveKind = "UseResource",
+            Priority = 560,
+            SuggestedPolicy = "UseResource",
+            Reason = "Configured resource-use rule matched."
+        }
+    ];
+}
+
+public sealed class TransitRulesOptions
+{
+    public IReadOnlyList<WaitRuleOptions> Rules { get; init; } =
+    [
+        new()
+        {
+            RuleName = "default-transit-blocked",
+            MatchNavigationStatuses = [NavigationStatus.Blocked],
+            DirectiveKind = "PauseActivity",
+            Priority = 700,
+            SuggestedPolicy = "PauseActivity",
+            Blocks = true,
+            Reason = "Configured blocked-transit rule matched."
+        },
+        new()
+        {
+            RuleName = "default-transit-in-progress",
+            MatchNavigationStatuses = [NavigationStatus.InProgress],
+            RequireTransitioning = true,
+            DirectiveKind = "Wait",
+            Priority = 650,
+            SuggestedPolicy = "Wait",
+            Blocks = true,
+            Reason = "Configured transit-wait rule matched."
+        },
+        new()
+        {
+            RuleName = "default-navigation-destination",
+            MatchNavigationStatuses = [NavigationStatus.Idle],
+            RequireDestination = true,
+            DirectiveKind = "Navigate",
+            Priority = 500,
+            SuggestedPolicy = "Navigate",
+            Reason = "Configured navigation rule matched."
+        }
+    ];
+}
+
+public sealed class AbortRulesOptions
+{
+    public IReadOnlyList<RetreatRuleOptions> Rules { get; init; } =
+    [
+        new()
+        {
+            RuleName = "default-runtime-faulted",
+            MatchSessionStatuses = [SessionStatus.Faulted],
+            DirectiveKind = "Abort",
+            Priority = 1000,
+            SuggestedPolicy = "Abort",
+            Blocks = true,
+            Aborts = true,
+            Reason = "Configured runtime-fault rule matched."
+        },
+        new()
+        {
+            RuleName = "default-critical-domain-withdraw",
+            MinThreatSeverity = ThreatSeverity.Critical,
+            MatchSuggestedPolicies = [RiskPolicySuggestion.Withdraw],
+            DirectiveKind = "Abort",
+            Priority = 1000,
+            SuggestedPolicy = "Withdraw",
+            Blocks = true,
+            Aborts = true,
+            Reason = "Configured critical domain withdrawal rule matched."
+        },
+        new()
+        {
+            RuleName = "default-critical-risk-withdraw",
+            MinRiskSeverity = RiskSeverity.Critical,
+            MatchSuggestedPolicies = [RiskPolicySuggestion.Withdraw],
+            DirectiveKind = "Abort",
+            Priority = 1000,
+            SuggestedPolicy = "Withdraw",
+            Blocks = true,
+            Aborts = true,
+            Reason = "Configured critical risk withdrawal rule matched."
+        },
+        new()
+        {
+            RuleName = "default-resource-warning-pause",
+            MatchResourceCritical = true,
+            MinWarningCount = 3,
+            DirectiveKind = "PauseActivity",
+            Priority = 950,
+            SuggestedPolicy = "PauseActivity",
+            Blocks = true,
+            Reason = "Configured resource warning pause rule matched."
+        }
+    ];
+}
+
+public class PolicyRuleOptions
+{
+    public string RuleName { get; init; } = string.Empty;
+
+    public bool Enabled { get; init; } = true;
+
+    public IReadOnlyList<string> MatchLabels { get; init; } = [];
+
+    public PolicyRuleMatchMode LabelMatchMode { get; init; } = PolicyRuleMatchMode.Exact;
+
+    public IReadOnlyList<string> MatchTypes { get; init; } = [];
+
+    public PolicyRuleMatchMode TypeMatchMode { get; init; } = PolicyRuleMatchMode.Exact;
+
+    public IReadOnlyList<string> MatchTags { get; init; } = [];
+
+    public bool RequireAllTags { get; init; }
+
+    public IReadOnlyList<ThreatSeverity> AllowedThreatSeverities { get; init; } = [];
+
+    public ThreatSeverity? MinThreatSeverity { get; init; }
+
+    public RiskSeverity? MinRiskSeverity { get; init; }
+
+    public IReadOnlyList<RiskPolicySuggestion> MatchSuggestedPolicies { get; init; } = [];
+
+    public IReadOnlyList<SessionStatus> MatchSessionStatuses { get; init; } = [];
+
+    public IReadOnlyList<NavigationStatus> MatchNavigationStatuses { get; init; } = [];
+
+    public bool? RequireTransitioning { get; init; }
+
+    public bool RequireDestination { get; init; }
+
+    public bool RequireIdleNavigation { get; init; }
+
+    public bool RequireIdleActivity { get; init; }
+
+    public bool RequireNoActiveTarget { get; init; }
+
+    public bool RequireActiveTarget { get; init; }
+
+    public bool? MatchResourceCritical { get; init; }
+
+    public bool? MatchResourceDegraded { get; init; }
+
+    public bool RequireDefensivePosture { get; init; }
+
+    public double? MinProgressPercent { get; init; }
+
+    public double? MaxProgressPercent { get; init; }
+
+    public double? MinResourcePercent { get; init; }
+
+    public double? MaxResourcePercent { get; init; }
+
+    public int? MinWarningCount { get; init; }
+
+    public int? MaxWarningCount { get; init; }
+
+    public int? MinUnknownCount { get; init; }
+
+    public int? MaxUnknownCount { get; init; }
+
+    public int? MinAvailableCount { get; init; }
+
+    public int? MaxAvailableCount { get; init; }
+
+    public double? MinConfidence { get; init; }
+
+    public double? MaxConfidence { get; init; }
+
+    public string? MetricName { get; init; }
+
+    public double? MinMetricValue { get; init; }
+
+    public double? MaxMetricValue { get; init; }
+
+    public string DirectiveKind { get; init; } = "Observe";
+
+    public int Priority { get; init; }
+
+    public string SuggestedPolicy { get; init; } = "Observe";
+
+    public bool Blocks { get; init; }
+
+    public bool Aborts { get; init; }
+
+    public int MinimumWaitMs { get; init; }
+
+    public string? ThresholdName { get; init; }
+
+    public string? PolicyMode { get; init; }
+
+    public string? TargetLabelTemplate { get; init; }
+
+    public string Reason { get; init; } = string.Empty;
+}
+
+public sealed class AllowRuleOptions : PolicyRuleOptions;
+
+public sealed class DenyRuleOptions : PolicyRuleOptions;
+
+public sealed class RetreatRuleOptions : PolicyRuleOptions;
+
+public sealed class WaitRuleOptions : PolicyRuleOptions;

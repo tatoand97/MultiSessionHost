@@ -1,14 +1,23 @@
 using MultiSessionHost.Core.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MultiSessionHost.Desktop.Policy;
 
 public sealed class ResourceUsagePolicy : IPolicy
 {
-    private readonly SessionHostOptions _options;
+    private readonly IPolicyRuleProvider _ruleProvider;
+    private readonly IPolicyRuleMatcher _matcher;
 
     public ResourceUsagePolicy(SessionHostOptions options)
+        : this(new ConfiguredPolicyRuleProvider(options), new DefaultPolicyRuleMatcher())
     {
-        _options = options;
+    }
+
+    [ActivatorUtilitiesConstructor]
+    public ResourceUsagePolicy(IPolicyRuleProvider ruleProvider, IPolicyRuleMatcher matcher)
+    {
+        _ruleProvider = ruleProvider;
+        _matcher = matcher;
     }
 
     public string Name => nameof(ResourceUsagePolicy);
@@ -16,49 +25,26 @@ public sealed class ResourceUsagePolicy : IPolicy
     public ValueTask<PolicyEvaluationResult> EvaluateAsync(PolicyEvaluationContext context, CancellationToken cancellationToken)
     {
         var builder = new PolicyResultBuilder(Name);
-        var policyOptions = _options.PolicyEngine.ResourceUsagePolicy;
-        var resources = context.SessionDomainState.Resources;
-        var lowestPercent = new[] { resources.HealthPercent, resources.CapacityPercent, resources.EnergyPercent }
-            .Where(static value => value.HasValue)
-            .Select(static value => value!.Value)
-            .DefaultIfEmpty(100)
-            .Min();
+        var candidate = PolicyCandidateFactory.CreateResourceUsage(context);
 
-        if (resources.IsCritical || lowestPercent <= policyOptions.CriticalPercentThreshold || resources.AvailableChargeCount == 0)
+        foreach (var rule in _ruleProvider.GetRules().ResourceUsageRules)
         {
-            builder.AddReason("critical-resource", "One or more resources are critical.");
+            if (!_matcher.IsMatch(rule, candidate, out var matchedCriteria))
+            {
+                continue;
+            }
+
+            builder.AddReason(rule.RuleName, rule.Reason);
             builder.AddDirective(
-                DecisionDirectiveKind.Withdraw,
-                policyOptions.CriticalPriority,
+                rule.DirectiveKind,
+                rule.Priority,
                 targetId: null,
-                targetLabel: "resources",
-                suggestedPolicy: "Withdraw",
-                metadata: PolicyHelpers.Metadata(
-                    ("lowestPercent", lowestPercent.ToString("0.##")),
-                    ("availableChargeCount", resources.AvailableChargeCount?.ToString())),
-                blocks: true);
-        }
-        else if (resources.IsDegraded || lowestPercent <= policyOptions.DegradedPercentThreshold)
-        {
-            builder.AddReason("degraded-resource", "Resource posture is degraded and should be conserved.");
-            builder.AddDirective(
-                DecisionDirectiveKind.ConserveResource,
-                policyOptions.DegradedPriority,
-                targetId: null,
-                targetLabel: "resources",
-                suggestedPolicy: "ConserveResource",
-                metadata: PolicyHelpers.Metadata(("lowestPercent", lowestPercent.ToString("0.##"))));
-        }
-        else if (context.SessionDomainState.Combat.DefensivePostureActive)
-        {
-            builder.AddReason("defensive-resource-use", "Defensive posture is active and resources are available.");
-            builder.AddDirective(
-                DecisionDirectiveKind.UseResource,
-                policyOptions.DegradedPriority,
-                targetId: null,
-                targetLabel: "defensive-posture",
-                suggestedPolicy: "UseResource",
-                metadata: PolicyHelpers.Metadata(("activityPhase", context.SessionDomainState.Combat.ActivityPhase)));
+                PolicyHelpers.ResolveTargetLabel(rule, candidate),
+                rule.SuggestedPolicy,
+                PolicyHelpers.RuleMetadata(rule, candidate, matchedCriteria, context.Now),
+                rule.Blocks,
+                rule.Aborts);
+            break;
         }
 
         return ValueTask.FromResult(builder.Build());

@@ -213,6 +213,198 @@ public sealed class PolicyEngineTests
         Assert.Null(await planStore.GetLatestAsync(betaId, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task SiteSelectionAllowlist_ChangesSelectedSiteWhenConfigChanges()
+    {
+        var sessionId = new SessionId("policy-site-rules");
+        var context = CreateContext(
+            sessionId,
+            domain: CreateDomain(sessionId) with
+            {
+                Location = LocationState.CreateDefault() with { ContextLabel = "alpha-site", IsUnknown = false },
+                Threat = ThreatState.CreateDefault() with { Severity = ThreatSeverity.None }
+            });
+        var blockedOptions = OptionsWithRules(siteRules:
+        [
+            new AllowRuleOptions
+            {
+                RuleName = "only-beta",
+                MatchLabels = ["beta-site"],
+                DirectiveKind = "SelectSite",
+                Priority = 400,
+                SuggestedPolicy = "SelectSite"
+            }
+        ]);
+        var allowedOptions = OptionsWithRules(siteRules:
+        [
+            new AllowRuleOptions
+            {
+                RuleName = "only-alpha",
+                MatchLabels = ["alpha-site"],
+                DirectiveKind = "SelectSite",
+                Priority = 401,
+                SuggestedPolicy = "SelectSite"
+            }
+        ]);
+
+        var blocked = await new SelectNextSitePolicy(blockedOptions).EvaluateAsync(context, CancellationToken.None);
+        var allowed = await new SelectNextSitePolicy(allowedOptions).EvaluateAsync(context, CancellationToken.None);
+
+        Assert.Empty(blocked.Directives);
+        var directive = Assert.Single(allowed.Directives);
+        Assert.Equal(DecisionDirectiveKind.SelectSite, directive.DirectiveKind);
+        Assert.Equal("only-alpha", directive.Metadata["matchedRuleName"]);
+        Assert.Equal(401, directive.Priority);
+    }
+
+    [Fact]
+    public async Task ThreatDenyRule_ForcesConfiguredWithdraw()
+    {
+        var sessionId = new SessionId("policy-threat-deny");
+        var options = OptionsWithRules(threatRules:
+        [
+            new RetreatRuleOptions
+            {
+                RuleName = "deny-alert-label",
+                MatchLabels = ["candidate-label"],
+                DirectiveKind = "Withdraw",
+                Priority = 777,
+                SuggestedPolicy = "Withdraw",
+                Blocks = true,
+                MinimumWaitMs = 12_000,
+                Reason = "Configured deny label."
+            }
+        ]);
+        var context = CreateContext(
+            sessionId,
+            riskAssessment: CreateRisk(sessionId, RiskPolicySuggestion.Observe, RiskSeverity.Low, priority: 100));
+
+        var result = await new ThreatResponsePolicy(options).EvaluateAsync(context, CancellationToken.None);
+
+        var directive = Assert.Single(result.Directives);
+        Assert.True(result.DidBlock);
+        Assert.Equal(DecisionDirectiveKind.Withdraw, directive.DirectiveKind);
+        Assert.Equal("deny-alert-label", directive.Metadata["matchedRuleName"]);
+        Assert.Equal("12000", directive.Metadata["minimumWaitMs"]);
+        Assert.True(directive.Metadata.ContainsKey("notBeforeUtc"));
+    }
+
+    [Fact]
+    public async Task ResourceRules_ChangeBehaviorWhenThresholdChanges()
+    {
+        var sessionId = new SessionId("policy-resource-rules");
+        var context = CreateContext(
+            sessionId,
+            domain: CreateDomain(sessionId) with
+            {
+                Resources = ResourceState.CreateDefault() with { EnergyPercent = 30 }
+            });
+        var conserveOptions = OptionsWithRules(resourceRules:
+        [
+            new AllowRuleOptions
+            {
+                RuleName = "conserve-under-35",
+                MaxResourcePercent = 35,
+                DirectiveKind = "ConserveResource",
+                Priority = 500,
+                SuggestedPolicy = "ConserveResource"
+            }
+        ]);
+        var withdrawOptions = OptionsWithRules(resourceRules:
+        [
+            new AllowRuleOptions
+            {
+                RuleName = "withdraw-under-35",
+                MaxResourcePercent = 35,
+                DirectiveKind = "Withdraw",
+                Priority = 800,
+                SuggestedPolicy = "Withdraw",
+                Blocks = true
+            }
+        ]);
+
+        var conserve = await new ResourceUsagePolicy(conserveOptions).EvaluateAsync(context, CancellationToken.None);
+        var withdraw = await new ResourceUsagePolicy(withdrawOptions).EvaluateAsync(context, CancellationToken.None);
+
+        Assert.Equal(DecisionDirectiveKind.ConserveResource, Assert.Single(conserve.Directives).DirectiveKind);
+        Assert.Equal(DecisionDirectiveKind.Withdraw, Assert.Single(withdraw.Directives).DirectiveKind);
+    }
+
+    [Fact]
+    public async Task TransitWaitRule_EmitsConfiguredWaitMetadata()
+    {
+        var sessionId = new SessionId("policy-transit-wait-rules");
+        var options = OptionsWithRules(transitRules:
+        [
+            new WaitRuleOptions
+            {
+                RuleName = "wait-progress-under-half",
+                MatchNavigationStatuses = [NavigationStatus.InProgress],
+                MaxProgressPercent = 50,
+                DirectiveKind = "Wait",
+                Priority = 678,
+                SuggestedPolicy = "Wait",
+                Blocks = true,
+                MinimumWaitMs = 9_000
+            }
+        ]);
+        var context = CreateContext(
+            sessionId,
+            domain: CreateDomain(sessionId) with
+            {
+                Navigation = NavigationState.CreateDefault() with { Status = NavigationStatus.InProgress, ProgressPercent = 25, DestinationLabel = "next-site" }
+            });
+
+        var result = await new TransitPolicy(options).EvaluateAsync(context, CancellationToken.None);
+
+        var directive = Assert.Single(result.Directives);
+        Assert.Equal(DecisionDirectiveKind.Wait, directive.DirectiveKind);
+        Assert.Equal("wait-progress-under-half", directive.Metadata["matchedRuleName"]);
+        Assert.Equal("9000", directive.Metadata["minimumWaitMs"]);
+    }
+
+    [Fact]
+    public async Task AbortRules_EmitPauseOrAbortAccordingToConfig()
+    {
+        var sessionId = new SessionId("policy-abort-rules");
+        var context = CreateContext(
+            sessionId,
+            runtimeStatus: SessionStatus.Faulted);
+        var pauseOptions = OptionsWithRules(abortRules:
+        [
+            new RetreatRuleOptions
+            {
+                RuleName = "faulted-pauses",
+                MatchSessionStatuses = [SessionStatus.Faulted],
+                DirectiveKind = "PauseActivity",
+                Priority = 700,
+                SuggestedPolicy = "PauseActivity",
+                Blocks = true
+            }
+        ]);
+        var abortOptions = OptionsWithRules(abortRules:
+        [
+            new RetreatRuleOptions
+            {
+                RuleName = "faulted-aborts",
+                MatchSessionStatuses = [SessionStatus.Faulted],
+                DirectiveKind = "Abort",
+                Priority = 900,
+                SuggestedPolicy = "Abort",
+                Blocks = true,
+                Aborts = true
+            }
+        ]);
+
+        var pause = await new AbortPolicy(pauseOptions).EvaluateAsync(context, CancellationToken.None);
+        var abort = await new AbortPolicy(abortOptions).EvaluateAsync(context, CancellationToken.None);
+
+        Assert.Equal(DecisionDirectiveKind.PauseActivity, Assert.Single(pause.Directives).DirectiveKind);
+        Assert.False(pause.DidAbort);
+        Assert.Equal(DecisionDirectiveKind.Abort, Assert.Single(abort.Directives).DirectiveKind);
+        Assert.True(abort.DidAbort);
+    }
+
     private static IReadOnlyList<IPolicy> CreatePolicies(SessionHostOptions options) =>
     [
         new AbortPolicy(options),
@@ -222,6 +414,43 @@ public sealed class PolicyEngineTests
         new TargetPrioritizationPolicy(options),
         new SelectNextSitePolicy(options)
     ];
+
+    private static SessionHostOptions OptionsWithRules(
+        IReadOnlyList<AllowRuleOptions>? siteRules = null,
+        IReadOnlyList<RetreatRuleOptions>? threatRules = null,
+        IReadOnlyList<AllowRuleOptions>? resourceRules = null,
+        IReadOnlyList<WaitRuleOptions>? transitRules = null,
+        IReadOnlyList<RetreatRuleOptions>? abortRules = null) =>
+        new()
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                Rules = new BehaviorRulesOptions
+                {
+                    SiteSelection = new SiteSelectionRulesOptions
+                    {
+                        AllowRules = siteRules ?? [],
+                        IgnoreNonAllowlistedSites = true
+                    },
+                    ThreatResponse = new ThreatResponseRulesOptions
+                    {
+                        RetreatRules = threatRules ?? []
+                    },
+                    ResourceUsage = new ResourceUsageRulesOptions
+                    {
+                        Rules = resourceRules ?? []
+                    },
+                    Transit = new TransitRulesOptions
+                    {
+                        Rules = transitRules ?? []
+                    },
+                    Abort = new AbortRulesOptions
+                    {
+                        Rules = abortRules ?? []
+                    }
+                }
+            }
+        };
 
     private static PolicyEvaluationContext CreateContext(
         SessionId sessionId,

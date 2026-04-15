@@ -76,12 +76,33 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionRiskAssessmentStore, InMemorySessionRiskAssessmentStore>();
         services.AddSingleton<IRiskClassificationPipeline, DefaultRiskClassificationPipeline>();
         services.AddSingleton<ISessionDomainStateProjectionService, DefaultSessionDomainStateProjectionService>();
-        services.AddSingleton<IPolicy, AbortPolicy>();
-        services.AddSingleton<IPolicy, ThreatResponsePolicy>();
-        services.AddSingleton<IPolicy, TransitPolicy>();
-        services.AddSingleton<IPolicy, ResourceUsagePolicy>();
-        services.AddSingleton<IPolicy, TargetPrioritizationPolicy>();
-        services.AddSingleton<IPolicy, SelectNextSitePolicy>();
+        services.AddSingleton<IPolicyRuleProvider, ConfiguredPolicyRuleProvider>();
+        services.AddSingleton<IPolicyRuleMatcher, DefaultPolicyRuleMatcher>();
+        services.AddSingleton<IPolicy>(
+            static serviceProvider => new AbortPolicy(
+                serviceProvider.GetRequiredService<IPolicyRuleProvider>(),
+                serviceProvider.GetRequiredService<IPolicyRuleMatcher>()));
+        services.AddSingleton<IPolicy>(
+            static serviceProvider => new ThreatResponsePolicy(
+                serviceProvider.GetRequiredService<IPolicyRuleProvider>(),
+                serviceProvider.GetRequiredService<IPolicyRuleMatcher>()));
+        services.AddSingleton<IPolicy>(
+            static serviceProvider => new TransitPolicy(
+                serviceProvider.GetRequiredService<IPolicyRuleProvider>(),
+                serviceProvider.GetRequiredService<IPolicyRuleMatcher>()));
+        services.AddSingleton<IPolicy>(
+            static serviceProvider => new ResourceUsagePolicy(
+                serviceProvider.GetRequiredService<IPolicyRuleProvider>(),
+                serviceProvider.GetRequiredService<IPolicyRuleMatcher>()));
+        services.AddSingleton<IPolicy>(
+            static serviceProvider => new TargetPrioritizationPolicy(
+                serviceProvider.GetRequiredService<IPolicyRuleProvider>(),
+                serviceProvider.GetRequiredService<IPolicyRuleMatcher>()));
+        services.AddSingleton<IPolicy>(
+            static serviceProvider => new SelectNextSitePolicy(
+                serviceProvider.GetRequiredService<SessionHostOptions>(),
+                serviceProvider.GetRequiredService<IPolicyRuleProvider>(),
+                serviceProvider.GetRequiredService<IPolicyRuleMatcher>()));
         services.AddSingleton<IDecisionPlanAggregator, DefaultDecisionPlanAggregator>();
         services.AddSingleton<ISessionDecisionPlanStore, InMemorySessionDecisionPlanStore>();
         services.AddSingleton<IPolicyEngine, DefaultPolicyEngine>();

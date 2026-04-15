@@ -344,7 +344,7 @@ Si la proyección UI falla, el mismo servicio registra el error en `SessionUiSta
 
 ## Policy engine
 
-El policy engine es la capa de comportamiento. Vive después de la proyección de dominio y consume `SessionDomainState`, `UiSemanticExtractionResult` y `RiskAssessmentResult` sin reemplazar esas capas. Su salida es un `DecisionPlan` inmutable con:
+El policy engine es la capa de comportamiento. Vive después de la proyección de dominio y consume `SessionDomainState`, `UiSemanticExtractionResult` y `RiskAssessmentResult` sin reemplazar esas capas. Las políticas ya no contienen constantes de comportamiento: selección, espera, retiro, pausa, umbrales, prioridades, allowlists y denylists salen de reglas configurables bajo `PolicyEngine:Rules`. Su salida es un `DecisionPlan` inmutable con:
 
 - `PlanStatus`
 - `DecisionDirective[]`
@@ -352,7 +352,7 @@ El policy engine es la capa de comportamiento. Vive después de la proyección d
 - `PolicyExecutionSummary`
 - `Warnings`
 
-Las directivas son instrucciones planificadas como `Observe`, `SelectSite`, `PrioritizeTarget`, `ConserveResource`, `Wait`, `Withdraw` o `Abort`. Esta fase solo planifica: no invoca `UiCommandExecutor`, no encola work items y no interactúa con targets.
+Las directivas son instrucciones planificadas como `Observe`, `SelectSite`, `PrioritizeTarget`, `AvoidTarget`, `ConserveResource`, `Wait`, `Withdraw`, `PauseActivity` o `Abort`. Esta fase solo planifica: no invoca `UiCommandExecutor`, no encola work items y no interactúa con targets. Cada directiva conserva metadata explicable como `matchedRuleName`, `reasonRuleName`, `matchedCriteria`, `minimumWaitMs`, `notBeforeUtc`, `thresholdName` y `policyMode`.
 
 Orden default:
 
@@ -382,6 +382,154 @@ El orden y límites se configuran bajo `MultiSessionHost:PolicyEngine`:
     "PreferThreatResponseOverSelection": true,
     "PreferTransitStability": true,
     "MinDirectivePriority": 0
+  }
+}
+```
+
+### Reglas configurables de comportamiento
+
+`IPolicyRuleProvider` normaliza la configuración en reglas inmutables y `IPolicyRuleMatcher` aplica matching determinístico por orden configurado. Las políticas construyen candidatos normalizados desde el estado existente y no leen config raw directamente:
+
+- `SelectNextSitePolicy`: usa `SiteSelection` para allowlists por label/type/tags, severidad permitida, estado idle requerido y fallback configurable.
+- `ThreatResponsePolicy`: usa `ThreatResponse` para denylists y reglas de retiro/pausa/observación/priorización.
+- `TargetPrioritizationPolicy`: usa `TargetPrioritization` para excluir denylisted targets, aplicar prioridades y filtrar por confianza/severidad.
+- `ResourceUsagePolicy`: usa `ResourceUsage` para umbrales de recursos, conteos y decisión entre conservar, usar recurso, pausar o retirar.
+- `TransitPolicy`: usa `Transit` para esperas mínimas, progreso, tránsito bloqueado y navegación.
+- `AbortPolicy`: usa `Abort` para decidir abortar, pausar o retirar según reglas explícitas.
+
+Ejemplo genérico:
+
+```json
+{
+  "PolicyEngine": {
+    "Rules": {
+      "SiteSelection": {
+        "IgnoreNonAllowlistedSites": true,
+        "UnknownSiteLabel": "unknown-worksite",
+        "DefaultSiteLabel": "worksite",
+        "AllowRules": [
+          {
+            "RuleName": "allowed-worksites",
+            "MatchLabels": [ "primary-site", "backup-site" ],
+            "LabelMatchMode": "Exact",
+            "MatchTags": [ "approved" ],
+            "AllowedThreatSeverities": [ "None", "Low", "Unknown" ],
+            "RequireIdleNavigation": true,
+            "RequireIdleActivity": true,
+            "RequireNoActiveTarget": true,
+            "DirectiveKind": "SelectSite",
+            "Priority": 250,
+            "SuggestedPolicy": "SelectSite",
+            "TargetLabelTemplate": "{siteLabel}"
+          }
+        ]
+      },
+      "ThreatResponse": {
+        "DenyRules": [
+          {
+            "RuleName": "deny-dangerous-entities",
+            "MatchTags": [ "dangerous" ],
+            "DirectiveKind": "Withdraw",
+            "Priority": 920,
+            "SuggestedPolicy": "Withdraw",
+            "Blocks": true,
+            "MinimumWaitMs": 15000,
+            "PolicyMode": "retreat"
+          }
+        ],
+        "RetreatRules": [
+          {
+            "RuleName": "critical-alert-hide-window",
+            "MatchTypes": [ "CriticalAlert" ],
+            "MinRiskSeverity": "Critical",
+            "DirectiveKind": "PauseActivity",
+            "Priority": 930,
+            "SuggestedPolicy": "PauseActivity",
+            "Blocks": true,
+            "MinimumWaitMs": 30000,
+            "PolicyMode": "seek-safety"
+          }
+        ]
+      },
+      "TargetPrioritization": {
+        "PriorityRules": [
+          {
+            "RuleName": "prioritize-approved-high-confidence",
+            "MatchTags": [ "approved" ],
+            "MinConfidence": 0.75,
+            "DirectiveKind": "PrioritizeTarget",
+            "Priority": 610,
+            "SuggestedPolicy": "Prioritize"
+          }
+        ],
+        "DenyRules": [
+          {
+            "RuleName": "never-primary-denylisted",
+            "MatchTags": [ "deny-primary" ],
+            "DirectiveKind": "AvoidTarget",
+            "Priority": 620,
+            "SuggestedPolicy": "Avoid"
+          }
+        ]
+      },
+      "ResourceUsage": {
+        "Rules": [
+          {
+            "RuleName": "withdraw-low-resource",
+            "MaxResourcePercent": 15,
+            "ThresholdName": "resourcePercent",
+            "DirectiveKind": "Withdraw",
+            "Priority": 720,
+            "SuggestedPolicy": "Withdraw",
+            "Blocks": true
+          },
+          {
+            "RuleName": "conserve-degraded-resource",
+            "MaxResourcePercent": 35,
+            "DirectiveKind": "ConserveResource",
+            "Priority": 560,
+            "SuggestedPolicy": "ConserveResource"
+          }
+        ]
+      },
+      "Transit": {
+        "Rules": [
+          {
+            "RuleName": "wait-while-progress-low",
+            "MatchNavigationStatuses": [ "InProgress" ],
+            "MaxProgressPercent": 75,
+            "DirectiveKind": "Wait",
+            "Priority": 650,
+            "SuggestedPolicy": "Wait",
+            "Blocks": true,
+            "MinimumWaitMs": 5000
+          }
+        ]
+      },
+      "Abort": {
+        "Rules": [
+          {
+            "RuleName": "abort-faulted-runtime",
+            "MatchSessionStatuses": [ "Faulted" ],
+            "DirectiveKind": "Abort",
+            "Priority": 1000,
+            "SuggestedPolicy": "Abort",
+            "Blocks": true,
+            "Aborts": true
+          },
+          {
+            "RuleName": "pause-warning-burst",
+            "MinWarningCount": 3,
+            "MatchResourceCritical": true,
+            "DirectiveKind": "PauseActivity",
+            "Priority": 950,
+            "SuggestedPolicy": "PauseActivity",
+            "Blocks": true,
+            "MinimumWaitMs": 10000
+          }
+        ]
+      }
+    }
   }
 }
 ```
@@ -677,6 +825,11 @@ La sección sigue siendo `MultiSessionHost`.
 - `PolicyEngine.MaxReturnedDirectives` debe ser mayor que cero.
 - las prioridades de políticas deben estar entre 0 y 1000.
 - los thresholds de recursos deben estar entre 0 y 100 y critical no puede ser mayor que degraded.
+- cada regla de política activa debe tener `RuleName` único dentro de su familia.
+- prioridades de reglas de política deben estar entre 0 y 1000.
+- duraciones `MinimumWaitMs` no pueden ser negativas.
+- rangos de progreso, recurso y confianza deben ser coherentes.
+- reglas no-site deben declarar al menos un matcher o threshold.
 
 ## Admin API
 
@@ -712,6 +865,13 @@ Endpoints existentes mantenidos:
 - `GET /sessions/{id}/decision-plan/summary`
 - `GET /sessions/{id}/decision-plan/directives`
 - `POST /sessions/{id}/decision-plan/evaluate`
+- `GET /policy-rules`
+- `GET /policy-rules/site-selection`
+- `GET /policy-rules/threat-response`
+- `GET /policy-rules/target-prioritization`
+- `GET /policy-rules/resource-usage`
+- `GET /policy-rules/transit`
+- `GET /policy-rules/abort`
 
 Endpoints nuevos de inspección:
 
@@ -775,6 +935,13 @@ Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan
 Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan/summary
 Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan/directives
 Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/decision-plan/evaluate
+Invoke-RestMethod http://localhost:5088/policy-rules
+Invoke-RestMethod http://localhost:5088/policy-rules/site-selection
+Invoke-RestMethod http://localhost:5088/policy-rules/threat-response
+Invoke-RestMethod http://localhost:5088/policy-rules/target-prioritization
+Invoke-RestMethod http://localhost:5088/policy-rules/resource-usage
+Invoke-RestMethod http://localhost:5088/policy-rules/transit
+Invoke-RestMethod http://localhost:5088/policy-rules/abort
 ```
 
 Escenarios esperados:

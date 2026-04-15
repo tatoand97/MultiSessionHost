@@ -1,15 +1,23 @@
 using MultiSessionHost.Core.Configuration;
-using MultiSessionHost.Core.Enums;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MultiSessionHost.Desktop.Policy;
 
 public sealed class ThreatResponsePolicy : IPolicy
 {
-    private readonly SessionHostOptions _options;
+    private readonly IPolicyRuleProvider _ruleProvider;
+    private readonly IPolicyRuleMatcher _matcher;
 
     public ThreatResponsePolicy(SessionHostOptions options)
+        : this(new ConfiguredPolicyRuleProvider(options), new DefaultPolicyRuleMatcher())
     {
-        _options = options;
+    }
+
+    [ActivatorUtilitiesConstructor]
+    public ThreatResponsePolicy(IPolicyRuleProvider ruleProvider, IPolicyRuleMatcher matcher)
+    {
+        _ruleProvider = ruleProvider;
+        _matcher = matcher;
     }
 
     public string Name => nameof(ThreatResponsePolicy);
@@ -17,70 +25,28 @@ public sealed class ThreatResponsePolicy : IPolicy
     public ValueTask<PolicyEvaluationResult> EvaluateAsync(PolicyEvaluationContext context, CancellationToken cancellationToken)
     {
         var builder = new PolicyResultBuilder(Name);
-        var policyOptions = _options.PolicyEngine.ThreatResponsePolicy;
-        var threat = context.SessionDomainState.Threat;
-        var topThreat = PolicyHelpers.GetTopThreat(context.RiskAssessmentResult);
-        var suggestedPolicy = topThreat?.SuggestedPolicy.ToString() ?? threat.TopSuggestedPolicy;
-        var targetId = topThreat?.CandidateId ?? context.SessionDomainState.Target.PrimaryTargetId;
-        var targetLabel = topThreat?.Name ?? threat.TopEntityLabel ?? context.SessionDomainState.Target.PrimaryTargetLabel;
+        var candidates = PolicyCandidateFactory.CreateThreatResponse(context);
 
-        if (string.Equals(suggestedPolicy, RiskPolicySuggestion.Withdraw.ToString(), StringComparison.OrdinalIgnoreCase) ||
-            threat.Severity == ThreatSeverity.Critical)
+        foreach (var rule in _ruleProvider.GetRules().ThreatResponseRules)
         {
-            builder.AddReason("withdraw-threat", "A severe threat requests withdrawal before normal planning continues.");
+            var candidate = candidates.FirstOrDefault(candidate => _matcher.IsMatch(rule, candidate, out _));
+
+            if (candidate is null || !_matcher.IsMatch(rule, candidate, out var matchedCriteria))
+            {
+                continue;
+            }
+
+            builder.AddReason(rule.RuleName, rule.Reason);
             builder.AddDirective(
-                DecisionDirectiveKind.Withdraw,
-                policyOptions.WithdrawPriority,
-                targetId,
-                targetLabel,
-                RiskPolicySuggestion.Withdraw.ToString(),
-                PolicyHelpers.Metadata(("severity", threat.Severity.ToString()), ("suggestedPolicy", suggestedPolicy)),
-                blocks: true);
-        }
-        else if (string.Equals(suggestedPolicy, RiskPolicySuggestion.PauseActivity.ToString(), StringComparison.OrdinalIgnoreCase))
-        {
-            builder.AddReason("pause-threat", "The top threat requests pausing activity.");
-            builder.AddDirective(
-                DecisionDirectiveKind.PauseActivity,
-                policyOptions.PausePriority,
-                targetId,
-                targetLabel,
-                RiskPolicySuggestion.PauseActivity.ToString(),
-                PolicyHelpers.Metadata(("severity", threat.Severity.ToString())),
-                blocks: true);
-        }
-        else if (string.Equals(suggestedPolicy, RiskPolicySuggestion.Prioritize.ToString(), StringComparison.OrdinalIgnoreCase) && topThreat is not null)
-        {
-            builder.AddReason("prioritized-threat", "A classified threat is the highest priority entity.");
-            builder.AddDirective(
-                DecisionDirectiveKind.PrioritizeTarget,
-                policyOptions.PrioritizePriority,
-                topThreat.CandidateId,
-                topThreat.Name,
-                topThreat.SuggestedPolicy.ToString(),
-                PolicyHelpers.Metadata(("severity", topThreat.Severity.ToString()), ("entityType", topThreat.Type)));
-        }
-        else if (string.Equals(suggestedPolicy, RiskPolicySuggestion.Avoid.ToString(), StringComparison.OrdinalIgnoreCase) && topThreat is not null)
-        {
-            builder.AddReason("avoid-threat", "A classified threat should be avoided.");
-            builder.AddDirective(
-                DecisionDirectiveKind.AvoidTarget,
-                policyOptions.AvoidPriority,
-                topThreat.CandidateId,
-                topThreat.Name,
-                topThreat.SuggestedPolicy.ToString(),
-                PolicyHelpers.Metadata(("severity", topThreat.Severity.ToString()), ("entityType", topThreat.Type)));
-        }
-        else if (threat.Severity == ThreatSeverity.Unknown || context.RiskAssessmentResult?.Summary.UnknownCount > 0)
-        {
-            builder.AddReason("observe-unknown-threat", "Threat posture is unknown, so the next behavior should observe before committing.");
-            builder.AddDirective(
-                DecisionDirectiveKind.Observe,
-                policyOptions.ObservePriority,
-                targetId,
-                targetLabel,
-                RiskPolicySuggestion.Observe.ToString(),
-                PolicyHelpers.Metadata(("severity", threat.Severity.ToString())));
+                rule.DirectiveKind,
+                rule.Priority,
+                candidate.CandidateId,
+                PolicyHelpers.ResolveTargetLabel(rule, candidate),
+                rule.SuggestedPolicy,
+                PolicyHelpers.RuleMetadata(rule, candidate, matchedCriteria, context.Now),
+                rule.Blocks,
+                rule.Aborts);
+            break;
         }
 
         return ValueTask.FromResult(builder.Build());

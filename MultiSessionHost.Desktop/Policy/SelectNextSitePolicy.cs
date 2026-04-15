@@ -1,15 +1,25 @@
 using MultiSessionHost.Core.Configuration;
-using MultiSessionHost.Core.Enums;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MultiSessionHost.Desktop.Policy;
 
 public sealed class SelectNextSitePolicy : IPolicy
 {
     private readonly SessionHostOptions _options;
+    private readonly IPolicyRuleProvider _ruleProvider;
+    private readonly IPolicyRuleMatcher _matcher;
 
     public SelectNextSitePolicy(SessionHostOptions options)
+        : this(options, new ConfiguredPolicyRuleProvider(options), new DefaultPolicyRuleMatcher())
+    {
+    }
+
+    [ActivatorUtilitiesConstructor]
+    public SelectNextSitePolicy(SessionHostOptions options, IPolicyRuleProvider ruleProvider, IPolicyRuleMatcher matcher)
     {
         _options = options;
+        _ruleProvider = ruleProvider;
+        _matcher = matcher;
     }
 
     public string Name => nameof(SelectNextSitePolicy);
@@ -17,45 +27,46 @@ public sealed class SelectNextSitePolicy : IPolicy
     public ValueTask<PolicyEvaluationResult> EvaluateAsync(PolicyEvaluationContext context, CancellationToken cancellationToken)
     {
         var builder = new PolicyResultBuilder(Name);
-        var policyOptions = _options.PolicyEngine.SelectNextSitePolicy;
         var domain = context.SessionDomainState;
-        var safeEnough = domain.Threat.IsSafe == true ||
-            domain.Threat.Severity is ThreatSeverity.None or ThreatSeverity.Low or ThreatSeverity.Unknown;
+        var siteLabel = domain.Location.IsUnknown
+            ? _options.PolicyEngine.Rules.SiteSelection.UnknownSiteLabel
+            : domain.Location.SubLocationLabel ?? domain.Location.ContextLabel ?? _options.PolicyEngine.Rules.SiteSelection.DefaultSiteLabel;
+        var siteType = domain.Location.Confidence.ToString();
+        var candidate = PolicyCandidateFactory.CreateSiteSelection(context, siteLabel, siteType);
 
-        if (!domain.Navigation.IsTransitioning &&
-            domain.Navigation.Status is NavigationStatus.Idle or NavigationStatus.Unknown &&
-            domain.Combat.Status is CombatStatus.Idle or CombatStatus.Unknown &&
-            !domain.Target.HasActiveTarget &&
-            safeEnough)
+        foreach (var rule in _ruleProvider.GetRules().SiteSelectionRules)
         {
-            var siteLabel = domain.Location.IsUnknown
-                ? "unknown-worksite"
-                : domain.Location.SubLocationLabel ?? domain.Location.ContextLabel ?? "worksite";
+            if (!_matcher.IsMatch(rule, candidate, out var matchedCriteria))
+            {
+                builder.AddReason(rule.RuleName + "-rejected", "Site selection candidate did not match configured rule.");
+                continue;
+            }
 
-            builder.AddReason("idle-safe-site-selection", "The session is idle enough to choose the next work context.");
+            builder.AddReason(rule.RuleName, rule.Reason);
             builder.AddDirective(
-                DecisionDirectiveKind.SelectSite,
-                policyOptions.SelectSitePriority,
+                rule.DirectiveKind,
+                rule.Priority,
                 targetId: null,
-                targetLabel: siteLabel,
-                suggestedPolicy: "SelectSite",
-                metadata: PolicyHelpers.Metadata(
-                    ("locationConfidence", domain.Location.Confidence.ToString()),
-                    ("contextLabel", domain.Location.ContextLabel)));
+                PolicyHelpers.ResolveTargetLabel(rule, candidate),
+                rule.SuggestedPolicy,
+                PolicyHelpers.RuleMetadata(rule, candidate, matchedCriteria, context.Now),
+                rule.Blocks,
+                rule.Aborts);
+            return ValueTask.FromResult(builder.Build());
         }
-        else if (!PolicyHelpers.IsSevere(domain.Threat.Severity))
+
+        if (!_options.PolicyEngine.Rules.SiteSelection.IgnoreNonAllowlistedSites)
         {
-            builder.AddReason("observe-before-site-selection", "The session is not ready for site selection; observe current state.");
+            var directiveKind = Enum.Parse<DecisionDirectiveKind>(_options.PolicyEngine.Rules.SiteSelection.NoAllowedCandidateDirectiveKind, ignoreCase: true);
+            builder.AddReason("no-allowed-site", "No configured site-selection rule accepted the candidate.");
             builder.AddDirective(
-                DecisionDirectiveKind.Observe,
-                policyOptions.ObservePriority,
+                directiveKind,
+                _options.PolicyEngine.Rules.SiteSelection.NoAllowedCandidatePriority,
                 targetId: null,
-                targetLabel: domain.Location.ContextLabel,
-                suggestedPolicy: "Observe",
-                metadata: PolicyHelpers.Metadata(
-                    ("navigationStatus", domain.Navigation.Status.ToString()),
-                    ("combatStatus", domain.Combat.Status.ToString()),
-                    ("hasActiveTarget", domain.Target.HasActiveTarget.ToString())));
+                siteLabel,
+                directiveKind.ToString(),
+                PolicyHelpers.Metadata(("siteLabel", siteLabel)),
+                blocks: directiveKind is DecisionDirectiveKind.Wait or DecisionDirectiveKind.PauseActivity);
         }
 
         return ValueTask.FromResult(builder.Build());

@@ -1,15 +1,23 @@
 using MultiSessionHost.Core.Configuration;
-using MultiSessionHost.Core.Enums;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MultiSessionHost.Desktop.Policy;
 
 public sealed class TransitPolicy : IPolicy
 {
-    private readonly SessionHostOptions _options;
+    private readonly IPolicyRuleProvider _ruleProvider;
+    private readonly IPolicyRuleMatcher _matcher;
 
     public TransitPolicy(SessionHostOptions options)
+        : this(new ConfiguredPolicyRuleProvider(options), new DefaultPolicyRuleMatcher())
     {
-        _options = options;
+    }
+
+    [ActivatorUtilitiesConstructor]
+    public TransitPolicy(IPolicyRuleProvider ruleProvider, IPolicyRuleMatcher matcher)
+    {
+        _ruleProvider = ruleProvider;
+        _matcher = matcher;
     }
 
     public string Name => nameof(TransitPolicy);
@@ -17,46 +25,26 @@ public sealed class TransitPolicy : IPolicy
     public ValueTask<PolicyEvaluationResult> EvaluateAsync(PolicyEvaluationContext context, CancellationToken cancellationToken)
     {
         var builder = new PolicyResultBuilder(Name);
-        var policyOptions = _options.PolicyEngine.TransitPolicy;
-        var navigation = context.SessionDomainState.Navigation;
+        var candidate = PolicyCandidateFactory.CreateTransit(context);
 
-        if (navigation.Status == NavigationStatus.Blocked)
+        foreach (var rule in _ruleProvider.GetRules().TransitRules)
         {
-            builder.AddReason("transit-blocked", "Navigation is blocked and should pause before issuing new activity directives.");
+            if (!_matcher.IsMatch(rule, candidate, out var matchedCriteria))
+            {
+                continue;
+            }
+
+            builder.AddReason(rule.RuleName, rule.Reason);
             builder.AddDirective(
-                DecisionDirectiveKind.PauseActivity,
-                policyOptions.BlockedPriority,
+                rule.DirectiveKind,
+                rule.Priority,
                 targetId: null,
-                targetLabel: navigation.DestinationLabel,
-                suggestedPolicy: "PauseActivity",
-                metadata: PolicyHelpers.Metadata(("destination", navigation.DestinationLabel), ("route", navigation.RouteLabel)),
-                blocks: true);
-        }
-        else if (navigation.IsTransitioning || navigation.Status == NavigationStatus.InProgress)
-        {
-            builder.AddReason("transit-in-progress", "Navigation is already in progress; wait to avoid conflicting plan changes.");
-            builder.AddDirective(
-                DecisionDirectiveKind.Wait,
-                policyOptions.WaitPriority,
-                targetId: null,
-                targetLabel: navigation.DestinationLabel,
-                suggestedPolicy: "Wait",
-                metadata: PolicyHelpers.Metadata(
-                    ("destination", navigation.DestinationLabel),
-                    ("route", navigation.RouteLabel),
-                    ("progressPercent", navigation.ProgressPercent?.ToString("0.##"))),
-                blocks: true);
-        }
-        else if (!string.IsNullOrWhiteSpace(navigation.DestinationLabel) && navigation.Status == NavigationStatus.Idle)
-        {
-            builder.AddReason("navigation-destination-known", "A destination is known and navigation is idle.");
-            builder.AddDirective(
-                DecisionDirectiveKind.Navigate,
-                policyOptions.NavigatePriority,
-                targetId: null,
-                targetLabel: navigation.DestinationLabel,
-                suggestedPolicy: "Navigate",
-                metadata: PolicyHelpers.Metadata(("destination", navigation.DestinationLabel), ("route", navigation.RouteLabel)));
+                PolicyHelpers.ResolveTargetLabel(rule, candidate),
+                rule.SuggestedPolicy,
+                PolicyHelpers.RuleMetadata(rule, candidate, matchedCriteria, context.Now),
+                rule.Blocks,
+                rule.Aborts);
+            break;
         }
 
         return ValueTask.FromResult(builder.Build());

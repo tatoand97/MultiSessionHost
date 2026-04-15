@@ -322,6 +322,118 @@ public static class AdminApiEndpointRouteBuilderExtensions
             });
 
         endpoints.MapGet(
+            "/policy-rules",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IPolicyRuleProvider policyRuleProvider,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                return Results.Ok(policyRuleProvider.GetRules().ToDto());
+            });
+
+        endpoints.MapGet(
+            "/policy-rules/site-selection",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IPolicyRuleProvider policyRuleProvider,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                return Results.Ok(policyRuleProvider.GetRules().SiteSelectionRules.Select(static rule => rule.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/policy-rules/threat-response",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IPolicyRuleProvider policyRuleProvider,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                return Results.Ok(policyRuleProvider.GetRules().ThreatResponseRules.Select(static rule => rule.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/policy-rules/target-prioritization",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IPolicyRuleProvider policyRuleProvider,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                return Results.Ok(policyRuleProvider.GetRules().TargetPriorityRules.Select(static rule => rule.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/policy-rules/resource-usage",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IPolicyRuleProvider policyRuleProvider,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                return Results.Ok(policyRuleProvider.GetRules().ResourceUsageRules.Select(static rule => rule.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/policy-rules/transit",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IPolicyRuleProvider policyRuleProvider,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                return Results.Ok(policyRuleProvider.GetRules().TransitRules.Select(static rule => rule.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/policy-rules/abort",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IPolicyRuleProvider policyRuleProvider,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                return Results.Ok(policyRuleProvider.GetRules().AbortRules.Select(static rule => rule.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
             "/sessions/{id}/decision-plan",
             async Task<IResult> (
                 string id,

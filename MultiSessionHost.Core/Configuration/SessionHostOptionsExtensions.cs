@@ -728,6 +728,219 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidatePolicyRuleSet("PolicyEngine.Rules.SiteSelection.AllowRules", options.Rules.SiteSelection.AllowRules, requireMatcher: false, out error) ||
+            !TryValidatePolicyRuleSet("PolicyEngine.Rules.ThreatResponse.RetreatRules", options.Rules.ThreatResponse.RetreatRules, requireMatcher: true, out error) ||
+            !TryValidatePolicyRuleSet("PolicyEngine.Rules.ThreatResponse.DenyRules", options.Rules.ThreatResponse.DenyRules, requireMatcher: true, out error) ||
+            !TryValidatePolicyRuleSet("PolicyEngine.Rules.TargetPrioritization.PriorityRules", options.Rules.TargetPrioritization.PriorityRules, requireMatcher: true, out error) ||
+            !TryValidatePolicyRuleSet("PolicyEngine.Rules.TargetPrioritization.DenyRules", options.Rules.TargetPrioritization.DenyRules, requireMatcher: true, out error) ||
+            !TryValidatePolicyRuleSet("PolicyEngine.Rules.ResourceUsage.Rules", options.Rules.ResourceUsage.Rules, requireMatcher: true, out error) ||
+            !TryValidatePolicyRuleSet("PolicyEngine.Rules.Transit.Rules", options.Rules.Transit.Rules, requireMatcher: true, out error) ||
+            !TryValidatePolicyRuleSet("PolicyEngine.Rules.Abort.Rules", options.Rules.Abort.Rules, requireMatcher: true, out error))
+        {
+            return false;
+        }
+
+        if (!IsValidDirectiveKind(options.Rules.SiteSelection.NoAllowedCandidateDirectiveKind))
+        {
+            error = "PolicyEngine.Rules.SiteSelection.NoAllowedCandidateDirectiveKind is not a valid directive kind.";
+            return false;
+        }
+
+        if (!TryValidatePriority(options.Rules.SiteSelection.NoAllowedCandidatePriority, "Rules.SiteSelection.NoAllowedCandidatePriority", out error))
+        {
+            return false;
+        }
+
+        if (options.Rules.SiteSelection.MinimumWaitMs < 0)
+        {
+            error = "PolicyEngine.Rules.SiteSelection.MinimumWaitMs cannot be negative.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidatePolicyRuleSet(
+        string path,
+        IReadOnlyList<PolicyRuleOptions> rules,
+        bool requireMatcher,
+        out string? error)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rule in rules.Where(static rule => rule.Enabled))
+        {
+            if (string.IsNullOrWhiteSpace(rule.RuleName))
+            {
+                error = $"{path} contains an enabled rule without RuleName.";
+                return false;
+            }
+
+            var ruleName = rule.RuleName.Trim();
+
+            if (!names.Add(ruleName))
+            {
+                error = $"{path} contains duplicate rule '{rule.RuleName}'.";
+                return false;
+            }
+
+            if (!TryValidatePriority(rule.Priority, $"{path}.{ruleName}.Priority", out error))
+            {
+                return false;
+            }
+
+            if (rule.MinimumWaitMs < 0)
+            {
+                error = $"{path}.{ruleName}.MinimumWaitMs cannot be negative.";
+                return false;
+            }
+
+            if (!Enum.IsDefined(rule.LabelMatchMode))
+            {
+                error = $"{path}.{ruleName}.LabelMatchMode is not valid.";
+                return false;
+            }
+
+            if (!Enum.IsDefined(rule.TypeMatchMode))
+            {
+                error = $"{path}.{ruleName}.TypeMatchMode is not valid.";
+                return false;
+            }
+
+            if (!IsValidDirectiveKind(rule.DirectiveKind))
+            {
+                error = $"{path}.{ruleName}.DirectiveKind '{rule.DirectiveKind}' is not valid.";
+                return false;
+            }
+
+            if (rule.MatchLabels.Any(static value => string.IsNullOrWhiteSpace(value)) ||
+                rule.MatchTypes.Any(static value => string.IsNullOrWhiteSpace(value)) ||
+                rule.MatchTags.Any(static value => string.IsNullOrWhiteSpace(value)))
+            {
+                error = $"{path}.{ruleName} contains an empty matcher value.";
+                return false;
+            }
+
+            if (!TryValidateRange(rule.MinProgressPercent, rule.MaxProgressPercent, 0, 100, $"{path}.{ruleName}.ProgressPercent", out error) ||
+                !TryValidateRange(rule.MinResourcePercent, rule.MaxResourcePercent, 0, 100, $"{path}.{ruleName}.ResourcePercent", out error) ||
+                !TryValidateRange(rule.MinConfidence, rule.MaxConfidence, 0, 1, $"{path}.{ruleName}.Confidence", out error) ||
+                !TryValidateRange(rule.MinMetricValue, rule.MaxMetricValue, double.MinValue, double.MaxValue, $"{path}.{ruleName}.MetricValue", out error) ||
+                !TryValidateRange(rule.MinWarningCount, rule.MaxWarningCount, 0, int.MaxValue, $"{path}.{ruleName}.WarningCount", out error) ||
+                !TryValidateRange(rule.MinUnknownCount, rule.MaxUnknownCount, 0, int.MaxValue, $"{path}.{ruleName}.UnknownCount", out error) ||
+                !TryValidateRange(rule.MinAvailableCount, rule.MaxAvailableCount, 0, int.MaxValue, $"{path}.{ruleName}.AvailableCount", out error))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(rule.MetricName) && rule.MinMetricValue is null && rule.MaxMetricValue is null)
+            {
+                error = $"{path}.{ruleName} defines MetricName but no metric threshold.";
+                return false;
+            }
+
+            if (requireMatcher && !HasAnyMatcher(rule))
+            {
+                error = $"{path}.{ruleName} must define at least one matcher or threshold.";
+                return false;
+            }
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool HasAnyMatcher(PolicyRuleOptions rule) =>
+        rule.MatchLabels.Count > 0 ||
+        rule.MatchTypes.Count > 0 ||
+        rule.MatchTags.Count > 0 ||
+        rule.AllowedThreatSeverities.Count > 0 ||
+        rule.MinThreatSeverity is not null ||
+        rule.MinRiskSeverity is not null ||
+        rule.MatchSuggestedPolicies.Count > 0 ||
+        rule.MatchSessionStatuses.Count > 0 ||
+        rule.MatchNavigationStatuses.Count > 0 ||
+        rule.RequireTransitioning is not null ||
+        rule.RequireDestination ||
+        rule.RequireIdleNavigation ||
+        rule.RequireIdleActivity ||
+        rule.RequireNoActiveTarget ||
+        rule.RequireActiveTarget ||
+        rule.MatchResourceCritical is not null ||
+        rule.MatchResourceDegraded is not null ||
+        rule.RequireDefensivePosture ||
+        rule.MinProgressPercent is not null ||
+        rule.MaxProgressPercent is not null ||
+        rule.MinResourcePercent is not null ||
+        rule.MaxResourcePercent is not null ||
+        rule.MinWarningCount is not null ||
+        rule.MaxWarningCount is not null ||
+        rule.MinUnknownCount is not null ||
+        rule.MaxUnknownCount is not null ||
+        rule.MinAvailableCount is not null ||
+        rule.MaxAvailableCount is not null ||
+        rule.MinConfidence is not null ||
+        rule.MaxConfidence is not null ||
+        !string.IsNullOrWhiteSpace(rule.MetricName);
+
+    private static bool IsValidDirectiveKind(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return new HashSet<string>(
+            [
+                "None",
+                "Observe",
+                "Navigate",
+                "SelectSite",
+                "SelectTarget",
+                "PrioritizeTarget",
+                "AvoidTarget",
+                "UseResource",
+                "ConserveResource",
+                "PauseActivity",
+                "Withdraw",
+                "Abort",
+                "Wait"
+            ],
+            StringComparer.OrdinalIgnoreCase).Contains(value.Trim());
+    }
+
+    private static bool TryValidateRange(double? min, double? max, double lowerBound, double upperBound, string propertyName, out string? error)
+    {
+        if (min < lowerBound || min > upperBound || max < lowerBound || max > upperBound)
+        {
+            error = $"{propertyName} thresholds must be between {lowerBound} and {upperBound}.";
+            return false;
+        }
+
+        if (min is not null && max is not null && min > max)
+        {
+            error = $"{propertyName} minimum cannot be greater than maximum.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateRange(int? min, int? max, int lowerBound, int upperBound, string propertyName, out string? error)
+    {
+        if (min < lowerBound || min > upperBound || max < lowerBound || max > upperBound)
+        {
+            error = $"{propertyName} thresholds must be between {lowerBound} and {upperBound}.";
+            return false;
+        }
+
+        if (min is not null && max is not null && min > max)
+        {
+            error = $"{propertyName} minimum cannot be greater than maximum.";
+            return false;
+        }
+
         error = null;
         return true;
     }

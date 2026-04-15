@@ -315,4 +315,65 @@ public sealed class SessionHostOptionsValidationTests
         Assert.False(valid);
         Assert.Contains("CriticalPercentThreshold", error);
     }
+
+    [Fact]
+    public void TryValidate_FailsWhenPolicyRuleNamesAreDuplicated()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                Rules = new BehaviorRulesOptions
+                {
+                    ResourceUsage = new ResourceUsageRulesOptions
+                    {
+                        Rules =
+                        [
+                            new AllowRuleOptions { RuleName = "dup", MaxResourcePercent = 50, DirectiveKind = "ConserveResource" },
+                            new AllowRuleOptions { RuleName = "dup", MaxResourcePercent = 20, DirectiveKind = "Withdraw" }
+                        ]
+                    }
+                }
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("duplicate", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenPolicyRuleThresholdsContradict()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                Rules = new BehaviorRulesOptions
+                {
+                    Transit = new TransitRulesOptions
+                    {
+                        Rules =
+                        [
+                            new WaitRuleOptions
+                            {
+                                RuleName = "bad-progress",
+                                MinProgressPercent = 80,
+                                MaxProgressPercent = 20,
+                                DirectiveKind = "Wait"
+                            }
+                        ]
+                    }
+                }
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("minimum cannot be greater", error, StringComparison.OrdinalIgnoreCase);
+    }
 }
