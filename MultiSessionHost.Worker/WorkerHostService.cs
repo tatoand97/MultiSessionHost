@@ -1,20 +1,24 @@
 using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Interfaces;
+using MultiSessionHost.Desktop.Bindings;
 
 namespace MultiSessionHost.Worker;
 
 public sealed class WorkerHostService : BackgroundService
 {
     private readonly ISessionCoordinator _sessionCoordinator;
+    private readonly ISessionTargetBindingBootstrapper _bindingBootstrapper;
     private readonly SessionHostOptions _options;
     private readonly ILogger<WorkerHostService> _logger;
 
     public WorkerHostService(
         ISessionCoordinator sessionCoordinator,
+        ISessionTargetBindingBootstrapper bindingBootstrapper,
         SessionHostOptions options,
         ILogger<WorkerHostService> logger)
     {
         _sessionCoordinator = sessionCoordinator;
+        _bindingBootstrapper = bindingBootstrapper;
         _options = options;
         _logger = logger;
     }
@@ -29,6 +33,8 @@ public sealed class WorkerHostService : BackgroundService
                 "Admin API is enabled and running in-process at {AdminApiUrl}.",
                 _options.AdminApiUrl);
         }
+
+        await _bindingBootstrapper.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         await base.StartAsync(cancellationToken).ConfigureAwait(false);
     }

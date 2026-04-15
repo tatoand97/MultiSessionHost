@@ -12,8 +12,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
 {
     private readonly ISessionCoordinator _sessionCoordinator;
     private readonly IDesktopTargetProfileResolver _targetProfileResolver;
-    private readonly IDesktopTargetAdapterRegistry _targetAdapterRegistry;
-    private readonly IAttachedSessionStore _attachedSessionStore;
+    private readonly ISessionAttachmentRuntime _sessionAttachmentRuntime;
     private readonly IUiActionResolver _actionResolver;
     private readonly IReadOnlyDictionary<DesktopTargetKind, IUiInteractionAdapter> _interactionAdapters;
     private readonly IClock _clock;
@@ -22,8 +21,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
     public UiCommandExecutor(
         ISessionCoordinator sessionCoordinator,
         IDesktopTargetProfileResolver targetProfileResolver,
-        IDesktopTargetAdapterRegistry targetAdapterRegistry,
-        IAttachedSessionStore attachedSessionStore,
+        ISessionAttachmentRuntime sessionAttachmentRuntime,
         IUiActionResolver actionResolver,
         IEnumerable<IUiInteractionAdapter> interactionAdapters,
         IClock clock,
@@ -31,8 +29,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
     {
         _sessionCoordinator = sessionCoordinator;
         _targetProfileResolver = targetProfileResolver;
-        _targetAdapterRegistry = targetAdapterRegistry;
-        _attachedSessionStore = attachedSessionStore;
+        _sessionAttachmentRuntime = sessionAttachmentRuntime;
         _actionResolver = actionResolver;
         _clock = clock;
         _logger = logger;
@@ -81,18 +78,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
             }
 
             var context = _targetProfileResolver.Resolve(session);
-            var targetAdapter = _targetAdapterRegistry.Resolve(context.Profile.Kind);
-            var attachment = await _attachedSessionStore.GetAsync(command.SessionId, cancellationToken).ConfigureAwait(false);
-
-            if (attachment is null)
-            {
-                return Fail(
-                    command,
-                    $"Session '{command.SessionId}' is active but has no current target attachment.",
-                    UiCommandFailureCodes.TargetNotAttached);
-            }
-
-            await targetAdapter.ValidateAttachmentAsync(session, context, attachment, cancellationToken).ConfigureAwait(false);
+            var attachment = await _sessionAttachmentRuntime.EnsureAttachedAsync(session, cancellationToken).ConfigureAwait(false);
 
             var resolvedAction = _actionResolver.Resolve(uiState.ProjectedTree, command);
             var interactionAdapter = ResolveInteractionAdapter(context.Profile.Kind);

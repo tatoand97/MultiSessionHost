@@ -1,6 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
+using MultiSessionHost.Core.Configuration;
+using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Desktop.Adapters;
 using MultiSessionHost.Desktop.Attachments;
+using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Commands;
 using MultiSessionHost.Desktop.Drivers;
 using MultiSessionHost.Desktop.Interfaces;
@@ -28,10 +31,28 @@ public static class DesktopServiceCollectionExtensions
 
         services.AddSingleton<IProcessLocator, Win32ProcessLocator>();
         services.AddSingleton<IWindowLocator, Win32WindowLocator>();
+        services.AddSingleton<IDesktopTargetProfileCatalog, ConfiguredDesktopTargetProfileCatalog>();
+        services.AddSingleton<InMemorySessionTargetBindingStore>();
+        services.AddSingleton<ISessionTargetBindingStore>(static serviceProvider => serviceProvider.GetRequiredService<InMemorySessionTargetBindingStore>());
+        services.AddSingleton<ISessionTargetBindingPersistence>(
+            static serviceProvider =>
+            {
+                var options = serviceProvider.GetRequiredService<SessionHostOptions>();
+
+                return options.BindingStorePersistenceMode switch
+                {
+                    BindingStorePersistenceMode.None => new NoOpSessionTargetBindingPersistence(),
+                    BindingStorePersistenceMode.JsonFile => ActivatorUtilities.CreateInstance<JsonFileSessionTargetBindingPersistence>(serviceProvider),
+                    _ => throw new InvalidOperationException($"BindingStorePersistenceMode '{options.BindingStorePersistenceMode}' is not supported.")
+                };
+            });
+        services.AddSingleton<ISessionTargetBindingBootstrapper, SessionTargetBindingStoreBootstrapper>();
+        services.AddSingleton<ISessionTargetBindingManager, SessionTargetBindingManager>();
         services.AddSingleton<IDesktopTargetProfileResolver, ConfiguredDesktopTargetProfileResolver>();
         services.AddSingleton<IDesktopTargetMatcher, DefaultDesktopTargetMatcher>();
         services.AddSingleton<ISessionAttachmentResolver, DefaultSessionAttachmentResolver>();
         services.AddSingleton<IAttachedSessionStore, InMemoryAttachedSessionStore>();
+        services.AddSingleton<ISessionAttachmentRuntime, DefaultSessionAttachmentRuntime>();
         services.AddSingleton<IUiSnapshotSerializer, JsonUiSnapshotSerializer>();
         services.AddSingleton<IUiSnapshotProvider, SelfHostedHttpUiSnapshotProvider>();
         services.AddSingleton<SelfHostedHttpUiTreeNormalizer>();

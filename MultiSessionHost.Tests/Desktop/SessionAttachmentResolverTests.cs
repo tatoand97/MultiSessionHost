@@ -2,6 +2,7 @@ using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Attachments;
+using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Processes;
 using MultiSessionHost.Desktop.Targets;
 using MultiSessionHost.Desktop.Windows;
@@ -23,7 +24,7 @@ public sealed class SessionAttachmentResolverTests
 
         var options = CreateDesktopOptions(basePort, alphaId, betaId);
         var resolver = new DefaultSessionAttachmentResolver(
-            new ConfiguredDesktopTargetProfileResolver(options),
+            CreateProfileResolver(options),
             new Win32ProcessLocator(),
             new Win32WindowLocator(),
             new DefaultDesktopTargetMatcher(),
@@ -54,7 +55,7 @@ public sealed class SessionAttachmentResolverTests
 
         var options = CreateDesktopOptions(basePort, sessionIds);
         var resolver = new DefaultSessionAttachmentResolver(
-            new ConfiguredDesktopTargetProfileResolver(options),
+            CreateProfileResolver(options),
             new Win32ProcessLocator(),
             new Win32WindowLocator(),
             new DefaultDesktopTargetMatcher(),
@@ -86,4 +87,9 @@ public sealed class SessionAttachmentResolverTests
 
         return new SessionSnapshot(definition, state, PendingWorkItems: 0);
     }
+
+    private static ConfiguredDesktopTargetProfileResolver CreateProfileResolver(SessionHostOptions options) =>
+        new(
+            new ConfiguredDesktopTargetProfileCatalog(options),
+            new InMemorySessionTargetBindingStore(options, new FakeClock(DateTimeOffset.UtcNow)));
 }

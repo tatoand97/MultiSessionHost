@@ -1,6 +1,7 @@
 using System.Text.Json;
 using MultiSessionHost.Contracts.Sessions;
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
 
@@ -122,6 +123,12 @@ public static class DtoMappingExtensions
             binding.TargetProfileName,
             binding.Variables,
             binding.Overrides?.ToDto());
+
+    public static BindingStoreSnapshotDto ToDto(this BindingStoreSnapshot snapshot) =>
+        new(
+            snapshot.Version,
+            snapshot.LastUpdatedAtUtc,
+            snapshot.Bindings.Select(static binding => binding.ToDto()).ToArray());
 
     public static ResolvedDesktopTargetDto ToDto(this DesktopSessionTarget target) =>
         new(

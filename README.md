@@ -8,6 +8,8 @@ La integración de escritorio ya no está acoplada a `MultiSessionHost.TestDeskt
 
 - `DesktopTargetProfile`
 - `SessionTargetBinding`
+- `ISessionTargetBindingStore`
+- `ISessionTargetBindingPersistence`
 - `IDesktopTargetAdapter`
 - `IDesktopTargetAdapterRegistry`
 - `UiCommand`
@@ -49,14 +51,30 @@ No incluye ni pretende incluir:
 - `SessionTargetBinding`
   - vincula una `SessionId` con un profile
   - aporta variables y overrides opcionales por sesión
+- `ISessionTargetBindingStore`
+  - mantiene bindings mutables en memoria
+  - se inicializa desde `SessionTargetBindings`
+  - pasa a ser la fuente runtime de verdad después del arranque
+- `ISessionTargetBindingPersistence`
+  - carga bindings persistidos al arrancar
+  - guarda el snapshot runtime después de cada mutación
+- `ConfiguredDesktopTargetProfileCatalog`
+  - mantiene `DesktopTargetProfile` como configuración inmutable
 - `ConfiguredDesktopTargetProfileResolver`
-  - resuelve binding + profile
+  - resuelve binding runtime + profile configurado
   - aplica overrides
   - renderiza templates con variables de sesión
+- `ISessionTargetBindingManager`
+  - valida create/update/delete
+  - persiste cambios
+  - invalida attachments obsoletos por sesión
 - `DefaultSessionAttachmentResolver`
   - usa profile/binding resueltos
   - enumera procesos/ventanas
   - aplica el `MatchingMode`
+- `DefaultSessionAttachmentRuntime`
+  - garantiza attach lazy con el binding más reciente
+  - invalida attachments obsoletos después de una mutación
 - `DesktopTargetSessionDriver`
   - driver real configurable
   - delega attach/detach/work items/snapshots al adapter correcto
@@ -81,7 +99,9 @@ No incluye ni pretende incluir:
 ```text
 Worker session
   -> DesktopTargetSessionDriver
+  -> ISessionTargetBindingStore
   -> SessionTargetBinding
+  -> IDesktopTargetProfileCatalog
   -> DesktopTargetProfile
   -> IDesktopTargetAdapterRegistry
   -> IDesktopTargetAdapter
@@ -91,6 +111,37 @@ Worker session
   -> project
   -> planned work items
 ```
+
+## Store de bindings editable en runtime
+
+`DesktopTargetProfile` sigue siendo **config-driven** e inmutable durante la ejecución. Lo que ahora es editable en caliente es `SessionTargetBinding`.
+
+### Precedencia de bindings al arrancar
+
+El orden de carga es:
+
+1. se cargan profiles configurados desde `DesktopTargets`
+2. se cargan bindings configurados desde `SessionTargetBindings`
+3. el `InMemorySessionTargetBindingStore` se inicializa con esos bindings
+4. si hay persistencia habilitada, se cargan bindings persistidos y pisan por `SessionId` a los configurados
+5. desde ese momento el store runtime queda autoritativo
+
+Resumen práctico:
+
+- los bindings de `appsettings` siguen sirviendo como defaults
+- los bindings persistidos ganan para la misma `SessionId`
+- los cambios hechos por API viven en el store runtime inmediatamente
+- si borras un binding configurado, la sesión queda sin resolver hasta que crees otro
+- si reinicias el worker y ese `SessionId` no existe en el archivo persistido, vuelve a aplicar el default de configuración
+
+### Qué pasa cuando cambia un binding
+
+- no hace falta reiniciar el worker
+- la siguiente resolución usa el binding nuevo
+- si había attachment activo para esa sesión, se invalida y se remueve del store de attachments
+- `GET /sessions/{id}/target` muestra el binding y target nuevos inmediatamente
+- el siguiente `ui/refresh`, command o attach vuelve a conectarse usando el target actualizado
+- el aislamiento entre sesiones se mantiene porque el store está indexado por `SessionId`
 
 ## Capa de comandos semánticos
 
@@ -162,6 +213,8 @@ La sección sigue siendo `MultiSessionHost`.
     "AdminApiUrl": "http://localhost:5088",
     "DriverMode": "DesktopTargetAdapter",
     "EnableUiSnapshots": true,
+    "BindingStorePersistenceMode": "JsonFile",
+    "BindingStoreFilePath": "data/session-target-bindings.json",
     "DesktopTargets": [
       {
         "ProfileName": "test-app",
@@ -226,6 +279,8 @@ La sección sigue siendo `MultiSessionHost`.
 
 - `DriverMode` debe ser válido.
 - `EnableUiSnapshots=true` requiere `DriverMode=DesktopTargetAdapter`.
+- `BindingStorePersistenceMode` debe ser válido.
+- `BindingStoreFilePath` es obligatorio cuando `BindingStorePersistenceMode=JsonFile`.
 - cada `DesktopTargetProfile` debe tener `ProfileName` único y `Kind` válido.
 - cada `SessionTargetBinding` debe apuntar a una sesión configurada.
 - cada binding debe apuntar a un profile existente.
@@ -254,6 +309,8 @@ Endpoints nuevos de inspección:
 - `GET /targets`
 - `GET /targets/{profileName}`
 - `GET /sessions/{id}/target`
+- `GET /bindings`
+- `GET /bindings/{sessionId}`
 
 Endpoints nuevos de comandos semánticos:
 
@@ -263,6 +320,11 @@ Endpoints nuevos de comandos semánticos:
 - `POST /sessions/{id}/nodes/{nodeId}/text`
 - `POST /sessions/{id}/nodes/{nodeId}/toggle`
 - `POST /sessions/{id}/nodes/{nodeId}/select`
+
+Endpoints nuevos de mutación de bindings:
+
+- `PUT /bindings/{sessionId}`
+- `DELETE /bindings/{sessionId}`
 
 `/sessions/{id}/target` expone:
 
@@ -275,6 +337,16 @@ Endpoints nuevos de comandos semánticos:
 ### Decisión sobre UI state faltante
 
 Si una sesión todavía no tiene `UiTree` proyectado, el executor hace auto-refresh antes de resolver el comando. Después de un comando exitoso dispara un refresh posterior para dejar el árbol actualizado. Las fallas semánticas devuelven `409 Conflict` con `UiCommandResultDto`.
+
+### Payload para upsert de binding
+
+`PUT /bindings/{sessionId}` acepta:
+
+- `TargetProfileName`
+- `Variables`
+- `Overrides`
+
+`SessionId` siempre viene de la ruta, no del body.
 
 ## Cómo agregar un nuevo target kind
 
@@ -296,11 +368,54 @@ Scheduler y coordinator no necesitan cambios.
 ## Cómo bindear una sesión a un profile
 
 1. crea o reutiliza un `DesktopTargetProfile`
-2. agrega un `SessionTargetBinding`
+2. agrega un `SessionTargetBinding` en configuración o por Admin API
 3. define `SessionId`
 4. define `TargetProfileName`
 5. agrega variables como `Port`
 6. si hace falta, usa `Overrides` para esa sesión
+
+## Cómo editar bindings en runtime
+
+Listar bindings actuales:
+
+```powershell
+Invoke-RestMethod http://localhost:5088/bindings
+```
+
+Consultar un binding:
+
+```powershell
+Invoke-RestMethod http://localhost:5088/bindings/alpha
+```
+
+Crear o actualizar un binding:
+
+```powershell
+Invoke-RestMethod -Method Put `
+  -Uri http://localhost:5088/bindings/alpha `
+  -ContentType 'application/json' `
+  -Body '{
+    "targetProfileName":"test-app",
+    "variables":{
+      "Port":"7102"
+    },
+    "overrides":null
+  }'
+```
+
+Borrar un binding runtime:
+
+```powershell
+Invoke-RestMethod -Method Delete http://localhost:5088/bindings/alpha
+```
+
+Verificar el target resuelto después del cambio:
+
+```powershell
+Invoke-RestMethod http://localhost:5088/sessions/alpha/target
+```
+
+Si borras un binding, `/sessions/{id}/target` pasa a devolver conflicto hasta que crees uno nuevo.
 
 ## Cómo probar con MultiSessionHost.TestDesktopApp
 
@@ -329,6 +444,7 @@ Pruebas HTTP rápidas:
 
 ```powershell
 Invoke-RestMethod http://localhost:5088/targets
+Invoke-RestMethod http://localhost:5088/bindings
 Invoke-RestMethod http://localhost:5088/sessions/alpha/target
 Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/ui/refresh
 Invoke-RestMethod http://localhost:5088/sessions/alpha/ui
@@ -383,8 +499,15 @@ La suite cubre ahora:
 
 - parse y validación de `DesktopTargets`
 - parse y validación de `SessionTargetBindings`
+- validación de persistencia `JsonFile`
 - errores por binding faltante, profile inexistente o variables faltantes
 - render de templates por binding
+- store runtime editable de bindings
+- persistencia JSON y precedencia de startup
+- endpoints `GET /bindings`
+- endpoints `PUT /bindings/{sessionId}`
+- endpoints `DELETE /bindings/{sessionId}`
+- rebind runtime sin reiniciar el worker
 - aislamiento entre sesiones
 - registry de adapters
 - selección de adapter por el driver real

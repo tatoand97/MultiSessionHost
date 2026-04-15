@@ -64,6 +64,19 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!Enum.IsDefined(options.BindingStorePersistenceMode))
+        {
+            error = $"BindingStorePersistenceMode '{options.BindingStorePersistenceMode}' is not valid.";
+            return false;
+        }
+
+        if (options.BindingStorePersistenceMode == BindingStorePersistenceMode.JsonFile &&
+            string.IsNullOrWhiteSpace(options.BindingStoreFilePath))
+        {
+            error = "BindingStoreFilePath is required when BindingStorePersistenceMode=JsonFile.";
+            return false;
+        }
+
         if (options.Sessions.Count == 0)
         {
             error = "At least one session must be configured.";

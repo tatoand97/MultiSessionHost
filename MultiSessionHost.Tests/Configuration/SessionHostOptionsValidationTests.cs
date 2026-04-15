@@ -150,4 +150,23 @@ public sealed class SessionHostOptionsValidationTests
         Assert.False(valid);
         Assert.Contains("Tenant", error);
     }
+
+    [Fact]
+    public void TryValidate_FailsWhenJsonFilePersistenceHasNoPath()
+    {
+        var options = new SessionHostOptions
+        {
+            DriverMode = DriverMode.DesktopTargetAdapter,
+            EnableUiSnapshots = true,
+            BindingStorePersistenceMode = BindingStorePersistenceMode.JsonFile,
+            DesktopTargets = [TestOptionsFactory.DesktopTestAppProfile()],
+            SessionTargetBindings = [TestOptionsFactory.SessionTargetBinding("alpha", "test-app", "7100")],
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("BindingStoreFilePath", error);
+    }
 }

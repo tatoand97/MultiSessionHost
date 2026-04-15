@@ -5,7 +5,6 @@ using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Adapters;
-using MultiSessionHost.Desktop.Attachments;
 using MultiSessionHost.Desktop.DependencyInjection;
 using MultiSessionHost.Desktop.Drivers;
 using MultiSessionHost.Desktop.Interfaces;
@@ -89,6 +88,7 @@ public sealed class DesktopTargetAdapterSystemTests
         await uiStateStore.InitializeAsync(SessionUiState.Create(sessionId), CancellationToken.None);
 
         var adapter = new SpyDesktopTargetAdapter(DesktopTargetKind.SelfHostedHttpDesktop);
+        var attachmentRuntime = new StubSessionAttachmentRuntime(attachment);
         var driver = new DesktopTargetSessionDriver(
             new SessionHostOptions
             {
@@ -96,8 +96,7 @@ public sealed class DesktopTargetAdapterSystemTests
                 EnableUiSnapshots = false,
                 Sessions = [TestOptionsFactory.Session("alpha")]
             },
-            new StubSessionAttachmentResolver(attachment),
-            new InMemoryAttachedSessionStore(),
+            attachmentRuntime,
             new StubDesktopTargetProfileResolver(context),
             new DesktopTargetAdapterRegistry([adapter]),
             new JsonUiSnapshotSerializer(),
@@ -113,8 +112,9 @@ public sealed class DesktopTargetAdapterSystemTests
             SessionWorkItem.Create(sessionId, SessionWorkItemKind.Tick, DateTimeOffset.UtcNow, "adapter dispatch test"),
             CancellationToken.None);
 
-        Assert.Equal(1, adapter.ValidateCalls);
-        Assert.Equal(1, adapter.AttachCalls);
+        Assert.Equal(1, attachmentRuntime.EnsureCalls);
+        Assert.Equal(0, adapter.ValidateCalls);
+        Assert.Equal(0, adapter.AttachCalls);
         Assert.Equal(1, adapter.ExecuteCalls);
         Assert.Equal(SessionWorkItemKind.Tick, adapter.LastWorkItem!.Kind);
     }
@@ -182,17 +182,28 @@ public sealed class DesktopTargetAdapterSystemTests
             throw new NotSupportedException();
     }
 
-    private sealed class StubSessionAttachmentResolver : ISessionAttachmentResolver
+    private sealed class StubSessionAttachmentRuntime : ISessionAttachmentRuntime
     {
         private readonly DesktopSessionAttachment _attachment;
 
-        public StubSessionAttachmentResolver(DesktopSessionAttachment attachment)
+        public StubSessionAttachmentRuntime(DesktopSessionAttachment attachment)
         {
             _attachment = attachment;
         }
 
-        public ValueTask<DesktopSessionAttachment> ResolveAsync(SessionSnapshot snapshot, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(_attachment);
+        public int EnsureCalls { get; private set; }
+
+        public Task<DesktopSessionAttachment?> GetAsync(SessionId sessionId, CancellationToken cancellationToken) =>
+            Task.FromResult<DesktopSessionAttachment?>(_attachment);
+
+        public Task<DesktopSessionAttachment> EnsureAttachedAsync(SessionSnapshot snapshot, CancellationToken cancellationToken)
+        {
+            EnsureCalls++;
+            return Task.FromResult(_attachment);
+        }
+
+        public Task<bool> InvalidateAsync(SessionId sessionId, CancellationToken cancellationToken) =>
+            Task.FromResult(true);
     }
 
     private sealed class StubDesktopTargetProfileResolver : IDesktopTargetProfileResolver

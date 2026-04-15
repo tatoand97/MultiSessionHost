@@ -1,6 +1,7 @@
 using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Targets;
 using MultiSessionHost.Tests.Common;
 
@@ -48,7 +49,7 @@ public sealed class DesktopTargetProfileResolverTests
             ],
             Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
         };
-        var resolver = new ConfiguredDesktopTargetProfileResolver(options);
+        var resolver = CreateResolver(options);
 
         var context = resolver.Resolve(CreateSnapshot(options, "alpha"));
 
@@ -77,7 +78,7 @@ public sealed class DesktopTargetProfileResolverTests
                 TestOptionsFactory.Session("beta", startupDelayMs: 0)
             ]
         };
-        var resolver = new ConfiguredDesktopTargetProfileResolver(options);
+        var resolver = CreateResolver(options);
 
         var alpha = resolver.Resolve(CreateSnapshot(options, "alpha"));
         var beta = resolver.Resolve(CreateSnapshot(options, "beta"));
@@ -115,7 +116,7 @@ public sealed class DesktopTargetProfileResolverTests
             ],
             Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
         };
-        var resolver = new ConfiguredDesktopTargetProfileResolver(options);
+        var resolver = CreateResolver(options);
 
         var context = resolver.Resolve(CreateSnapshot(options, "alpha"));
 
@@ -133,4 +134,9 @@ public sealed class DesktopTargetProfileResolverTests
 
         return new SessionSnapshot(definition, state, PendingWorkItems: 0);
     }
+
+    private static ConfiguredDesktopTargetProfileResolver CreateResolver(SessionHostOptions options) =>
+        new(
+            new ConfiguredDesktopTargetProfileCatalog(options),
+            new InMemorySessionTargetBindingStore(options, new FakeClock(DateTimeOffset.UtcNow)));
 }

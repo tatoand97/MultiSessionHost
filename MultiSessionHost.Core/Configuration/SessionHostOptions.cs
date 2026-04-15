@@ -21,6 +21,10 @@ public sealed class SessionHostOptions
 
     public bool EnableUiSnapshots { get; init; }
 
+    public BindingStorePersistenceMode BindingStorePersistenceMode { get; init; } = BindingStorePersistenceMode.None;
+
+    public string? BindingStoreFilePath { get; init; }
+
     public IReadOnlyList<DesktopTargetProfileOptions> DesktopTargets { get; init; } = [];
 
     public IReadOnlyList<SessionTargetBindingOptions> SessionTargetBindings { get; init; } = [];

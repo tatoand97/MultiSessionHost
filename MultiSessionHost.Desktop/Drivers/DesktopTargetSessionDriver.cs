@@ -14,8 +14,7 @@ namespace MultiSessionHost.Desktop.Drivers;
 public sealed class DesktopTargetSessionDriver : ISessionDriver
 {
     private readonly SessionHostOptions _options;
-    private readonly ISessionAttachmentResolver _attachmentResolver;
-    private readonly IAttachedSessionStore _attachedSessionStore;
+    private readonly ISessionAttachmentRuntime _sessionAttachmentRuntime;
     private readonly IDesktopTargetProfileResolver _targetProfileResolver;
     private readonly IDesktopTargetAdapterRegistry _adapterRegistry;
     private readonly IUiSnapshotSerializer _uiSnapshotSerializer;
@@ -28,8 +27,7 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
 
     public DesktopTargetSessionDriver(
         SessionHostOptions options,
-        ISessionAttachmentResolver attachmentResolver,
-        IAttachedSessionStore attachedSessionStore,
+        ISessionAttachmentRuntime sessionAttachmentRuntime,
         IDesktopTargetProfileResolver targetProfileResolver,
         IDesktopTargetAdapterRegistry adapterRegistry,
         IUiSnapshotSerializer uiSnapshotSerializer,
@@ -41,8 +39,7 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
         ILogger<DesktopTargetSessionDriver> logger)
     {
         _options = options;
-        _attachmentResolver = attachmentResolver;
-        _attachedSessionStore = attachedSessionStore;
+        _sessionAttachmentRuntime = sessionAttachmentRuntime;
         _targetProfileResolver = targetProfileResolver;
         _adapterRegistry = adapterRegistry;
         _uiSnapshotSerializer = uiSnapshotSerializer;
@@ -56,30 +53,19 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
 
     public async Task AttachAsync(SessionSnapshot snapshot, CancellationToken cancellationToken)
     {
-        var context = _targetProfileResolver.Resolve(snapshot);
-        var adapter = _adapterRegistry.Resolve(context.Profile.Kind);
-        var attachment = await _attachmentResolver.ResolveAsync(snapshot, cancellationToken).ConfigureAwait(false);
-
-        await adapter.ValidateAttachmentAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
-        await adapter.AttachAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
-        await _attachedSessionStore.SetAsync(attachment, cancellationToken).ConfigureAwait(false);
+        await _sessionAttachmentRuntime.EnsureAttachedAsync(snapshot, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task DetachAsync(SessionSnapshot snapshot, CancellationToken cancellationToken)
     {
-        var context = _targetProfileResolver.Resolve(snapshot);
-        var adapter = _adapterRegistry.Resolve(context.Profile.Kind);
-        var attachment = await _attachedSessionStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
-
-        await adapter.DetachAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
-        await _attachedSessionStore.RemoveAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
+        await _sessionAttachmentRuntime.InvalidateAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task ExecuteWorkItemAsync(SessionSnapshot snapshot, SessionWorkItem workItem, CancellationToken cancellationToken)
     {
         var context = _targetProfileResolver.Resolve(snapshot);
         var adapter = _adapterRegistry.Resolve(context.Profile.Kind);
-        var attachment = await EnsureAttachmentAsync(snapshot, context, adapter, cancellationToken).ConfigureAwait(false);
+        var attachment = await _sessionAttachmentRuntime.EnsureAttachedAsync(snapshot, cancellationToken).ConfigureAwait(false);
 
         switch (workItem.Kind)
         {
@@ -97,31 +83,6 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
                 await adapter.ExecuteWorkItemAsync(snapshot, context, attachment, workItem, cancellationToken).ConfigureAwait(false);
                 break;
         }
-    }
-
-    private async Task<DesktopSessionAttachment> EnsureAttachmentAsync(
-        SessionSnapshot snapshot,
-        ResolvedDesktopTargetContext context,
-        IDesktopTargetAdapter adapter,
-        CancellationToken cancellationToken)
-    {
-        var current = await _attachedSessionStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
-
-        if (current is not null && AreEquivalent(current.Target, context.Target))
-        {
-            return current;
-        }
-
-        if (current is not null)
-        {
-            await adapter.DetachAsync(snapshot, context, current, cancellationToken).ConfigureAwait(false);
-            await _attachedSessionStore.RemoveAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
-        }
-
-        await AttachAsync(snapshot, cancellationToken).ConfigureAwait(false);
-
-        return await _attachedSessionStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"Session '{snapshot.SessionId}' could not be attached.");
     }
 
     private async Task FetchUiSnapshotAsync(
@@ -250,34 +211,4 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
         }
     }
 
-    private static bool AreEquivalent(DesktopSessionTarget left, DesktopSessionTarget right) =>
-        left.SessionId == right.SessionId &&
-        left.ProfileName == right.ProfileName &&
-        left.Kind == right.Kind &&
-        left.MatchingMode == right.MatchingMode &&
-        string.Equals(left.ProcessName, right.ProcessName, StringComparison.Ordinal) &&
-        string.Equals(left.WindowTitleFragment, right.WindowTitleFragment, StringComparison.Ordinal) &&
-        string.Equals(left.CommandLineFragment, right.CommandLineFragment, StringComparison.Ordinal) &&
-        Equals(left.BaseAddress, right.BaseAddress) &&
-        HaveSameMetadata(left.Metadata, right.Metadata);
-
-    private static bool HaveSameMetadata(
-        IReadOnlyDictionary<string, string?> left,
-        IReadOnlyDictionary<string, string?> right)
-    {
-        if (left.Count != right.Count)
-        {
-            return false;
-        }
-
-        foreach (var (key, value) in left)
-        {
-            if (!right.TryGetValue(key, out var otherValue) || !string.Equals(value, otherValue, StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
 }

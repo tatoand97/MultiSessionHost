@@ -7,6 +7,7 @@ using MultiSessionHost.Contracts.Sessions;
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.UiModel.Models;
 
@@ -17,6 +18,106 @@ public static class AdminApiEndpointRouteBuilderExtensions
     public static IEndpointRouteBuilder MapAdminApiEndpoints(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
+
+        endpoints.MapGet(
+            "/bindings",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionTargetBindingManager bindingManager,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var snapshot = await bindingManager.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(snapshot.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/bindings/{sessionId}",
+            async Task<IResult> (
+                string sessionId,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionTargetBindingManager bindingManager,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(sessionId, out var parsedSessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                var binding = await bindingManager.GetAsync(parsedSessionId, cancellationToken).ConfigureAwait(false);
+                return binding is null ? Results.NotFound() : Results.Ok(binding.ToDto());
+            });
+
+        endpoints.MapPut(
+            "/bindings/{sessionId}",
+            async Task<IResult> (
+                string sessionId,
+                SessionTargetBindingUpsertRequest request,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionTargetBindingManager bindingManager,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(sessionId, out var parsedSessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (!TryCreateBinding(parsedSessionId, request, out var binding, out error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                try
+                {
+                    var upserted = await bindingManager.UpsertAsync(binding!, cancellationToken).ConfigureAwait(false);
+                    return Results.Ok(upserted.ToDto());
+                }
+                catch (InvalidOperationException exception)
+                {
+                    return Results.BadRequest(new { Error = exception.Message });
+                }
+            });
+
+        endpoints.MapDelete(
+            "/bindings/{sessionId}",
+            async Task<IResult> (
+                string sessionId,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionTargetBindingManager bindingManager,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(sessionId, out var parsedSessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                return await bindingManager.DeleteAsync(parsedSessionId, cancellationToken).ConfigureAwait(false)
+                    ? Results.NoContent()
+                    : Results.NotFound();
+            });
 
         endpoints.MapGet(
             "/health",
@@ -556,6 +657,83 @@ public static class AdminApiEndpointRouteBuilderExtensions
             request.BoolValue,
             request.SelectedValue,
             request.Metadata);
+        error = null;
+        return true;
+    }
+
+    private static bool TryCreateBinding(
+        SessionId sessionId,
+        SessionTargetBindingUpsertRequest request,
+        out Desktop.Models.SessionTargetBinding? binding,
+        out string? error)
+    {
+        if (request is null)
+        {
+            binding = null;
+            error = "Request body is required.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(request.TargetProfileName))
+        {
+            binding = null;
+            error = "TargetProfileName is required.";
+            return false;
+        }
+
+        if (!TryCreateOverride(request.Overrides, out var profileOverride, out error))
+        {
+            binding = null;
+            return false;
+        }
+
+        binding = new Desktop.Models.SessionTargetBinding(
+            sessionId,
+            request.TargetProfileName.Trim(),
+            (request.Variables ?? new Dictionary<string, string>())
+                .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.OrdinalIgnoreCase),
+            profileOverride);
+        error = null;
+        return true;
+    }
+
+    private static bool TryCreateOverride(
+        DesktopTargetProfileOverrideDto? overrideDto,
+        out Desktop.Models.DesktopTargetProfileOverride? profileOverride,
+        out string? error)
+    {
+        if (overrideDto is null)
+        {
+            profileOverride = null;
+            error = null;
+            return true;
+        }
+
+        DesktopSessionMatchingMode? matchingMode = null;
+        DesktopSessionMatchingMode parsedMatchingMode = default;
+
+        if (!string.IsNullOrWhiteSpace(overrideDto.MatchingMode) &&
+            !Enum.TryParse<DesktopSessionMatchingMode>(overrideDto.MatchingMode, ignoreCase: true, out parsedMatchingMode))
+        {
+            profileOverride = null;
+            error = $"MatchingMode '{overrideDto.MatchingMode}' is not valid.";
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(overrideDto.MatchingMode))
+        {
+            matchingMode = parsedMatchingMode;
+        }
+
+        profileOverride = new Desktop.Models.DesktopTargetProfileOverride(
+            overrideDto.ProcessName,
+            overrideDto.WindowTitleFragment,
+            overrideDto.CommandLineFragmentTemplate,
+            overrideDto.BaseAddressTemplate,
+            matchingMode,
+            overrideDto.Metadata ?? new Dictionary<string, string?>(),
+            overrideDto.SupportsUiSnapshots,
+            overrideDto.SupportsStateEndpoint);
         error = null;
         return true;
     }
