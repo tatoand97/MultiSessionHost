@@ -131,6 +131,19 @@ No incluye ni pretende incluir:
 - `ISessionRiskAssessmentStore`
   - mantiene la última evaluación de riesgo por `SessionId`
   - permite inspección Admin API separada de la extracción semántica raw
+- `IPolicyEngine`
+  - capa de comportamiento dedicada después de `SessionDomainState`
+  - ejecuta políticas determinísticas y produce un `DecisionPlan`
+  - planifica directivas, no ejecuta comandos ni simula input
+- `IPolicy`
+  - unidad testeable que recibe `PolicyEvaluationContext`
+  - devuelve `PolicyEvaluationResult` con directivas, razones y warnings
+- `IDecisionPlanAggregator`
+  - resuelve conflictos entre políticas y aplica precedencia
+  - conserva razones trazables para inspección
+- `ISessionDecisionPlanStore`
+  - mantiene el último `DecisionPlan` por `SessionId`
+  - thread-safe, en memoria y aislado por sesión
 
 ## Flujo runtime
 
@@ -152,6 +165,11 @@ Worker session
   -> planned work items
   -> domain projection
   -> SessionDomainStateStore
+  -> policy engine
+  -> policy results
+  -> decision plan aggregator
+  -> DecisionPlan
+  -> decision plan store
   -> Admin API inspection
 ```
 
@@ -292,6 +310,8 @@ La actualización ocurre en `DefaultSessionUiRefreshService.ProjectAsync`, despu
 8. ejecutar `IRiskClassificationPipeline`
 9. persistir `RiskAssessmentResult` en `ISessionRiskAssessmentStore`
 10. proyectar y persistir `SessionDomainState` usando extracción semántica y evaluación de riesgo
+11. ejecutar `IPolicyEngine`
+12. persistir `DecisionPlan` en `ISessionDecisionPlanStore`
 
 Diagrama actualizado:
 
@@ -310,12 +330,61 @@ Ui snapshot
   -> risk assessment store
   -> domain projection
   -> SessionDomainState
+  -> policy engine
+  -> policy results
+  -> decision plan aggregator
+  -> DecisionPlan
+  -> decision plan store
   -> Admin API inspection
 ```
 
 `DefaultSessionDomainStateProjectionService` consume `RiskAssessmentResult` de forma opcional. Cuando existe, `ThreatState.Severity` viene de la amenaza clasificada más fuerte, `UnknownCount` viene del summary unknown, `HostileCount` del summary threat, `NeutralCount` del summary safe, `IsSafe` solo es true cuando no quedan threats ni unknowns, y `Signals` incluye razones, reglas y políticas superiores. `ThreatState` también expone `TopSuggestedPolicy`, `TopEntityLabel` y `TopEntityType`.
 
 Si la proyección UI falla, el mismo servicio registra el error en `SessionUiState` y degrada el snapshot de dominio con `Source=UiRefreshFailure` y warnings.
+
+## Policy engine
+
+El policy engine es la capa de comportamiento. Vive después de la proyección de dominio y consume `SessionDomainState`, `UiSemanticExtractionResult` y `RiskAssessmentResult` sin reemplazar esas capas. Su salida es un `DecisionPlan` inmutable con:
+
+- `PlanStatus`
+- `DecisionDirective[]`
+- `DecisionReason[]`
+- `PolicyExecutionSummary`
+- `Warnings`
+
+Las directivas son instrucciones planificadas como `Observe`, `SelectSite`, `PrioritizeTarget`, `ConserveResource`, `Wait`, `Withdraw` o `Abort`. Esta fase solo planifica: no invoca `UiCommandExecutor`, no encola work items y no interactúa con targets.
+
+Orden default:
+
+1. `AbortPolicy`
+2. `ThreatResponsePolicy`
+3. `TransitPolicy`
+4. `ResourceUsagePolicy`
+5. `TargetPrioritizationPolicy`
+6. `SelectNextSitePolicy`
+
+Precedencia:
+
+- `Abort` suprime el resto cuando `BlockOnAbort=true`.
+- `Withdraw` y `PauseActivity` suprimen selección/navegación normal.
+- `Wait` de tránsito suprime navegación, selección y uso de recursos de menor prioridad cuando no existe amenaza más fuerte.
+- las directivas se ordenan por prioridad y después por política/kind/id para mantener determinismo.
+
+El orden y límites se configuran bajo `MultiSessionHost:PolicyEngine`:
+
+```json
+{
+  "PolicyEngine": {
+    "EnablePolicyEngine": true,
+    "PolicyOrder": [ "AbortPolicy", "ThreatResponsePolicy", "TransitPolicy", "ResourceUsagePolicy", "TargetPrioritizationPolicy", "SelectNextSitePolicy" ],
+    "MaxReturnedDirectives": 10,
+    "BlockOnAbort": true,
+    "PreferThreatResponseOverSelection": true,
+    "PreferTransitStability": true,
+    "MinDirectivePriority": 0
+  }
+}
+```
 
 ### Coordinación de ejecución real
 
@@ -604,6 +673,10 @@ La sección sigue siendo `MultiSessionHost`.
 - los operation kinds configurados para coordinación deben existir.
 - si `RiskClassification.EnableRiskClassification=true`, debe existir al menos una regla activa.
 - cada regla de riesgo activa debe tener `RuleName` único, prioridad entre 0 y 1000 y al menos un matcher por nombre, tipo o tag.
+- `PolicyEngine.PolicyOrder` no puede estar vacío, no puede repetir políticas y solo acepta políticas conocidas.
+- `PolicyEngine.MaxReturnedDirectives` debe ser mayor que cero.
+- las prioridades de políticas deben estar entre 0 y 1000.
+- los thresholds de recursos deben estar entre 0 y 100 y critical no puede ser mayor que degraded.
 
 ## Admin API
 
@@ -634,6 +707,11 @@ Endpoints existentes mantenidos:
 - `GET /sessions/{id}/risk/summary`
 - `GET /sessions/{id}/risk/entities`
 - `GET /sessions/{id}/risk/threats`
+- `GET /decision-plans`
+- `GET /sessions/{id}/decision-plan`
+- `GET /sessions/{id}/decision-plan/summary`
+- `GET /sessions/{id}/decision-plan/directives`
+- `POST /sessions/{id}/decision-plan/evaluate`
 
 Endpoints nuevos de inspección:
 
@@ -692,6 +770,11 @@ Invoke-RestMethod http://localhost:5088/sessions/alpha/risk
 Invoke-RestMethod http://localhost:5088/sessions/alpha/risk/summary
 Invoke-RestMethod http://localhost:5088/sessions/alpha/risk/entities
 Invoke-RestMethod http://localhost:5088/sessions/alpha/risk/threats
+Invoke-RestMethod http://localhost:5088/decision-plans
+Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan
+Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan/summary
+Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan/directives
+Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/decision-plan/evaluate
 ```
 
 Escenarios esperados:
@@ -925,3 +1008,13 @@ La suite cubre ahora:
 - endpoints `GET /sessions/{id}/risk/threats`
 - flujo integrado `ui/refresh` -> semantic extraction -> risk classification -> domain projection
 - dominio alimentado por severidad, conteos y señales de riesgo
+- policy engine dedicado después de domain projection
+- políticas `Abort`, `ThreatResponse`, `Transit`, `ResourceUsage`, `TargetPrioritization` y `SelectNextSite`
+- agregación determinística de directivas y precedencia abort/threat/transit
+- store de `DecisionPlan` aislado por sesión
+- endpoints `GET /decision-plans`
+- endpoints `GET /sessions/{id}/decision-plan`
+- endpoints `GET /sessions/{id}/decision-plan/summary`
+- endpoints `GET /sessions/{id}/decision-plan/directives`
+- endpoint `POST /sessions/{id}/decision-plan/evaluate`
+- flujo integrado `ui/refresh` -> semantic extraction -> risk classification -> domain projection -> policy engine -> decision plan

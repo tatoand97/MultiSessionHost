@@ -261,4 +261,58 @@ public sealed class SessionHostOptionsValidationTests
         Assert.False(valid);
         Assert.Contains("duplicated", error, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void TryValidate_AcceptsDefaultPolicyEngineOptions()
+    {
+        var options = new SessionHostOptions
+        {
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.True(valid, error);
+        Assert.Equal("AbortPolicy", options.PolicyEngine.PolicyOrder[0]);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenPolicyOrderContainsUnknownPolicy()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                PolicyOrder = ["AbortPolicy", "MissingPolicy"]
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("MissingPolicy", error);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenPolicyThresholdsAreInvalid()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                ResourceUsagePolicy = new ResourceUsagePolicyOptions
+                {
+                    CriticalPercentThreshold = 80,
+                    DegradedPercentThreshold = 25
+                }
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("CriticalPercentThreshold", error);
+    }
 }

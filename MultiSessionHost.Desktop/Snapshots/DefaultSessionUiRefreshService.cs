@@ -5,6 +5,7 @@ using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Targets;
 using MultiSessionHost.UiModel.Interfaces;
@@ -26,6 +27,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly IUiSemanticExtractionPipeline _semanticExtractionPipeline;
     private readonly ISessionSemanticExtractionStore _semanticExtractionStore;
     private readonly IRiskClassificationPipeline _riskClassificationPipeline;
+    private readonly IPolicyEngine _policyEngine;
     private readonly IClock _clock;
     private readonly ILogger<DefaultSessionUiRefreshService> _logger;
 
@@ -42,6 +44,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         IUiSemanticExtractionPipeline semanticExtractionPipeline,
         ISessionSemanticExtractionStore semanticExtractionStore,
         IRiskClassificationPipeline riskClassificationPipeline,
+        IPolicyEngine policyEngine,
         IClock clock,
         ILogger<DefaultSessionUiRefreshService> logger)
     {
@@ -57,6 +60,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _semanticExtractionPipeline = semanticExtractionPipeline;
         _semanticExtractionStore = semanticExtractionStore;
         _riskClassificationPipeline = riskClassificationPipeline;
+        _policyEngine = policyEngine;
         _clock = clock;
         _logger = logger;
     }
@@ -159,7 +163,6 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     ProjectedTree = tree,
                     LastDiff = diff,
                     PlannedWorkItems = plannedWorkItems,
-                    LastRefreshCompletedAtUtc = _clock.UtcNow,
                     LastRefreshError = null,
                     LastRefreshErrorAtUtc = null
                 },
@@ -194,7 +197,17 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     _clock.UtcNow),
                 cancellationToken).ConfigureAwait(false);
 
-            return projectedUiState;
+            await _policyEngine.EvaluateAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
+
+            return await _sessionUiStateStore.UpdateAsync(
+                snapshot.SessionId,
+                current => current with
+                {
+                    LastRefreshCompletedAtUtc = _clock.UtcNow,
+                    LastRefreshError = null,
+                    LastRefreshErrorAtUtc = null
+                },
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {

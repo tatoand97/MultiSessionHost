@@ -87,6 +87,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidatePolicyEngine(options.PolicyEngine, out error))
+        {
+            return false;
+        }
+
         if (options.Sessions.Count == 0)
         {
             error = "At least one session must be configured.";
@@ -621,6 +626,118 @@ public static class SessionHostOptionsExtensions
                 error = $"Risk rule '{ruleName}' contains an empty matcher value.";
                 return false;
             }
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidatePolicyEngine(
+        PolicyEngineOptions options,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.MaxReturnedDirectives <= 0)
+        {
+            error = "PolicyEngine.MaxReturnedDirectives must be greater than zero.";
+            return false;
+        }
+
+        if (options.MinDirectivePriority < 0)
+        {
+            error = "PolicyEngine.MinDirectivePriority cannot be negative.";
+            return false;
+        }
+
+        var validPolicyNames = new HashSet<string>(
+            [
+                "AbortPolicy",
+                "ThreatResponsePolicy",
+                "TransitPolicy",
+                "ResourceUsagePolicy",
+                "TargetPrioritizationPolicy",
+                "SelectNextSitePolicy"
+            ],
+            StringComparer.OrdinalIgnoreCase);
+
+        if (options.PolicyOrder.Count == 0)
+        {
+            error = "PolicyEngine.PolicyOrder must contain at least one policy.";
+            return false;
+        }
+
+        var seenPolicyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var policyName in options.PolicyOrder)
+        {
+            if (string.IsNullOrWhiteSpace(policyName))
+            {
+                error = "PolicyEngine.PolicyOrder contains an empty policy name.";
+                return false;
+            }
+
+            var trimmedPolicyName = policyName.Trim();
+
+            if (!validPolicyNames.Contains(trimmedPolicyName))
+            {
+                error = $"PolicyEngine.PolicyOrder contains unknown policy '{policyName}'.";
+                return false;
+            }
+
+            if (!seenPolicyNames.Add(trimmedPolicyName))
+            {
+                error = $"PolicyEngine.PolicyOrder contains duplicate policy '{policyName}'.";
+                return false;
+            }
+        }
+
+        if (!TryValidatePriority(options.AbortPolicy.AbortPriority, nameof(options.AbortPolicy.AbortPriority), out error) ||
+            !TryValidatePriority(options.AbortPolicy.PausePriority, nameof(options.AbortPolicy.PausePriority), out error) ||
+            !TryValidatePriority(options.ThreatResponsePolicy.WithdrawPriority, nameof(options.ThreatResponsePolicy.WithdrawPriority), out error) ||
+            !TryValidatePriority(options.ThreatResponsePolicy.PausePriority, nameof(options.ThreatResponsePolicy.PausePriority), out error) ||
+            !TryValidatePriority(options.ThreatResponsePolicy.PrioritizePriority, nameof(options.ThreatResponsePolicy.PrioritizePriority), out error) ||
+            !TryValidatePriority(options.ThreatResponsePolicy.AvoidPriority, nameof(options.ThreatResponsePolicy.AvoidPriority), out error) ||
+            !TryValidatePriority(options.ThreatResponsePolicy.ObservePriority, nameof(options.ThreatResponsePolicy.ObservePriority), out error) ||
+            !TryValidatePriority(options.TransitPolicy.WaitPriority, nameof(options.TransitPolicy.WaitPriority), out error) ||
+            !TryValidatePriority(options.TransitPolicy.NavigatePriority, nameof(options.TransitPolicy.NavigatePriority), out error) ||
+            !TryValidatePriority(options.TransitPolicy.BlockedPriority, nameof(options.TransitPolicy.BlockedPriority), out error) ||
+            !TryValidatePriority(options.ResourceUsagePolicy.CriticalPriority, nameof(options.ResourceUsagePolicy.CriticalPriority), out error) ||
+            !TryValidatePriority(options.ResourceUsagePolicy.DegradedPriority, nameof(options.ResourceUsagePolicy.DegradedPriority), out error) ||
+            !TryValidatePriority(options.TargetPrioritizationPolicy.PrioritizePriority, nameof(options.TargetPrioritizationPolicy.PrioritizePriority), out error) ||
+            !TryValidatePriority(options.TargetPrioritizationPolicy.SelectPriority, nameof(options.TargetPrioritizationPolicy.SelectPriority), out error) ||
+            !TryValidatePriority(options.TargetPrioritizationPolicy.AvoidPriority, nameof(options.TargetPrioritizationPolicy.AvoidPriority), out error) ||
+            !TryValidatePriority(options.SelectNextSitePolicy.SelectSitePriority, nameof(options.SelectNextSitePolicy.SelectSitePriority), out error) ||
+            !TryValidatePriority(options.SelectNextSitePolicy.ObservePriority, nameof(options.SelectNextSitePolicy.ObservePriority), out error))
+        {
+            return false;
+        }
+
+        if (options.ResourceUsagePolicy.CriticalPercentThreshold < 0 ||
+            options.ResourceUsagePolicy.CriticalPercentThreshold > 100 ||
+            options.ResourceUsagePolicy.DegradedPercentThreshold < 0 ||
+            options.ResourceUsagePolicy.DegradedPercentThreshold > 100)
+        {
+            error = "PolicyEngine.ResourceUsagePolicy thresholds must be between 0 and 100.";
+            return false;
+        }
+
+        if (options.ResourceUsagePolicy.CriticalPercentThreshold > options.ResourceUsagePolicy.DegradedPercentThreshold)
+        {
+            error = "PolicyEngine.ResourceUsagePolicy.CriticalPercentThreshold cannot be greater than DegradedPercentThreshold.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidatePriority(int value, string propertyName, out string? error)
+    {
+        if (value < 0 || value > 1000)
+        {
+            error = $"PolicyEngine.{propertyName} must be between 0 and 1000.";
+            return false;
         }
 
         error = null;

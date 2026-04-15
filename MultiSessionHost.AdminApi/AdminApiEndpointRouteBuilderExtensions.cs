@@ -10,6 +10,7 @@ using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
+using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.UiModel.Models;
 
@@ -301,6 +302,141 @@ public static class AdminApiEndpointRouteBuilderExtensions
 
                 var state = sessionCoordinator.GetSessionDomainState(sessionId);
                 return state is null ? Results.NotFound() : Results.Ok(state.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/decision-plans",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionDecisionPlanStore decisionPlanStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var plans = await decisionPlanStore.GetAllAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(plans.Select(static plan => plan.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/decision-plan",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionDecisionPlanStore decisionPlanStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var plan = await decisionPlanStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return plan is null ? Results.NotFound() : Results.Ok(plan.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/decision-plan/summary",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionDecisionPlanStore decisionPlanStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var plan = await decisionPlanStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return plan is null ? Results.NotFound() : Results.Ok(plan.ToSummaryDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/decision-plan/directives",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionDecisionPlanStore decisionPlanStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var plan = await decisionPlanStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return plan is null
+                    ? Results.NotFound()
+                    : Results.Ok(plan.Directives.Select(static directive => directive.ToDto()).ToArray());
+            });
+
+        endpoints.MapPost(
+            "/sessions/{id}/decision-plan/evaluate",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                IPolicyEngine policyEngine,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var plan = await policyEngine.EvaluateAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(plan.ToDto());
             });
 
         endpoints.MapGet(

@@ -29,6 +29,8 @@ public sealed class SessionHostOptions
 
     public RiskClassificationOptions RiskClassification { get; init; } = new();
 
+    public PolicyEngineOptions PolicyEngine { get; init; } = new();
+
     public IReadOnlyList<DesktopTargetProfileOptions> DesktopTargets { get; init; } = [];
 
     public IReadOnlyList<SessionTargetBindingOptions> SessionTargetBindings { get; init; } = [];
@@ -154,4 +156,97 @@ public sealed class RiskRuleOptions
     public RiskPolicySuggestion SuggestedPolicy { get; init; } = RiskPolicySuggestion.Observe;
 
     public string Reason { get; init; } = string.Empty;
+}
+
+public sealed class PolicyEngineOptions
+{
+    public bool EnablePolicyEngine { get; init; } = true;
+
+    public IReadOnlyList<string> PolicyOrder { get; init; } =
+    [
+        "AbortPolicy",
+        "ThreatResponsePolicy",
+        "TransitPolicy",
+        "ResourceUsagePolicy",
+        "TargetPrioritizationPolicy",
+        "SelectNextSitePolicy"
+    ];
+
+    public int MaxReturnedDirectives { get; init; } = 10;
+
+    public bool BlockOnAbort { get; init; } = true;
+
+    public bool PreferThreatResponseOverSelection { get; init; } = true;
+
+    public bool PreferTransitStability { get; init; } = true;
+
+    public int MinDirectivePriority { get; init; }
+
+    public AbortPolicyOptions AbortPolicy { get; init; } = new();
+
+    public ThreatResponsePolicyOptions ThreatResponsePolicy { get; init; } = new();
+
+    public TransitPolicyOptions TransitPolicy { get; init; } = new();
+
+    public ResourceUsagePolicyOptions ResourceUsagePolicy { get; init; } = new();
+
+    public TargetPrioritizationPolicyOptions TargetPrioritizationPolicy { get; init; } = new();
+
+    public SelectNextSitePolicyOptions SelectNextSitePolicy { get; init; } = new();
+}
+
+public sealed class AbortPolicyOptions
+{
+    public int AbortPriority { get; init; } = 1000;
+
+    public int PausePriority { get; init; } = 950;
+}
+
+public sealed class ThreatResponsePolicyOptions
+{
+    public int WithdrawPriority { get; init; } = 900;
+
+    public int PausePriority { get; init; } = 850;
+
+    public int PrioritizePriority { get; init; } = 760;
+
+    public int AvoidPriority { get; init; } = 740;
+
+    public int ObservePriority { get; init; } = 300;
+}
+
+public sealed class TransitPolicyOptions
+{
+    public int WaitPriority { get; init; } = 650;
+
+    public int NavigatePriority { get; init; } = 500;
+
+    public int BlockedPriority { get; init; } = 700;
+}
+
+public sealed class ResourceUsagePolicyOptions
+{
+    public int CriticalPriority { get; init; } = 720;
+
+    public int DegradedPriority { get; init; } = 560;
+
+    public double CriticalPercentThreshold { get; init; } = 15;
+
+    public double DegradedPercentThreshold { get; init; } = 35;
+}
+
+public sealed class TargetPrioritizationPolicyOptions
+{
+    public int PrioritizePriority { get; init; } = 600;
+
+    public int SelectPriority { get; init; } = 520;
+
+    public int AvoidPriority { get; init; } = 540;
+}
+
+public sealed class SelectNextSitePolicyOptions
+{
+    public int SelectSitePriority { get; init; } = 250;
+
+    public int ObservePriority { get; init; } = 150;
 }

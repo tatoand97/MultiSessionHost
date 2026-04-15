@@ -6,6 +6,7 @@ using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 
 namespace MultiSessionHost.AdminApi.Mapping;
@@ -336,6 +337,53 @@ public static class DtoMappingExtensions
             entity.Reasons,
             entity.Confidence,
             entity.Metadata);
+
+    public static DecisionPlanDto ToDto(this DecisionPlan plan) =>
+        new(
+            plan.SessionId.Value,
+            plan.PlannedAtUtc,
+            plan.PlanStatus.ToString(),
+            plan.Directives.Select(static directive => directive.ToDto()).ToArray(),
+            plan.Reasons.Select(static reason => reason.ToDto()).ToArray(),
+            plan.Summary.ToDto(),
+            plan.Warnings);
+
+    public static DecisionPlanSummaryDto ToSummaryDto(this DecisionPlan plan) =>
+        new(
+            plan.SessionId.Value,
+            plan.PlannedAtUtc,
+            plan.PlanStatus.ToString(),
+            plan.Directives.Count,
+            plan.Summary.EvaluatedPolicies,
+            plan.Summary.MatchedPolicies,
+            plan.Summary.BlockingPolicies,
+            plan.Summary.AbortingPolicies,
+            plan.Warnings);
+
+    public static DecisionDirectiveDto ToDto(this DecisionDirective directive) =>
+        new(
+            directive.DirectiveId,
+            directive.DirectiveKind.ToString(),
+            directive.Priority,
+            directive.SourcePolicy,
+            directive.TargetId,
+            directive.TargetLabel,
+            directive.SuggestedPolicy,
+            directive.Metadata,
+            directive.Reasons.Select(static reason => reason.ToDto()).ToArray());
+
+    public static DecisionReasonDto ToDto(this DecisionReason reason) =>
+        new(reason.SourcePolicy, reason.Code, reason.Message, reason.Metadata);
+
+    public static PolicyExecutionSummaryDto ToDto(this PolicyExecutionSummary summary) =>
+        new(
+            summary.EvaluatedPolicies,
+            summary.MatchedPolicies,
+            summary.BlockingPolicies,
+            summary.AbortingPolicies,
+            summary.ProducedDirectiveCount,
+            summary.ReturnedDirectiveCount,
+            summary.SuppressedDirectiveCounts);
 
     public static DetectedListDto ToDto(this DetectedList item) =>
         new(
