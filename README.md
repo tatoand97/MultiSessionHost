@@ -18,7 +18,6 @@ La integración de escritorio ya no está acoplada a `MultiSessionHost.TestDeskt
 
 `MultiSessionHost.TestDesktopApp` queda como una implementación de ejemplo sobre esta arquitectura.
 
-
 ## Arquitectura actual
 
 ### Principios
