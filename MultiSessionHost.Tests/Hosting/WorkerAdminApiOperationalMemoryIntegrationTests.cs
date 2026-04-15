@@ -35,6 +35,9 @@ public sealed class WorkerAdminApiOperationalMemoryIntegrationTests
         Assert.NotEmpty(history!.Entries);
         Assert.NotNull(all);
         Assert.Contains(all!, item => item.SessionId == sessionId);
+
+        var memoryContextResponse = await client.GetAsync($"/sessions/{sessionId}/memory/context");
+        memoryContextResponse.EnsureSuccessStatusCode();
     }
 
     [Fact]

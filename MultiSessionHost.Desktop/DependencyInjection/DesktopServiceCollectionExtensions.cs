@@ -84,14 +84,17 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<IPolicyRuleMatcher, DefaultPolicyRuleMatcher>();
         services.AddSingleton<IPolicy>(
             static serviceProvider => new AbortPolicy(
+                serviceProvider.GetRequiredService<SessionHostOptions>(),
                 serviceProvider.GetRequiredService<IPolicyRuleProvider>(),
                 serviceProvider.GetRequiredService<IPolicyRuleMatcher>()));
         services.AddSingleton<IPolicy>(
             static serviceProvider => new ThreatResponsePolicy(
+                serviceProvider.GetRequiredService<SessionHostOptions>(),
                 serviceProvider.GetRequiredService<IPolicyRuleProvider>(),
                 serviceProvider.GetRequiredService<IPolicyRuleMatcher>()));
         services.AddSingleton<IPolicy>(
             static serviceProvider => new TransitPolicy(
+                serviceProvider.GetRequiredService<SessionHostOptions>(),
                 serviceProvider.GetRequiredService<IPolicyRuleProvider>(),
                 serviceProvider.GetRequiredService<IPolicyRuleMatcher>()));
         services.AddSingleton<IPolicy>(
@@ -123,6 +126,7 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionOperationalMemoryStore>(static serviceProvider => serviceProvider.GetRequiredService<InMemorySessionOperationalMemoryStore>());
         services.AddSingleton<ISessionOperationalMemoryReader>(static serviceProvider => serviceProvider.GetRequiredService<InMemorySessionOperationalMemoryStore>());
         services.AddSingleton<ISessionOperationalMemoryUpdater, DefaultSessionOperationalMemoryUpdater>();
+        services.AddSingleton<IPolicyMemoryContextBuilder, DefaultPolicyMemoryContextBuilder>();
         services.AddSingleton<IRuntimePersistenceBackend>(
             static serviceProvider =>
             {

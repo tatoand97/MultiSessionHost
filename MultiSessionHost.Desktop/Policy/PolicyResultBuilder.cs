@@ -6,6 +6,7 @@ internal sealed class PolicyResultBuilder
     private readonly List<DecisionReason> _reasons = [];
     private readonly List<string> _warnings = [];
     private readonly List<PolicyRuleEvaluationTrace> _ruleTraces = [];
+    private readonly List<MemoryInfluenceTrace> _memoryInfluences = [];
 
     public PolicyResultBuilder(string policyName)
     {
@@ -30,6 +31,8 @@ internal sealed class PolicyResultBuilder
         _reasons.Add(new DecisionReason(PolicyName, code, message, metadata ?? new Dictionary<string, string>()));
 
     public void AddWarning(string warning) => _warnings.Add(warning);
+
+    public void AddMemoryInfluence(MemoryInfluenceTrace influence) => _memoryInfluences.Add(influence);
 
     public void AddDirective(
         DecisionDirectiveKind kind,
@@ -112,7 +115,8 @@ internal sealed class PolicyResultBuilder
                 _ruleTraces.ToArray(),
                 MatchedRuleName,
                 FallbackUsed,
-                _directives.Select(static directive => directive.DirectiveKind.ToString()).ToArray()));
+                _directives.Select(static directive => directive.DirectiveKind.ToString()).ToArray(),
+                _memoryInfluences.ToArray()));
 
     private static string CreateDirectiveId(string policyName, DecisionDirectiveKind kind, string? targetId, string? targetLabel)
     {

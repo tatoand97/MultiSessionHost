@@ -61,13 +61,23 @@ public sealed record PolicyRuleEvaluationTraceDto(
     bool Blocks,
     bool Aborts);
 
+public sealed record MemoryInfluenceTraceDto(
+    string PolicyName,
+    string InfluenceType,
+    string MemoryKey,
+    string ReasonCode,
+    string Reason,
+    string Value,
+    IReadOnlyDictionary<string, string> Metadata);
+
 public sealed record PolicyEvaluationExplanationDto(
     string PolicyName,
     string? CandidateSummary,
     IReadOnlyList<PolicyRuleEvaluationTraceDto> RuleTraces,
     string? MatchedRuleName,
     bool FallbackUsed,
-    IReadOnlyList<string> ProducedDirectiveKinds);
+    IReadOnlyList<string> ProducedDirectiveKinds,
+    IReadOnlyList<MemoryInfluenceTraceDto> MemoryInfluences);
 
 public sealed record AggregationRuleApplicationTraceDto(
     string RuleName,

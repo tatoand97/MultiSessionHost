@@ -264,6 +264,8 @@ public sealed class PolicyEngineOptions
     public SelectNextSitePolicyOptions SelectNextSitePolicy { get; init; } = new();
 
     public BehaviorRulesOptions Rules { get; init; } = new();
+
+    public MemoryDecisioningOptions MemoryDecisioning { get; init; } = new();
 }
 
 public sealed class AbortPolicyOptions

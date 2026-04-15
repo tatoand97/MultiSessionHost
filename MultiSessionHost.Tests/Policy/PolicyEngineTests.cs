@@ -4,6 +4,7 @@ using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Extraction;
+using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Infrastructure.Queues;
@@ -90,6 +91,102 @@ public sealed class PolicyEngineTests
 
         Assert.True(result.DidBlock);
         Assert.Contains(result.Directives, static directive => directive.DirectiveKind == DecisionDirectiveKind.Wait);
+    }
+
+    [Fact]
+    public async Task ThreatResponsePolicy_AddsWithdrawWhenMemoryShowsRepeatedHighRisk()
+    {
+        var sessionId = new SessionId("policy-threat-memory");
+        var options = new SessionHostOptions();
+        var memory = CreateMemoryContext(
+            sessionId,
+            riskSummary: new RiskMemorySummary(
+                RiskSeverity.High,
+                RepeatedHighRiskCount: 3,
+                RepeatedUnknownRiskCount: 0,
+                TopSources: ["alerts"],
+                TopSuggestedPolicies: ["Withdraw"],
+                HasRepeatedWithdrawLikePattern: true,
+                Metadata: new Dictionary<string, string>()));
+        var context = CreateContext(
+            sessionId,
+            domain: CreateDomain(sessionId) with
+            {
+                Threat = ThreatState.CreateDefault() with { Severity = ThreatSeverity.High, IsSafe = false }
+            },
+            memoryContext: memory);
+
+        var result = await new ThreatResponsePolicy(options).EvaluateAsync(context, CancellationToken.None);
+
+        Assert.Contains(result.Directives, static directive => directive.DirectiveKind == DecisionDirectiveKind.Withdraw);
+        Assert.Contains(result.Reasons, static reason => reason.Code == "memory:repeated-high-risk");
+    }
+
+    [Fact]
+    public async Task TransitPolicy_AddsNavigateWhenMemoryShowsVeryLongWaitPattern()
+    {
+        var sessionId = new SessionId("policy-transit-memory");
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                MemoryDecisioning = new MemoryDecisioningOptions
+                {
+                    Transit = new TransitMemoryOptions
+                    {
+                        UseTimingMemory = true,
+                        LongWaitThresholdMs = 5000,
+                        MaxRememberedWaitBeforeMoveOnMs = 8000,
+                        AdaptToRememberedDelays = true
+                    }
+                }
+            }
+        };
+        var memory = CreateMemoryContext(
+            sessionId,
+            timingSummary: new TimingMemorySummary(
+                KnownTimingKinds: ["wait-window"],
+                AverageTransitionDurationMs: 1000,
+                AverageArrivalDelayMs: 1000,
+                AverageWaitWindowMs: 12000,
+                HasRepeatedLongWaitPattern: true,
+                Metadata: new Dictionary<string, string>()));
+        var context = CreateContext(
+            sessionId,
+            domain: CreateDomain(sessionId) with
+            {
+                Navigation = NavigationState.CreateDefault() with { Status = NavigationStatus.InProgress, IsTransitioning = true }
+            },
+            memoryContext: memory);
+
+        var result = await new TransitPolicy(options).EvaluateAsync(context, CancellationToken.None);
+
+        Assert.Contains(result.Directives, static directive => directive.DirectiveKind == DecisionDirectiveKind.Navigate);
+        Assert.Contains(result.Reasons, static reason => reason.Code == "memory:move-on-after-long-waits");
+    }
+
+    [Fact]
+    public async Task AbortPolicy_AddsEscalationWhenMemoryShowsRepeatedFailures()
+    {
+        var sessionId = new SessionId("policy-abort-memory");
+        var options = new SessionHostOptions();
+        var memory = CreateMemoryContext(
+            sessionId,
+            outcomeSummary: new OutcomeMemorySummary(
+                MostRecentOutcomeKind: "failure",
+                SuccessCount: 0,
+                FailureCount: 4,
+                DeferredCount: 0,
+                AbortCount: 0,
+                NoOpCount: 0,
+                HasRecentFailurePattern: true,
+                Metadata: new Dictionary<string, string>()));
+        var context = CreateContext(sessionId, runtimeStatus: SessionStatus.Running, memoryContext: memory);
+
+        var result = await new AbortPolicy(options).EvaluateAsync(context, CancellationToken.None);
+
+        Assert.Contains(result.Directives, static directive => directive.DirectiveKind == DecisionDirectiveKind.PauseActivity);
+        Assert.Contains(result.Reasons, static reason => reason.Code == "memory:repeated-failures");
     }
 
     [Fact]
@@ -276,6 +373,8 @@ public sealed class PolicyEngineTests
             domainStore,
             semanticStore,
             riskStore,
+            new StubOperationalMemoryReader(),
+            new StubPolicyMemoryContextBuilder(),
             CreatePolicies(options),
             new DefaultDecisionPlanAggregator(options),
             planStore,
@@ -797,7 +896,8 @@ public sealed class PolicyEngineTests
         SessionId sessionId,
         SessionStatus runtimeStatus = SessionStatus.Running,
         SessionDomainState? domain = null,
-        RiskAssessmentResult? riskAssessment = null) =>
+        RiskAssessmentResult? riskAssessment = null,
+        PolicyMemoryContext? memoryContext = null) =>
         new(
             sessionId,
             new SessionSnapshot(
@@ -810,7 +910,26 @@ public sealed class PolicyEngineTests
             riskAssessment,
             ResolvedDesktopTargetContext: null,
             DesktopSessionAttachment: null,
-            DateTimeOffset.Parse("2026-04-15T12:00:00Z"));
+            DateTimeOffset.Parse("2026-04-15T12:00:00Z"),
+            memoryContext);
+
+    private static PolicyMemoryContext CreateMemoryContext(
+        SessionId sessionId,
+        IReadOnlyList<WorksiteMemorySummary>? knownWorksites = null,
+        RiskMemorySummary? riskSummary = null,
+        PresenceMemorySummary? presenceSummary = null,
+        TimingMemorySummary? timingSummary = null,
+        OutcomeMemorySummary? outcomeSummary = null) =>
+        new(
+            sessionId,
+            DateTimeOffset.Parse("2026-04-15T12:00:00Z"),
+            knownWorksites ?? [],
+            riskSummary ?? RiskMemorySummary.Empty(),
+            presenceSummary ?? PresenceMemorySummary.Empty(),
+            timingSummary ?? TimingMemorySummary.Empty(),
+            outcomeSummary ?? OutcomeMemorySummary.Empty(),
+            [],
+            new Dictionary<string, string>());
 
     private static SessionDefinition CreateDefinition(SessionId sessionId) =>
         new(
@@ -888,4 +1007,31 @@ public sealed class PolicyEngineTests
             SuggestedPolicy: kind.ToString(),
             new Dictionary<string, string>(),
             []);
+
+    private sealed class StubOperationalMemoryReader : ISessionOperationalMemoryReader
+    {
+        public ValueTask<SessionOperationalMemorySnapshot?> GetAsync(SessionId sessionId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<SessionOperationalMemorySnapshot?>(null);
+
+        public ValueTask<IReadOnlyCollection<SessionOperationalMemorySnapshot>> GetAllAsync(CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyCollection<SessionOperationalMemorySnapshot>>(Array.Empty<SessionOperationalMemorySnapshot>());
+
+        public ValueTask<IReadOnlyList<MemoryObservationRecord>> GetHistoryAsync(SessionId sessionId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyList<MemoryObservationRecord>>(Array.Empty<MemoryObservationRecord>());
+
+        public ValueTask<IReadOnlyList<WorksiteObservation>> GetKnownWorksitesAsync(SessionId sessionId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyList<WorksiteObservation>>(Array.Empty<WorksiteObservation>());
+
+        public ValueTask<SessionOperationalMemorySummary?> GetSummaryAsync(SessionId sessionId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<SessionOperationalMemorySummary?>(null);
+
+        public ValueTask<WorksiteObservation?> GetLatestWorksiteObservationAsync(SessionId sessionId, string worksiteKey, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<WorksiteObservation?>(null);
+    }
+
+    private sealed class StubPolicyMemoryContextBuilder : IPolicyMemoryContextBuilder
+    {
+        public PolicyMemoryContext Build(SessionOperationalMemorySnapshot? snapshot, SessionId sessionId, DateTimeOffset now) =>
+            PolicyMemoryContext.Empty(sessionId, now);
+    }
 }

@@ -492,7 +492,18 @@ public static class DtoMappingExtensions
             explanation.RuleTraces.Select(static trace => trace.ToDto()).ToArray(),
             explanation.MatchedRuleName,
             explanation.FallbackUsed,
-            explanation.ProducedDirectiveKinds);
+            explanation.ProducedDirectiveKinds,
+            explanation.MemoryInfluences.Select(static trace => trace.ToDto()).ToArray());
+
+    public static MemoryInfluenceTraceDto ToDto(this MemoryInfluenceTrace trace) =>
+        new(
+            trace.PolicyName,
+            trace.InfluenceType,
+            trace.MemoryKey,
+            trace.ReasonCode,
+            trace.Reason,
+            trace.Value,
+            trace.Metadata);
 
     public static PolicyRuleEvaluationTraceDto ToDto(this PolicyRuleEvaluationTrace trace) =>
         new(
@@ -879,6 +890,74 @@ public static class DtoMappingExtensions
         new(
             sessionId.Value,
             records.Select(static record => record.ToDto()).ToArray());
+
+    public static PolicyMemoryContextDto ToDto(this PolicyMemoryContext context) =>
+        new(
+            context.SessionId.Value,
+            context.CapturedAtUtc,
+            context.KnownWorksites.Select(static item => item.ToDto()).ToArray(),
+            context.RiskSummary.ToDto(),
+            context.PresenceSummary.ToDto(),
+            context.TimingSummary.ToDto(),
+            context.OutcomeSummary.ToDto(),
+            context.Warnings,
+            context.Metadata);
+
+    public static WorksiteMemorySummaryDto ToDto(this WorksiteMemorySummary summary) =>
+        new(
+            summary.WorksiteKey,
+            summary.WorksiteLabel,
+            summary.VisitCount,
+            summary.SuccessCount,
+            summary.FailureCount,
+            summary.SuccessRate,
+            summary.LastOutcome,
+            summary.LastObservedRiskSeverity.ToString(),
+            summary.LastSelectedAtUtc,
+            summary.LastArrivedAtUtc,
+            summary.OccupancySignalCount,
+            summary.IsStale,
+            summary.Confidence,
+            summary.Tags,
+            summary.Metadata);
+
+    public static RiskMemorySummaryDto ToDto(this RiskMemorySummary summary) =>
+        new(
+            summary.HighestRecentSeverity.ToString(),
+            summary.RepeatedHighRiskCount,
+            summary.RepeatedUnknownRiskCount,
+            summary.TopSources,
+            summary.TopSuggestedPolicies,
+            summary.HasRepeatedWithdrawLikePattern,
+            summary.Metadata);
+
+    public static PresenceMemorySummaryDto ToDto(this PresenceMemorySummary summary) =>
+        new(
+            summary.TotalPresenceSignals,
+            summary.RecentPresenceSignals,
+            summary.LastPresenceSignalAtUtc,
+            summary.IsRecentlyOccupied,
+            summary.Metadata);
+
+    public static TimingMemorySummaryDto ToDto(this TimingMemorySummary summary) =>
+        new(
+            summary.KnownTimingKinds,
+            summary.AverageTransitionDurationMs,
+            summary.AverageArrivalDelayMs,
+            summary.AverageWaitWindowMs,
+            summary.HasRepeatedLongWaitPattern,
+            summary.Metadata);
+
+    public static OutcomeMemorySummaryDto ToDto(this OutcomeMemorySummary summary) =>
+        new(
+            summary.MostRecentOutcomeKind,
+            summary.SuccessCount,
+            summary.FailureCount,
+            summary.DeferredCount,
+            summary.AbortCount,
+            summary.NoOpCount,
+            summary.HasRecentFailurePattern,
+            summary.Metadata);
 
     public static RuntimePersistenceStatusDto ToDto(this RuntimePersistenceStatusSnapshot snapshot) =>
         new(

@@ -37,9 +37,120 @@ public sealed class SelectNextSitePolicy : IPolicy
         builder.SetCandidateSummary(PolicyRuleEvaluation.CandidateSummary(candidates));
         var rules = _ruleProvider.GetRules();
 
-        _ = PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.SiteSelectionAllowRules, candidates, context.Now, static _ => null) ||
-            PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.SiteSelectionFallbackRules, candidates, context.Now, static _ => null);
+        // Apply memory-informed ranking if available
+        var memoryInfluences = new List<MemoryInfluenceTrace>();
+        if (_options.PolicyEngine.MemoryDecisioning.EnableMemoryDecisioning &&
+            context.MemoryContext is not null &&
+            context.MemoryContext.KnownWorksites.Count > 0)
+        {
+            ApplyMemoryInfluences(builder, context, _options.PolicyEngine.MemoryDecisioning.SiteSelection, memoryInfluences);
+        }
+
+        var result = (_ = PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.SiteSelectionAllowRules, candidates, context.Now, static _ => null) ||
+            PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.SiteSelectionFallbackRules, candidates, context.Now, static _ => null));
+
+        // Add memory influence information to result if memory affected the decision
+        if (memoryInfluences.Count > 0)
+        {
+            foreach (var influence in memoryInfluences)
+            {
+                builder.AddMemoryInfluence(influence);
+            }
+        }
 
         return ValueTask.FromResult(builder.Build());
+    }
+
+    private static void ApplyMemoryInfluences(
+        PolicyResultBuilder builder,
+        PolicyEvaluationContext context,
+        SiteSelectionMemoryOptions memoryOptions,
+        List<MemoryInfluenceTrace> influences)
+    {
+        if (!memoryOptions.EnableMemoryInfluence || context.MemoryContext?.KnownWorksites == null)
+        {
+            return;
+        }
+
+        var currentSiteKey = context.SessionDomainState.Location.ContextLabel ?? "unknown";
+
+        // Check current worksite for penalties/boosts
+        var currentSite = context.MemoryContext.KnownWorksites
+            .FirstOrDefault(w => w.WorksiteKey.Equals(currentSiteKey, StringComparison.OrdinalIgnoreCase));
+
+        if (currentSite is not null)
+        {
+            var influence = MemoryInfluenceHelpers.ComputeWorksiteMemoryInfluence(
+                currentSite,
+                memoryOptions,
+                context.Now);
+
+            if (influence > 0)
+            {
+                influences.Add(MemoryInfluenceHelpers.CreateInfluenceTrace(
+                    "SelectNextSitePolicy",
+                    "WorksiteBoost",
+                    currentSiteKey,
+                    "successful-worksite",
+                    $"Boosting selection for worksite with {currentSite.SuccessCount} successes",
+                    influence.ToString("0.##")));
+
+                builder.AddReason(
+                    "memory:successful-worksite",
+                    $"Memory indicates {currentSite.SuccessCount} successful visits to {currentSiteKey}");
+            }
+            else if (influence < 0)
+            {
+                var penaltyReason = currentSite.FailureCount > 0
+                    ? $"{currentSite.FailureCount} failures"
+                    : currentSite.OccupancySignalCount > 0
+                    ? "occupancy signals"
+                    : "high remembered risk";
+
+                influences.Add(MemoryInfluenceHelpers.CreateInfluenceTrace(
+                    "SelectNextSitePolicy",
+                    "WorksitePenalty",
+                    currentSiteKey,
+                    "memory-penalized-worksite",
+                    $"Penalizing worksite due to {penaltyReason}",
+                    influence.ToString("0.##")));
+
+                builder.AddReason(
+                    "memory:penalized-worksite",
+                    $"Memory indicates unfavorable conditions at {currentSiteKey}: {penaltyReason}");
+            }
+        }
+
+        // Check for avoided worksites with high remembered risk
+        if (memoryOptions.AvoidHighRiskWorksites)
+        {
+            var riskySites = context.MemoryContext.KnownWorksites
+                .Where(w => MemoryInfluenceHelpers.ShouldAvoidWorksiteWithRememberedRisk(
+                    w,
+                    new ThreatMemoryOptions
+                    {
+                        AvoidWorksiteWithRememberedRisk = true,
+                        AvoidRiskSeverityThreshold = memoryOptions.AvoidWorksitesAboveRememberedRiskSeverity
+                    }))
+                .ToList();
+
+            if (riskySites.Count > 0)
+            {
+                builder.AddReason(
+                    "memory:avoid-high-risk",
+                    $"Memory indicates {riskySites.Count} worksite(s) with high remembered risk");
+
+                foreach (var riskySite in riskySites)
+                {
+                    influences.Add(MemoryInfluenceHelpers.CreateInfluenceTrace(
+                        "SelectNextSitePolicy",
+                        "RiskAvoidance",
+                        riskySite.WorksiteKey,
+                        "high-remembered-risk",
+                        $"Avoiding worksite with {riskySite.LastObservedRiskSeverity} risk",
+                        riskySite.WorksiteKey));
+                }
+            }
+        }
     }
 }

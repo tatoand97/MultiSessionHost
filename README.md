@@ -306,6 +306,66 @@ Validaciones:
 - `GET /sessions/{id}/memory`
 - `GET /sessions/{id}/memory/summary`
 - `GET /sessions/{id}/memory/history`
+- `GET /sessions/{id}/memory/context`
+
+## Memory-informed decisioning (Fase 3.3)
+
+El motor de políticas ahora puede consumir una vista resumida de memoria operacional por sesión (`PolicyMemoryContext`) sin depender de stores raw. Esta capa mantiene el comportamiento determinista y explicable, y no introduce ML.
+
+### Políticas con influencia de memoria
+
+- `SelectNextSitePolicy`: aplica boost/penalty por historial de éxito/fallo, ocupación y severidad de riesgo recordada.
+- `ThreatResponsePolicy`: puede reforzar `Withdraw` ante patrones repetidos de riesgo alto o riesgo recordado del sitio actual.
+- `TransitPolicy`: adapta `Wait` vs `Navigate` con base en patrones recordados de espera prolongada.
+- `AbortPolicy`: refuerza `PauseActivity`/`Abort` ante patrones repetidos de fallos recientes.
+
+Cada influencia se registra como `MemoryInfluenceTrace` dentro de `PolicyEvaluationExplanation`, y se expone en el `DecisionPlan` para auditoría.
+
+### Configuración
+
+`MultiSessionHost:PolicyEngine:MemoryDecisioning`:
+
+```json
+{
+  "PolicyEngine": {
+    "MemoryDecisioning": {
+      "EnableMemoryDecisioning": true,
+      "SiteSelection": {
+        "EnableMemoryInfluence": true,
+        "PreferSuccessfulWorksites": true,
+        "PenalizeFailedWorksites": true,
+        "PenalizeOccupiedWorksites": true,
+        "AvoidHighRiskWorksites": true,
+        "MinimumSuccessfulVisits": 1,
+        "FailurePenaltyWeight": 0.3,
+        "OccupancyPenaltyWeight": 0.25,
+        "SuccessBoostWeight": 0.4,
+        "StaleMemoryPenaltyMode": "SoftPenalty",
+        "AvoidWorksitesAboveRememberedRiskSeverity": "High"
+      },
+      "ThreatResponse": {
+        "UseRepeatedRiskPattern": true,
+        "WithdrawOnRepeatedHighRisk": true,
+        "RepeatedHighRiskThreshold": 2,
+        "AvoidWorksiteWithRememberedRisk": true,
+        "AvoidRiskSeverityThreshold": "High"
+      },
+      "Transit": {
+        "UseTimingMemory": true,
+        "LongWaitThresholdMs": 5000,
+        "MaxRememberedWaitBeforeMoveOnMs": 10000,
+        "AdaptToRememberedDelays": true
+      },
+      "Abort": {
+        "AbortOnRepeatedFailures": true,
+        "RepeatedFailureThreshold": 3,
+        "FailureWindowMinutes": 60,
+        "MemoryReinforceAbortPriorityBoost": 50
+      }
+    }
+  }
+}
+```
 
 Ejemplo abreviado:
 

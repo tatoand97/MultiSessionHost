@@ -14,4 +14,5 @@ public sealed record PolicyEvaluationContext(
     RiskAssessmentResult? RiskAssessmentResult,
     ResolvedDesktopTargetContext? ResolvedDesktopTargetContext,
     DesktopSessionAttachment? DesktopSessionAttachment,
-    DateTimeOffset Now);
+    DateTimeOffset Now,
+    PolicyMemoryContext? MemoryContext = null);

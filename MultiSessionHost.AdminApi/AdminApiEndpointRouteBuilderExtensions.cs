@@ -830,6 +830,42 @@ public static class AdminApiEndpointRouteBuilderExtensions
             });
 
         endpoints.MapGet(
+            "/sessions/{id}/memory/context",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionOperationalMemoryStore operationalMemoryStore,
+                IPolicyMemoryContextBuilder policyMemoryContextBuilder,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var snapshot = await operationalMemoryStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                if (snapshot is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var context = policyMemoryContextBuilder.Build(snapshot, sessionId, DateTimeOffset.UtcNow);
+                return Results.Ok(context.ToDto());
+            });
+
+        endpoints.MapGet(
             "/sessions/{id}/decision-plan/directives",
             async Task<IResult> (
                 string id,

@@ -88,7 +88,8 @@ public sealed record PolicyEvaluationExplanation(
     IReadOnlyList<PolicyRuleEvaluationTrace> RuleTraces,
     string? MatchedRuleName,
     bool FallbackUsed,
-    IReadOnlyList<string> ProducedDirectiveKinds);
+    IReadOnlyList<string> ProducedDirectiveKinds,
+    IReadOnlyList<MemoryInfluenceTrace> MemoryInfluences);
 
 public sealed record AggregationRuleApplicationTrace(
     string RuleName,

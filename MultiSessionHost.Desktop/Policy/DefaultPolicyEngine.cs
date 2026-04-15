@@ -3,6 +3,7 @@ using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Extraction;
+using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Risk;
 
@@ -18,6 +19,8 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
     private readonly ISessionDomainStateStore _sessionDomainStateStore;
     private readonly ISessionSemanticExtractionStore _semanticExtractionStore;
     private readonly ISessionRiskAssessmentStore _riskAssessmentStore;
+    private readonly ISessionOperationalMemoryReader _operationalMemoryStore;
+    private readonly IPolicyMemoryContextBuilder _memoryContextBuilder;
     private readonly IEnumerable<IPolicy> _policies;
     private readonly IDecisionPlanAggregator _aggregator;
     private readonly ISessionDecisionPlanStore _decisionPlanStore;
@@ -34,6 +37,8 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
         ISessionDomainStateStore sessionDomainStateStore,
         ISessionSemanticExtractionStore semanticExtractionStore,
         ISessionRiskAssessmentStore riskAssessmentStore,
+        ISessionOperationalMemoryReader operationalMemoryStore,
+        IPolicyMemoryContextBuilder memoryContextBuilder,
         IEnumerable<IPolicy> policies,
         IDecisionPlanAggregator aggregator,
         ISessionDecisionPlanStore decisionPlanStore,
@@ -49,6 +54,8 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
         _sessionDomainStateStore = sessionDomainStateStore;
         _semanticExtractionStore = semanticExtractionStore;
         _riskAssessmentStore = riskAssessmentStore;
+        _operationalMemoryStore = operationalMemoryStore;
+        _memoryContextBuilder = memoryContextBuilder;
         _policies = policies;
         _aggregator = aggregator;
         _decisionPlanStore = decisionPlanStore;
@@ -116,6 +123,10 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
             ?? throw new InvalidOperationException($"Domain state for session '{sessionId}' was not initialized.");
         var semanticExtraction = await _semanticExtractionStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
         var riskAssessment = await _riskAssessmentStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        
+        // Fetch operational memory and build policy-facing memory context
+        var operationalMemory = await _operationalMemoryStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var policyMemoryContext = _memoryContextBuilder.Build(operationalMemory, sessionId, now);
 
         return new PolicyEvaluationContext(
             sessionId,
@@ -126,7 +137,8 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
             riskAssessment,
             ResolvedDesktopTargetContext: null,
             DesktopSessionAttachment: null,
-            now);
+            now,
+            policyMemoryContext);
     }
 
     private IEnumerable<IPolicy> OrderPolicies()

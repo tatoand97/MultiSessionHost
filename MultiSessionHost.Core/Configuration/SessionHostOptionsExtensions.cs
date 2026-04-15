@@ -891,6 +891,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidateMemoryDecisioning(options.MemoryDecisioning, out error))
+        {
+            return false;
+        }
+
         if (!IsValidDirectiveKind(options.Rules.SiteSelection.NoAllowedCandidateDirectiveKind))
         {
             error = "PolicyEngine.Rules.SiteSelection.NoAllowedCandidateDirectiveKind is not a valid directive kind.";
@@ -911,6 +916,95 @@ public static class SessionHostOptionsExtensions
         error = null;
         return true;
     }
+
+    private static bool TryValidateMemoryDecisioning(MemoryDecisioningOptions options, out string? error)
+    {
+        if (options.SiteSelection.MinimumSuccessfulVisits < 0)
+        {
+            error = "PolicyEngine.MemoryDecisioning.SiteSelection.MinimumSuccessfulVisits cannot be negative.";
+            return false;
+        }
+
+        if (!IsFraction(options.SiteSelection.FailurePenaltyWeight) ||
+            !IsFraction(options.SiteSelection.OccupancyPenaltyWeight) ||
+            !IsFraction(options.SiteSelection.SuccessBoostWeight))
+        {
+            error = "PolicyEngine.MemoryDecisioning.SiteSelection weight values must be between 0 and 1.";
+            return false;
+        }
+
+        if (options.SiteSelection.RecentFailureWindowMinutes < 0 || options.SiteSelection.RecentOccupancyWindowMinutes < 0)
+        {
+            error = "PolicyEngine.MemoryDecisioning.SiteSelection recent windows cannot be negative.";
+            return false;
+        }
+
+        if (!IsKnownStaleMode(options.SiteSelection.StaleMemoryPenaltyMode))
+        {
+            error = "PolicyEngine.MemoryDecisioning.SiteSelection.StaleMemoryPenaltyMode must be Ignore, SoftPenalty, or StrictPenalty.";
+            return false;
+        }
+
+        if (!IsKnownRiskSeverity(options.SiteSelection.AvoidWorksitesAboveRememberedRiskSeverity) ||
+            !IsKnownRiskSeverity(options.ThreatResponse.AvoidRiskSeverityThreshold))
+        {
+            error = "PolicyEngine.MemoryDecisioning risk severity thresholds must be Critical, High, Moderate, Low, or Unknown.";
+            return false;
+        }
+
+        if (options.ThreatResponse.RepeatedHighRiskThreshold < 1)
+        {
+            error = "PolicyEngine.MemoryDecisioning.ThreatResponse.RepeatedHighRiskThreshold must be at least 1.";
+            return false;
+        }
+
+        if (options.Transit.LongWaitThresholdMs < 0 || options.Transit.MaxRememberedWaitBeforeMoveOnMs < 0)
+        {
+            error = "PolicyEngine.MemoryDecisioning.Transit thresholds cannot be negative.";
+            return false;
+        }
+
+        if (options.Transit.MaxRememberedWaitBeforeMoveOnMs < options.Transit.LongWaitThresholdMs)
+        {
+            error = "PolicyEngine.MemoryDecisioning.Transit.MaxRememberedWaitBeforeMoveOnMs cannot be less than LongWaitThresholdMs.";
+            return false;
+        }
+
+        if (options.Abort.RepeatedFailureThreshold < 1)
+        {
+            error = "PolicyEngine.MemoryDecisioning.Abort.RepeatedFailureThreshold must be at least 1.";
+            return false;
+        }
+
+        if (options.Abort.FailureWindowMinutes < 0)
+        {
+            error = "PolicyEngine.MemoryDecisioning.Abort.FailureWindowMinutes cannot be negative.";
+            return false;
+        }
+
+        if (options.Abort.MemoryReinforceAbortPriorityBoost < 0)
+        {
+            error = "PolicyEngine.MemoryDecisioning.Abort.MemoryReinforceAbortPriorityBoost cannot be negative.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool IsFraction(double value) => value >= 0 && value <= 1;
+
+    private static bool IsKnownStaleMode(string? value) =>
+        string.Equals(value, "Ignore", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "SoftPenalty", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "StrictPenalty", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsKnownRiskSeverity(string? value) =>
+        string.Equals(value, "Critical", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "High", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "Moderate", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "Low", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(value, "Unknown", StringComparison.OrdinalIgnoreCase);
 
     private static bool TryValidatePolicyRuleFamilies(BehaviorRulesOptions rules, string path, out string? error) =>
         TryValidatePolicyRuleFamilies(rules.SiteSelection, $"{path}.SiteSelection", out error) &&

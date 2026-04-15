@@ -621,4 +621,52 @@ public sealed class SessionHostOptionsValidationTests
         Assert.False(valid);
         Assert.Contains("WaitingAround", error);
     }
+
+    [Fact]
+    public void TryValidate_FailsWhenMemoryDecisioningStaleModeIsInvalid()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                MemoryDecisioning = new MemoryDecisioningOptions
+                {
+                    SiteSelection = new SiteSelectionMemoryOptions
+                    {
+                        StaleMemoryPenaltyMode = "HardPenalty"
+                    }
+                }
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("StaleMemoryPenaltyMode", error);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenMemoryDecisioningRiskThresholdIsInvalid()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                MemoryDecisioning = new MemoryDecisioningOptions
+                {
+                    ThreatResponse = new ThreatMemoryOptions
+                    {
+                        AvoidRiskSeverityThreshold = "Extreme"
+                    }
+                }
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("risk severity thresholds", error, StringComparison.OrdinalIgnoreCase);
+    }
 }
