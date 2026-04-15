@@ -109,8 +109,14 @@ No incluye ni pretende incluir:
   - mantiene un snapshot de dominio por `SessionId`
   - thread-safe, en memoria y estrictamente aislado por sesión
 - `ISessionDomainStateProjectionService`
-  - deriva estado de dominio desde señales runtime disponibles
-  - todavía no implementa extracción semántica profunda
+  - deriva estado de dominio desde metadata runtime, `SessionUiState` y resultados semánticos
+  - mantiene heurísticas runtime como fallback cuando la extracción es ausente o débil
+- `IUiSemanticExtractionPipeline`
+  - ejecuta detectores composables sobre el `UiTree` proyectado
+  - produce `UiSemanticExtractionResult` sin mutar stores directamente
+- `ISessionSemanticExtractionStore`
+  - mantiene el último resultado semántico por `SessionId`
+  - permite inspección Admin API separada del estado de dominio final
 
 ## Flujo runtime
 
@@ -119,6 +125,11 @@ Worker session
   -> target resolution
   -> attachment ensure
   -> UI capture/project
+  -> UiTree query helpers
+  -> semantic classifier
+  -> detector extractors
+  -> UiSemanticExtractionResult
+  -> semantic extraction store
   -> planned work items
   -> domain projection
   -> SessionDomainStateStore
@@ -141,7 +152,35 @@ Sub-estados incluidos:
 
 ### Diferencia con SessionUiState
 
-`SessionUiState` conserva el mundo observado de UI: raw snapshot JSON, `UiTree`, diff y work items planificados. `SessionDomainState` conserva una vista estable de dominio: qué parece estar haciendo la sesión, qué tan saludable/degradada está y qué señales faltan o fallaron. Hoy la proyección solo usa señales ya existentes: runtime status, attachment, raw snapshot, árbol proyectado, work items, errores de refresh y metadata de target/profile. La extracción semántica específica queda fuera de este alcance.
+`SessionUiState` conserva el mundo observado de UI: raw snapshot JSON, `UiTree`, diff y work items planificados. `SessionDomainState` conserva una vista estable de dominio: qué parece estar haciendo la sesión, qué tan saludable/degradada está y qué señales faltan o fallaron.
+
+La extracción semántica queda como una capa intermedia porque el árbol UI es técnico y cambiante, mientras que dominio necesita señales estables. Los extractores leen el `UiTree`, emiten hallazgos genéricos (`DetectedList`, `DetectedTarget`, `DetectedAlert`, `DetectedTransitState`, `DetectedResource`, `DetectedCapability`, `DetectedPresenceEntity`) y el proyector de dominio decide qué hallazgos son suficientemente fuertes para actualizar `NavigationState`, `ThreatState`, `TargetState`, `ResourceState`, `CompanionState` o `LocationState`.
+
+Esto evita que `DefaultSessionDomainStateProjectionService` acumule traversal raw del árbol. Su responsabilidad queda acotada a mapear:
+
+- metadata runtime
+- `SessionUiState`
+- `UiSemanticExtractionResult`
+- fallbacks conservadores
+
+### Extracción semántica
+
+La capa vive en `MultiSessionHost.Desktop/Extraction` e incluye:
+
+- `IUiTreeQueryService`: flatten, visible descendants, role/text/attribute lookup, ancestors/siblings/path, text candidates y role families.
+- `IUiSemanticClassifier`: heurísticas ligeras por role, texto, attributes, shape de hijos, visibility, enabled, selection, progress/toggle metadata e identificadores.
+- `IUiSemanticExtractor`: contrato composable para detectores.
+- `IUiSemanticExtractionPipeline`: ejecuta todos los extractores y normaliza un resultado inmutable.
+- `ISessionSemanticExtractionStore`: store thread-safe por sesión para diagnóstico.
+
+Detectores incluidos:
+
+- `ListDetectorExtractor`: listas, item counts, selección, labels visibles y scrollability.
+- `TargetDetectorExtractor`: nodos selected/active/focused o target-like.
+- `AlertDetectorExtractor`: banners/status/messages con severidad genérica.
+- `TransitStateDetectorExtractor`: progress/loading/blocked/transition signals.
+- `ResourceCapabilityDetectorExtractor`: recursos con porcentajes/valores y capacidades enabled/disabled/active/cooling-down.
+- `PresenceEntityDetectorExtractor`: colecciones de entidades presentes/cercanas.
 
 ### Integración en refresh
 
@@ -152,7 +191,24 @@ La actualización ocurre en `DefaultSessionUiRefreshService.ProjectAsync`, despu
 3. calcular diff
 4. planificar work items
 5. persistir `SessionUiState`
-6. proyectar y persistir `SessionDomainState`
+6. ejecutar `IUiSemanticExtractionPipeline` sobre el `UiTree`
+7. persistir `UiSemanticExtractionResult` en `ISessionSemanticExtractionStore`
+8. proyectar y persistir `SessionDomainState`
+
+Diagrama actualizado:
+
+```text
+Ui snapshot
+  -> UiTree
+  -> UiTree query helpers
+  -> semantic classifier
+  -> detector extractors
+  -> UiSemanticExtractionResult
+  -> semantic extraction store
+  -> domain projection
+  -> SessionDomainState
+  -> Admin API inspection
+```
 
 Si la proyección UI falla, el mismo servicio registra el error en `SessionUiState` y degrada el snapshot de dominio con `Source=UiRefreshFailure` y warnings.
 
@@ -431,6 +487,11 @@ Endpoints existentes mantenidos:
 - `POST /sessions/{id}/ui/refresh`
 - `GET /domain`
 - `GET /sessions/{id}/domain`
+- `GET /semantic`
+- `GET /sessions/{id}/semantic`
+- `GET /sessions/{id}/semantic/summary`
+- `GET /sessions/{id}/semantic/lists`
+- `GET /sessions/{id}/semantic/alerts`
 
 Endpoints nuevos de inspección:
 
@@ -479,6 +540,11 @@ Invoke-RestMethod http://localhost:5088/coordination
 Invoke-RestMethod http://localhost:5088/coordination/sessions/alpha
 Invoke-RestMethod http://localhost:5088/domain
 Invoke-RestMethod http://localhost:5088/sessions/alpha/domain
+Invoke-RestMethod http://localhost:5088/semantic
+Invoke-RestMethod http://localhost:5088/sessions/alpha/semantic
+Invoke-RestMethod http://localhost:5088/sessions/alpha/semantic/summary
+Invoke-RestMethod http://localhost:5088/sessions/alpha/semantic/lists
+Invoke-RestMethod http://localhost:5088/sessions/alpha/semantic/alerts
 ```
 
 Escenarios esperados:

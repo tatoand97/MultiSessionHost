@@ -172,6 +172,132 @@ public sealed class WorkerAdminApiDomainIntegrationTests
         Assert.Equal("Bootstrap", dto.Source);
     }
 
+    [Fact]
+    public async Task UiRefresh_PopulatesSemanticExtractionAndFeedsDomainState()
+    {
+        const int basePort = 7880;
+        const string sessionId = "api-semantic-refresh";
+
+        await using var app = await TestDesktopAppProcessHost.StartAsync(sessionId, basePort);
+        var options = TestOptionsFactory.CreateDesktopTestAppOptions(
+            basePort,
+            true,
+            "http://127.0.0.1:0",
+            TestOptionsFactory.Session(sessionId, startupDelayMs: 0));
+
+        await using var harness = await WorkerHostHarness.StartAsync(options);
+        var client = Assert.IsType<HttpClient>(harness.Client);
+
+        await WaitUntilRunningAsync(harness, sessionId);
+
+        var refresh = await client.PostAsync($"/sessions/{sessionId}/ui/refresh", content: null);
+        refresh.EnsureSuccessStatusCode();
+
+        var semantic = await client.GetFromJsonAsync<UiSemanticExtractionResultDto>($"/sessions/{sessionId}/semantic");
+        var summary = await client.GetFromJsonAsync<SemanticSummaryDto>($"/sessions/{sessionId}/semantic/summary");
+        var domain = await client.GetFromJsonAsync<SessionDomainStateDto>($"/sessions/{sessionId}/domain");
+
+        Assert.NotNull(semantic);
+        Assert.NotNull(summary);
+        Assert.NotNull(domain);
+        Assert.Contains(semantic!.Lists, static item => item.NodeId == "itemsListBox" && item.ItemCount == 3);
+        Assert.Contains(semantic.TransitStates, static item => item.NodeIds.Contains("progressBar"));
+        Assert.Contains(semantic.Resources, static item => item.NodeId == "resourceProgressBar");
+        Assert.Contains(semantic.Capabilities, static item => item.NodeId == "capabilityCheckBox");
+        Assert.Contains(semantic.PresenceEntities, static item => item.NodeId == "presenceListBox" && item.Count == 2);
+        Assert.True(summary!.ListCount > 0);
+        Assert.Equal("UiProjection", domain!.Source);
+        Assert.NotNull(domain.Resources.HealthPercent ?? domain.Resources.CapacityPercent ?? domain.Resources.EnergyPercent);
+        Assert.Equal("DesktopTestApp", domain.Location.ContextLabel);
+        Assert.Contains("presence", domain.Location.SubLocationLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SemanticExtraction_RemainsSessionIsolated()
+    {
+        const int basePort = 7890;
+        const string alphaId = "api-semantic-alpha";
+        const string betaId = "api-semantic-beta";
+
+        await using var alphaApp = await TestDesktopAppProcessHost.StartAsync(alphaId, basePort);
+        await using var betaApp = await TestDesktopAppProcessHost.StartAsync(betaId, basePort + 1);
+        var options = TestOptionsFactory.CreateDesktopTestAppOptions(
+            basePort,
+            true,
+            "http://127.0.0.1:0",
+            TestOptionsFactory.Session(alphaId, startupDelayMs: 0),
+            TestOptionsFactory.Session(betaId, startupDelayMs: 0));
+
+        await using var harness = await WorkerHostHarness.StartAsync(options);
+        var client = Assert.IsType<HttpClient>(harness.Client);
+
+        await TestWait.UntilAsync(
+            () =>
+            {
+                var alpha = harness.Coordinator.GetSession(new SessionId(alphaId));
+                var beta = harness.Coordinator.GetSession(new SessionId(betaId));
+                return alpha?.Runtime.CurrentStatus == SessionStatus.Running && beta?.Runtime.CurrentStatus == SessionStatus.Running;
+            },
+            TimeSpan.FromSeconds(10),
+            "The worker runtime did not start both desktop-backed sessions in time.");
+
+        (await client.PostAsync($"/sessions/{alphaId}/ui/refresh", content: null)).EnsureSuccessStatusCode();
+
+        var alphaSemantic = await client.GetFromJsonAsync<UiSemanticExtractionResultDto>($"/sessions/{alphaId}/semantic");
+        var betaSemanticResponse = await client.GetAsync($"/sessions/{betaId}/semantic");
+        var allSemantic = await client.GetFromJsonAsync<UiSemanticExtractionResultDto[]>("/semantic");
+
+        Assert.NotNull(alphaSemantic);
+        Assert.Equal(alphaId, alphaSemantic!.SessionId);
+        Assert.Equal(HttpStatusCode.NotFound, betaSemanticResponse.StatusCode);
+        Assert.NotNull(allSemantic);
+        Assert.Single(allSemantic!);
+        Assert.Equal(alphaId, allSemantic[0].SessionId);
+    }
+
+    [Fact]
+    public async Task SemanticInspection_SurvivesBindingAndCoordinationEndpointsAndChangesAfterCommands()
+    {
+        const int basePort = 7900;
+        const string sessionId = "api-semantic-command";
+
+        await using var app = await TestDesktopAppProcessHost.StartAsync(sessionId, basePort);
+        var options = TestOptionsFactory.CreateDesktopTestAppOptions(
+            basePort,
+            true,
+            "http://127.0.0.1:0",
+            TestOptionsFactory.Session(sessionId, startupDelayMs: 0));
+
+        await using var harness = await WorkerHostHarness.StartAsync(options);
+        var client = Assert.IsType<HttpClient>(harness.Client);
+
+        await WaitUntilRunningAsync(harness, sessionId);
+
+        (await client.PostAsync($"/sessions/{sessionId}/ui/refresh", content: null)).EnsureSuccessStatusCode();
+        (await client.GetAsync($"/coordination/sessions/{sessionId}")).EnsureSuccessStatusCode();
+        (await client.PutAsJsonAsync(
+            $"/bindings/{sessionId}",
+            new SessionTargetBindingUpsertRequest(
+                "test-app",
+                new Dictionary<string, string> { ["Port"] = basePort.ToString() },
+                null))).EnsureSuccessStatusCode();
+
+        var selectResponse = await client.PostAsJsonAsync(
+            $"/sessions/{sessionId}/nodes/itemsListBox/select",
+            new NodeSelectCommandRequest($"{sessionId}-item-2", Metadata: null));
+        selectResponse.EnsureSuccessStatusCode();
+
+        (await client.PostAsync($"/sessions/{sessionId}/ui/refresh", content: null)).EnsureSuccessStatusCode();
+        var semantic = await client.GetFromJsonAsync<UiSemanticExtractionResultDto>($"/sessions/{sessionId}/semantic");
+        var domain = await client.GetFromJsonAsync<SessionDomainStateDto>($"/sessions/{sessionId}/domain");
+
+        Assert.NotNull(semantic);
+        Assert.NotNull(domain);
+        Assert.Contains(semantic!.Targets, static target => target.Selected || target.Active);
+        Assert.True(domain!.Target.HasActiveTarget);
+        Assert.Equal("Active", domain.Target.Status);
+    }
+
     private static Task WaitUntilRunningAsync(WorkerHostHarness harness, string sessionId) =>
         TestWait.UntilAsync(
             () => harness.Coordinator.GetSession(new SessionId(sessionId))?.Runtime.CurrentStatus == SessionStatus.Running,

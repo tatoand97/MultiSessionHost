@@ -12,9 +12,15 @@ public sealed class MainForm : Form
     private readonly TestDesktopAppOptions _options;
     private readonly Label _sessionIdLabel;
     private readonly Label _statusLabel;
+    private readonly Label _selectedLabel;
+    private readonly Label _alertLabel;
+    private readonly ProgressBar _progressBar;
+    private readonly ProgressBar _resourceProgressBar;
     private readonly TextBox _notesTextBox;
     private readonly ListBox _itemsListBox;
+    private readonly ListBox _presenceListBox;
     private readonly CheckBox _enabledCheckBox;
+    private readonly CheckBox _capabilityCheckBox;
     private readonly Button _startButton;
     private readonly Button _pauseButton;
     private readonly Button _resumeButton;
@@ -37,7 +43,7 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 7,
+            RowCount = 12,
             Padding = new Padding(16)
         };
 
@@ -67,6 +73,38 @@ public sealed class MainForm : Form
             Text = $"Notes for {_options.SessionId}"
         };
 
+        _selectedLabel = new Label
+        {
+            Name = "selectedLabel",
+            AutoSize = true,
+            Text = "Selected: none"
+        };
+
+        _alertLabel = new Label
+        {
+            Name = "alertLabel",
+            AutoSize = true,
+            Text = "Alert: none"
+        };
+
+        _progressBar = new ProgressBar
+        {
+            Name = "progressBar",
+            Dock = DockStyle.Fill,
+            Minimum = 0,
+            Maximum = 100,
+            Value = 0
+        };
+
+        _resourceProgressBar = new ProgressBar
+        {
+            Name = "resourceProgressBar",
+            Dock = DockStyle.Fill,
+            Minimum = 0,
+            Maximum = 100,
+            Value = 80
+        };
+
         _itemsListBox = new ListBox
         {
             Name = "itemsListBox",
@@ -80,6 +118,20 @@ public sealed class MainForm : Form
             $"{_options.SessionId}-item-2",
             $"{_options.SessionId}-item-3"
         ]);
+        _itemsListBox.SelectedIndexChanged += (_, _) => UpdateSelectedLabelUnsafe();
+
+        _presenceListBox = new ListBox
+        {
+            Name = "presenceListBox",
+            Dock = DockStyle.Fill,
+            Height = 80
+        };
+
+        _presenceListBox.Items.AddRange(
+        [
+            $"{_options.SessionId}-presence-1",
+            $"{_options.SessionId}-presence-2"
+        ]);
 
         _enabledCheckBox = new CheckBox
         {
@@ -87,6 +139,14 @@ public sealed class MainForm : Form
             AutoSize = true,
             Checked = true,
             Text = "Enabled"
+        };
+
+        _capabilityCheckBox = new CheckBox
+        {
+            Name = "capabilityCheckBox",
+            AutoSize = true,
+            Checked = true,
+            Text = "Capabilities enabled"
         };
 
         _startButton = CreateActionButton("startButton", "Start", StartSessionUnsafe);
@@ -110,10 +170,20 @@ public sealed class MainForm : Form
         rootPanel.Controls.Add(_notesTextBox, 1, 2);
         rootPanel.Controls.Add(CreateCaption("Items"), 0, 3);
         rootPanel.Controls.Add(_itemsListBox, 1, 3);
-        rootPanel.Controls.Add(CreateCaption("Enabled"), 0, 4);
-        rootPanel.Controls.Add(_enabledCheckBox, 1, 4);
-        rootPanel.Controls.Add(CreateButtonsPanel(), 1, 5);
-        rootPanel.Controls.Add(CreateTickPanel(), 1, 6);
+        rootPanel.Controls.Add(CreateCaption("Selected"), 0, 4);
+        rootPanel.Controls.Add(_selectedLabel, 1, 4);
+        rootPanel.Controls.Add(CreateCaption("Alert"), 0, 5);
+        rootPanel.Controls.Add(_alertLabel, 1, 5);
+        rootPanel.Controls.Add(CreateCaption("Progress"), 0, 6);
+        rootPanel.Controls.Add(_progressBar, 1, 6);
+        rootPanel.Controls.Add(CreateCaption("Resource"), 0, 7);
+        rootPanel.Controls.Add(_resourceProgressBar, 1, 7);
+        rootPanel.Controls.Add(CreateCaption("Capabilities"), 0, 8);
+        rootPanel.Controls.Add(CreateCapabilitiesPanel(), 1, 8);
+        rootPanel.Controls.Add(CreateCaption("Presence"), 0, 9);
+        rootPanel.Controls.Add(_presenceListBox, 1, 9);
+        rootPanel.Controls.Add(CreateButtonsPanel(), 1, 10);
+        rootPanel.Controls.Add(CreateTickPanel(), 1, 11);
 
         Controls.Add(rootPanel);
     }
@@ -324,6 +394,19 @@ public sealed class MainForm : Form
         return panel;
     }
 
+    private Control CreateCapabilitiesPanel()
+    {
+        var panel = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Fill
+        };
+
+        panel.Controls.Add(_enabledCheckBox);
+        panel.Controls.Add(_capabilityCheckBox);
+        return panel;
+    }
+
     private Control CreateTickPanel()
     {
         var panel = new FlowLayoutPanel
@@ -380,7 +463,17 @@ public sealed class MainForm : Form
     {
         _tickCount++;
         _tickCountLabel.Text = _tickCount.ToString(CultureInfo.InvariantCulture);
+        _progressBar.Value = Math.Min(100, (_tickCount * 10) % 110);
+        _resourceProgressBar.Value = Math.Max(0, 80 - (_tickCount * 5));
+        _alertLabel.Text = _tickCount % 2 == 0 ? "Alert: none" : "Alert: warning";
         return CaptureStateUnsafe();
+    }
+
+    private void UpdateSelectedLabelUnsafe()
+    {
+        _selectedLabel.Text = _itemsListBox.SelectedItem is null
+            ? "Selected: none"
+            : $"Selected: {_itemsListBox.SelectedItem}";
     }
 
     private UiSnapshotEnvelope CaptureUiSnapshotUnsafe()
@@ -394,7 +487,9 @@ public sealed class MainForm : Form
             ["status"] = _statusLabel.Text,
             ["port"] = _options.Port.ToString(CultureInfo.InvariantCulture),
             ["tickCount"] = _tickCount.ToString(CultureInfo.InvariantCulture),
-            ["enabled"] = _enabledCheckBox.Checked.ToString()
+            ["enabled"] = _enabledCheckBox.Checked.ToString(),
+            ["progress"] = _progressBar.Value.ToString(CultureInfo.InvariantCulture),
+            ["resource"] = _resourceProgressBar.Value.ToString(CultureInfo.InvariantCulture)
         };
 
         return new UiSnapshotEnvelope(
@@ -428,12 +523,22 @@ public sealed class MainForm : Form
                 attributes["selectedItem"] = listBox.SelectedItem?.ToString();
                 attributes["items"] = JsonSerializer.Serialize(listBox.Items.Cast<object>().Select(static item => item.ToString() ?? string.Empty).ToArray(), SnapshotJsonOptions);
                 attributes["semanticActions"] = "select";
+                attributes["scrollable"] = bool.TrueString;
+                if (string.Equals(listBox.Name, "presenceListBox", StringComparison.Ordinal))
+                {
+                    attributes["semanticRole"] = "presence";
+                    attributes["entityCount"] = listBox.Items.Count.ToString(CultureInfo.InvariantCulture);
+                }
+
                 break;
 
             case CheckBox checkBox:
                 attributes["checked"] = checkBox.Checked.ToString();
                 attributes["clickable"] = bool.TrueString;
                 attributes["semanticActions"] = "click,toggle";
+                attributes["semanticRole"] = string.Equals(checkBox.Name, "capabilityCheckBox", StringComparison.Ordinal)
+                    ? "capability"
+                    : "toggle";
                 break;
 
             case Button button:
@@ -442,6 +547,27 @@ public sealed class MainForm : Form
                 attributes["clickable"] = bool.TrueString;
                 attributes["invokable"] = bool.TrueString;
                 attributes["semanticActions"] = "click,invoke";
+                break;
+
+            case Label label when string.Equals(label.Name, "alertLabel", StringComparison.Ordinal):
+                attributes["semanticRole"] = "alert";
+                attributes["severity"] = label.Text.Contains("warning", StringComparison.OrdinalIgnoreCase) ? "Warning" : "Info";
+                attributes["source"] = "Alert";
+                break;
+
+            case Label label when string.Equals(label.Name, "selectedLabel", StringComparison.Ordinal):
+                attributes["semanticRole"] = "target";
+                attributes["active"] = (!label.Text.EndsWith("none", StringComparison.OrdinalIgnoreCase)).ToString();
+                break;
+
+            case ProgressBar progressBar:
+                attributes["value"] = progressBar.Value.ToString(CultureInfo.InvariantCulture);
+                attributes["maximum"] = progressBar.Maximum.ToString(CultureInfo.InvariantCulture);
+                attributes["valuePercent"] = progressBar.Value.ToString(CultureInfo.InvariantCulture);
+                attributes["semanticRole"] = string.Equals(progressBar.Name, "resourceProgressBar", StringComparison.Ordinal)
+                    ? "resource"
+                    : "transit";
+                attributes["status"] = progressBar.Value > 0 && progressBar.Value < progressBar.Maximum ? "InProgress" : "Idle";
                 break;
         }
 

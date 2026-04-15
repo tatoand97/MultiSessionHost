@@ -3,6 +3,7 @@ using MultiSessionHost.Contracts.Coordination;
 using MultiSessionHost.Contracts.Sessions;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Bindings;
+using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
 
@@ -266,6 +267,106 @@ public static class DtoMappingExtensions
             result.ExecutedAtUtc,
             result.UpdatedUiStateAvailable,
             result.FailureCode);
+
+    public static UiSemanticExtractionResultDto ToDto(this UiSemanticExtractionResult result) =>
+        new(
+            result.SessionId.Value,
+            result.ExtractedAtUtc,
+            result.Lists.Select(static item => item.ToDto()).ToArray(),
+            result.Targets.Select(static item => item.ToDto()).ToArray(),
+            result.Alerts.Select(static item => item.ToDto()).ToArray(),
+            result.TransitStates.Select(static item => item.ToDto()).ToArray(),
+            result.Resources.Select(static item => item.ToDto()).ToArray(),
+            result.Capabilities.Select(static item => item.ToDto()).ToArray(),
+            result.PresenceEntities.Select(static item => item.ToDto()).ToArray(),
+            result.Warnings,
+            result.ConfidenceSummary.ToDictionary(static pair => pair.Key, static pair => pair.Value.ToString(), StringComparer.Ordinal));
+
+    public static SemanticSummaryDto ToSummaryDto(this UiSemanticExtractionResult result) =>
+        new(
+            result.SessionId.Value,
+            result.ExtractedAtUtc,
+            result.Lists.Count,
+            result.Targets.Count,
+            result.Alerts.Count,
+            result.TransitStates.Count,
+            result.Resources.Count,
+            result.Capabilities.Count,
+            result.PresenceEntities.Count,
+            result.Warnings,
+            result.ConfidenceSummary.ToDictionary(static pair => pair.Key, static pair => pair.Value.ToString(), StringComparer.Ordinal));
+
+    public static DetectedListDto ToDto(this DetectedList item) =>
+        new(
+            item.NodeId,
+            item.Label,
+            item.ItemCount,
+            item.SelectedItemCount,
+            item.VisibleItemLabels,
+            item.IsScrollable,
+            item.Kind.ToString(),
+            item.Confidence.ToString());
+
+    public static DetectedTargetDto ToDto(this DetectedTarget item) =>
+        new(
+            item.NodeId,
+            item.Label,
+            item.Selected,
+            item.Active,
+            item.Focused,
+            item.Count,
+            item.Index,
+            item.Kind.ToString(),
+            item.Confidence.ToString());
+
+    public static DetectedAlertDto ToDto(this DetectedAlert item) =>
+        new(
+            item.NodeId,
+            item.Message,
+            item.Severity.ToString(),
+            item.Visible,
+            item.SourceHint,
+            item.Confidence.ToString());
+
+    public static DetectedTransitStateDto ToDto(this DetectedTransitState item) =>
+        new(
+            item.Status.ToString(),
+            item.NodeIds,
+            item.Label,
+            item.ProgressPercent,
+            item.Reasons,
+            item.Confidence.ToString());
+
+    public static DetectedResourceDto ToDto(this DetectedResource item) =>
+        new(
+            item.NodeId,
+            item.Name,
+            item.Kind.ToString(),
+            item.Percent,
+            item.Value,
+            item.Degraded,
+            item.Critical,
+            item.Confidence.ToString());
+
+    public static DetectedCapabilityDto ToDto(this DetectedCapability item) =>
+        new(
+            item.NodeId,
+            item.Name,
+            item.Status.ToString(),
+            item.Enabled,
+            item.Active,
+            item.CoolingDown,
+            item.Confidence.ToString());
+
+    public static DetectedPresenceEntityDto ToDto(this DetectedPresenceEntity item) =>
+        new(
+            item.NodeId,
+            item.Label,
+            item.Count,
+            item.Membership,
+            item.Kind.ToString(),
+            item.Status,
+            item.Confidence.ToString());
 
     public static ExecutionCoordinationSnapshotDto ToDto(this ExecutionCoordinationSnapshot snapshot) =>
         snapshot.ToDto(sessionId: null);

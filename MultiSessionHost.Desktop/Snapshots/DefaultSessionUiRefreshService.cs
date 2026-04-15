@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
 using MultiSessionHost.Desktop.Targets;
@@ -21,6 +22,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly ISessionUiStateStore _sessionUiStateStore;
     private readonly ISessionDomainStateStore _sessionDomainStateStore;
     private readonly ISessionDomainStateProjectionService _domainStateProjectionService;
+    private readonly IUiSemanticExtractionPipeline _semanticExtractionPipeline;
+    private readonly ISessionSemanticExtractionStore _semanticExtractionStore;
     private readonly IClock _clock;
     private readonly ILogger<DefaultSessionUiRefreshService> _logger;
 
@@ -34,6 +37,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         ISessionUiStateStore sessionUiStateStore,
         ISessionDomainStateStore sessionDomainStateStore,
         ISessionDomainStateProjectionService domainStateProjectionService,
+        IUiSemanticExtractionPipeline semanticExtractionPipeline,
+        ISessionSemanticExtractionStore semanticExtractionStore,
         IClock clock,
         ILogger<DefaultSessionUiRefreshService> logger)
     {
@@ -46,6 +51,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _sessionUiStateStore = sessionUiStateStore;
         _sessionDomainStateStore = sessionDomainStateStore;
         _domainStateProjectionService = domainStateProjectionService;
+        _semanticExtractionPipeline = semanticExtractionPipeline;
+        _semanticExtractionStore = semanticExtractionStore;
         _clock = clock;
         _logger = logger;
     }
@@ -154,6 +161,21 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 },
                 cancellationToken).ConfigureAwait(false);
 
+            var currentDomainState = await _sessionDomainStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Domain state for session '{snapshot.SessionId}' was not initialized.");
+            var now = _clock.UtcNow;
+            var semanticContext = new UiSemanticExtractionContext(
+                snapshot.SessionId,
+                projectedUiState,
+                tree,
+                currentDomainState,
+                snapshot,
+                context,
+                attachment,
+                now);
+            var semanticExtraction = await _semanticExtractionPipeline.ExtractAsync(semanticContext, cancellationToken).ConfigureAwait(false);
+            await _semanticExtractionStore.UpdateAsync(snapshot.SessionId, semanticExtraction, cancellationToken).ConfigureAwait(false);
+
             await _sessionDomainStateStore.UpdateAsync(
                 snapshot.SessionId,
                 current => _domainStateProjectionService.Project(
@@ -162,6 +184,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     context,
                     projectedUiState,
                     attachment,
+                    semanticExtraction,
                     _clock.UtcNow),
                 cancellationToken).ConfigureAwait(false);
 

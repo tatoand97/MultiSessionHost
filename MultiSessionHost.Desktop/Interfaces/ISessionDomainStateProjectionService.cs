@@ -1,4 +1,5 @@
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Models;
 
 namespace MultiSessionHost.Desktop.Interfaces;
@@ -11,6 +12,7 @@ public interface ISessionDomainStateProjectionService
         ResolvedDesktopTargetContext context,
         SessionUiState? uiState,
         DesktopSessionAttachment? attachment,
+        UiSemanticExtractionResult? semanticExtraction,
         DateTimeOffset now);
 
     SessionDomainState ProjectRefreshFailure(
