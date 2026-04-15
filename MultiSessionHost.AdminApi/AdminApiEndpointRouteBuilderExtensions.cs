@@ -6,6 +6,7 @@ using MultiSessionHost.AdminApi.Security;
 using MultiSessionHost.Contracts.Sessions;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Interfaces;
 
 namespace MultiSessionHost.AdminApi;
 
@@ -116,6 +117,48 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 return Results.Ok((sessionCoordinator.GetSessionUiState(sessionId) ?? SessionUiState.Create(sessionId)).ToUiRawDto());
             });
 
+        endpoints.MapGet(
+            "/sessions/{id}/target",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                IDesktopTargetProfileResolver targetProfileResolver,
+                IAttachedSessionStore attachedSessionStore,
+                IDesktopTargetAdapterRegistry adapterRegistry,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                var session = sessionCoordinator.GetSession(sessionId);
+
+                if (session is null)
+                {
+                    return Results.NotFound();
+                }
+
+                try
+                {
+                    var context = targetProfileResolver.Resolve(session);
+                    var attachment = await attachedSessionStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                    var adapter = adapterRegistry.Resolve(context.Profile.Kind);
+                    return Results.Ok(context.ToDto(attachment, adapter));
+                }
+                catch (InvalidOperationException exception)
+                {
+                    return Results.Conflict(new { Error = exception.Message });
+                }
+            });
+
         endpoints.MapPost(
             "/sessions/{id}/ui/refresh",
             async Task<IResult> (string id, HttpContext httpContext, IAdminAuthorizationPolicy authorizationPolicy, ISessionCoordinator sessionCoordinator, CancellationToken cancellationToken) =>
@@ -137,6 +180,40 @@ public static class AdminApiEndpointRouteBuilderExtensions
 
                 var state = await sessionCoordinator.RefreshSessionUiAsync(sessionId, cancellationToken).ConfigureAwait(false);
                 return Results.Ok(state.ToUiRefreshDto());
+            });
+
+        endpoints.MapGet(
+            "/targets",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IDesktopTargetProfileResolver targetProfileResolver,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                return Results.Ok(targetProfileResolver.GetProfiles().Select(static profile => profile.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/targets/{profileName}",
+            async Task<IResult> (
+                string profileName,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IDesktopTargetProfileResolver targetProfileResolver,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var profile = targetProfileResolver.TryGetProfile(profileName);
+                return profile is null ? Results.NotFound() : Results.Ok(profile.ToDto());
             });
 
         endpoints.MapPost(

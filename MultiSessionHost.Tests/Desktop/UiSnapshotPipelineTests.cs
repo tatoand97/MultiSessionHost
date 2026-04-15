@@ -1,11 +1,13 @@
 using Microsoft.Extensions.DependencyInjection;
 using MultiSessionHost.Core.Configuration;
+using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.DependencyInjection;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Tests.Common;
 using MultiSessionHost.UiModel.Extensions;
+using MultiSessionHost.UiModel.Interfaces;
 using MultiSessionHost.UiModel.Models;
 
 namespace MultiSessionHost.Tests.Desktop;

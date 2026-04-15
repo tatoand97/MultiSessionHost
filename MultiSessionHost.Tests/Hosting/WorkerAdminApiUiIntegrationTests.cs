@@ -1,6 +1,5 @@
 using System.Net.Http.Json;
 using MultiSessionHost.Contracts.Sessions;
-using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Tests.Common;
@@ -20,23 +19,12 @@ public sealed class WorkerAdminApiUiIntegrationTests
         await using var alphaApp = await TestDesktopAppProcessHost.StartAsync(alphaId, basePort);
         await using var betaApp = await TestDesktopAppProcessHost.StartAsync(betaId, basePort + 1);
 
-        var options = new SessionHostOptions
-        {
-            MaxGlobalParallelSessions = 2,
-            SchedulerIntervalMs = 50,
-            HealthLogIntervalMs = 1_000,
-            EnableAdminApi = true,
-            AdminApiUrl = "http://127.0.0.1:0",
-            DriverMode = DriverMode.DesktopTestApp,
-            DesktopSessionMatchingMode = DesktopSessionMatchingMode.WindowTitleAndCommandLine,
-            TestAppBasePort = basePort,
-            EnableUiSnapshots = true,
-            Sessions =
-            [
-                TestOptionsFactory.Session(alphaId, startupDelayMs: 0),
-                TestOptionsFactory.Session(betaId, startupDelayMs: 0)
-            ]
-        };
+        var options = TestOptionsFactory.CreateDesktopTestAppOptions(
+            basePort,
+            true,
+            "http://127.0.0.1:0",
+            TestOptionsFactory.Session(alphaId, startupDelayMs: 0),
+            TestOptionsFactory.Session(betaId, startupDelayMs: 0));
 
         await using var harness = await WorkerHostHarness.StartAsync(options);
         var client = Assert.IsType<HttpClient>(harness.Client);
@@ -56,10 +44,16 @@ public sealed class WorkerAdminApiUiIntegrationTests
         var refreshDto = await refreshAlpha.Content.ReadFromJsonAsync<SessionUiRefreshDto>();
         var treeDto = await client.GetFromJsonAsync<SessionUiDto>($"/sessions/{alphaId}/ui");
         var rawDto = await client.GetFromJsonAsync<SessionUiRawDto>($"/sessions/{alphaId}/ui/raw");
+        var targetDto = await client.GetFromJsonAsync<SessionTargetDto>($"/sessions/{alphaId}/target");
+        var targetsDto = await client.GetFromJsonAsync<DesktopTargetProfileDto[]>("/targets");
+        var profileDto = await client.GetFromJsonAsync<DesktopTargetProfileDto>("/targets/test-app");
 
         Assert.NotNull(refreshDto);
         Assert.NotNull(treeDto);
         Assert.NotNull(rawDto);
+        Assert.NotNull(targetDto);
+        Assert.NotNull(targetsDto);
+        Assert.NotNull(profileDto);
         Assert.NotNull(refreshDto!.Tree);
         Assert.NotNull(refreshDto.RawSnapshot);
         Assert.NotNull(refreshDto.LastRefreshRequestedAtUtc);
@@ -68,6 +62,15 @@ public sealed class WorkerAdminApiUiIntegrationTests
         Assert.Equal(alphaId, treeDto.Tree!.Metadata.SessionId);
         Assert.Equal(alphaId, rawDto!.RawSnapshot!.Value.GetProperty("sessionId").GetString());
         Assert.Equal(alphaId, refreshDto.RawSnapshot!.Value.GetProperty("sessionId").GetString());
+        Assert.Equal(alphaId, targetDto!.SessionId);
+        Assert.Equal("test-app", targetDto.Profile.ProfileName);
+        Assert.Equal("DesktopTestApp", targetDto.AdapterKind);
+        Assert.Equal(basePort.ToString(), targetDto.Binding.Variables["Port"]);
+        Assert.NotNull(targetDto.Attachment);
+        Assert.Equal(alphaApp.ProcessId, targetDto.Attachment!.ProcessId);
+        Assert.Equal($"http://127.0.0.1:{basePort}/", targetDto.Target.BaseAddress);
+        Assert.Single(targetsDto!);
+        Assert.Equal("test-app", profileDto!.ProfileName);
     }
 
     [Fact]
@@ -80,23 +83,12 @@ public sealed class WorkerAdminApiUiIntegrationTests
         await using var alphaApp = await TestDesktopAppProcessHost.StartAsync(alphaId, basePort);
         await using var betaApp = await TestDesktopAppProcessHost.StartAsync(betaId, basePort + 1);
 
-        var options = new SessionHostOptions
-        {
-            MaxGlobalParallelSessions = 2,
-            SchedulerIntervalMs = 50,
-            HealthLogIntervalMs = 1_000,
-            EnableAdminApi = true,
-            AdminApiUrl = "http://127.0.0.1:0",
-            DriverMode = DriverMode.DesktopTestApp,
-            DesktopSessionMatchingMode = DesktopSessionMatchingMode.WindowTitleAndCommandLine,
-            TestAppBasePort = basePort,
-            EnableUiSnapshots = true,
-            Sessions =
-            [
-                TestOptionsFactory.Session(alphaId, startupDelayMs: 0),
-                TestOptionsFactory.Session(betaId, startupDelayMs: 0)
-            ]
-        };
+        var options = TestOptionsFactory.CreateDesktopTestAppOptions(
+            basePort,
+            true,
+            "http://127.0.0.1:0",
+            TestOptionsFactory.Session(alphaId, startupDelayMs: 0),
+            TestOptionsFactory.Session(betaId, startupDelayMs: 0));
 
         await using var harness = await WorkerHostHarness.StartAsync(options);
         var client = Assert.IsType<HttpClient>(harness.Client);

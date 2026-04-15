@@ -1,4 +1,5 @@
 using MultiSessionHost.Core.Configuration;
+using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Attachments;
 using MultiSessionHost.Desktop.Processes;

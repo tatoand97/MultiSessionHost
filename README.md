@@ -2,19 +2,20 @@
 
 ## Resumen
 
-`MultiSessionHost` es una base **Worker-first** sobre `Generic Host` en .NET 10 para orquestar múltiples sesiones lógicas concurrentes. El `Worker` sigue siendo el proceso principal: ejecuta scheduler, health, lifecycle y, cuando se habilita, también expone la Admin API HTTP **en el mismo proceso** y sobre el **mismo contenedor DI**.
+`MultiSessionHost` sigue siendo una base **Worker-first** sobre `Generic Host` en .NET 10 para orquestar múltiples sesiones lógicas concurrentes. El `Worker` es el runtime real: ejecuta scheduler, lifecycle, health y, cuando se habilita, expone la Admin API HTTP **en el mismo proceso** y sobre el **mismo contenedor DI**.
 
-Este repositorio ahora agrega una capa segura y reutilizable para escritorio local controlado:
+La integración de escritorio ya no está acoplada a `MultiSessionHost.TestDesktopApp`. Ahora el runtime usa:
 
-- attach lógico de una sesión a un proceso/ventana real
-- captura de snapshot estructurado de UI
-- normalización a un árbol UI propio del host
-- planeación de work items desde ese árbol
-- ejecución de work items sobre un driver abstracto
+- `DesktopTargetProfile`
+- `SessionTargetBinding`
+- `IDesktopTargetAdapter`
+- `IDesktopTargetAdapterRegistry`
+
+`MultiSessionHost.TestDesktopApp` queda como una implementación de ejemplo sobre esta arquitectura.
 
 ## Alcance y restricciones
 
-Esto está diseñado **solo para una app local de prueba controlada por nosotros**.
+Diseñado solo para apps de escritorio locales controladas por nosotros.
 
 No incluye ni pretende incluir:
 
@@ -30,75 +31,64 @@ No incluye ni pretende incluir:
 
 ## Arquitectura actual
 
-### Principio clave
+### Principios
 
 - `MultiSessionHost.Worker` sigue siendo el único proceso principal del runtime.
-- `MultiSessionHost.AdminApi` no crea host propio ni runtime propio.
-- La API y el Worker comparten las mismas instancias singleton de runtime.
+- `MultiSessionHost.AdminApi` no crea un host ni runtime aparte.
+- Scheduler y coordinator no conocen adapters concretos de escritorio.
+- La selección de target ocurre por configuración.
 
-### Nuevas capas
+### Componentes nuevos
 
-- `MultiSessionHost.UiModel`
-  - modelo canónico y serializable de árbol UI
-  - selector de nodos
-  - diff básico entre árboles
-  - planeación de work items desde UI
-- `MultiSessionHost.Desktop`
-  - localización de procesos/ventanas
-  - attach lógico por `SessionId`
-  - provider de snapshots estructurados
-  - normalizador hacia `UiTree`
-  - driver real `DesktopTestAppSessionDriver`
-- `MultiSessionHost.TestDesktopApp`
-  - WinForms local, multi-instancia
-  - expone `/state`, `/ui-snapshot`, `/start`, `/pause`, `/resume`, `/stop`, `/tick`
-  - introspección de su propia UI sin OCR ni automatización externa
+- `DesktopTargetProfile`
+  - describe qué target es
+  - `Kind`, `ProcessName`, fragments/templates, metadata y capacidades
+- `SessionTargetBinding`
+  - vincula una `SessionId` con un profile
+  - aporta variables y overrides opcionales por sesión
+- `ConfiguredDesktopTargetProfileResolver`
+  - resuelve binding + profile
+  - aplica overrides
+  - renderiza templates con variables de sesión
+- `DefaultSessionAttachmentResolver`
+  - usa profile/binding resueltos
+  - enumera procesos/ventanas
+  - aplica el `MatchingMode`
+- `DesktopTargetSessionDriver`
+  - driver real configurable
+  - delega attach/detach/work items/snapshots al adapter correcto
+- `IDesktopTargetAdapterRegistry`
+  - resuelve un adapter por `DesktopTargetKind`
+- `IUiTreeNormalizerResolver` y `IWorkItemPlannerResolver`
+  - permiten seleccionar pipeline UI por kind/profile
 
-## Flujo attach -> snapshot -> normalize -> plan
+## Flujo runtime
 
 ```text
 Worker session
-  -> ISessionDriver.AttachAsync()
-  -> ISessionAttachmentResolver
-  -> process/window binding por SessionId
-  -> IUiSnapshotProvider
-  -> raw UiSnapshotEnvelope
-  -> IUiTreeNormalizer
-  -> UiTree
-  -> IUiStateProjector
-  -> diff básico vs árbol previo
-  -> IWorkItemPlanner
+  -> DesktopTargetSessionDriver
+  -> SessionTargetBinding
+  -> DesktopTargetProfile
+  -> IDesktopTargetAdapterRegistry
+  -> IDesktopTargetAdapter
+  -> attachment
+  -> optional raw snapshot
+  -> normalize
+  -> project
   -> planned work items
-  -> ISessionUiStateStore
 ```
 
-## Driver modes
-
-La configuración ahora permite cambiar entre:
+## Target kinds soportados
 
 - `DriverMode=NoOp`
-- `DriverMode=DesktopTestApp`
+- `DriverMode=DesktopTargetAdapter`
 
-`DesktopTestAppSessionDriver` soporta por ahora:
+Dentro de `DesktopTargetAdapter` hoy existen:
 
-- `Heartbeat`: valida conectividad con `/state`
-- `Tick`: ejecuta `POST /tick`
-- `FetchUiSnapshot`: captura snapshot raw
-- `ProjectUiState`: normaliza a `UiTree` y recalcula planeación
+- `DesktopTargetKind=SelfHostedHttpDesktop`
+- `DesktopTargetKind=DesktopTestApp`
 
-## Estructura principal
-
-```text
-MultiSessionHost.AdminApi/
-MultiSessionHost.Contracts/
-MultiSessionHost.Core/
-MultiSessionHost.Desktop/
-MultiSessionHost.Infrastructure/
-MultiSessionHost.TestDesktopApp/
-MultiSessionHost.Tests/
-MultiSessionHost.UiModel/
-MultiSessionHost.Worker/
-```
+`DesktopTestApp` reutiliza la ruta self-hosted HTTP y agrega validación específica mínima.
 
 ## Configuración
 
@@ -107,15 +97,45 @@ La sección sigue siendo `MultiSessionHost`.
 ```json
 {
   "MultiSessionHost": {
-    "MaxGlobalParallelSessions": 3,
+    "MaxGlobalParallelSessions": 2,
     "SchedulerIntervalMs": 100,
     "HealthLogIntervalMs": 2000,
     "EnableAdminApi": true,
     "AdminApiUrl": "http://localhost:5088",
-    "DriverMode": "DesktopTestApp",
-    "DesktopSessionMatchingMode": "WindowTitleAndCommandLine",
-    "TestAppBasePort": 7100,
+    "DriverMode": "DesktopTargetAdapter",
     "EnableUiSnapshots": true,
+    "DesktopTargets": [
+      {
+        "ProfileName": "test-app",
+        "Kind": "DesktopTestApp",
+        "ProcessName": "MultiSessionHost.TestDesktopApp",
+        "WindowTitleFragment": "[SessionId: {SessionId}]",
+        "CommandLineFragmentTemplate": "--session-id {SessionId}",
+        "BaseAddressTemplate": "http://127.0.0.1:{Port}/",
+        "MatchingMode": "WindowTitleAndCommandLine",
+        "SupportsUiSnapshots": true,
+        "SupportsStateEndpoint": true,
+        "Metadata": {
+          "UiSource": "DesktopTestApp"
+        }
+      }
+    ],
+    "SessionTargetBindings": [
+      {
+        "SessionId": "alpha",
+        "TargetProfileName": "test-app",
+        "Variables": {
+          "Port": "7100"
+        }
+      },
+      {
+        "SessionId": "beta",
+        "TargetProfileName": "test-app",
+        "Variables": {
+          "Port": "7101"
+        }
+      }
+    ],
     "Sessions": [
       {
         "SessionId": "alpha",
@@ -138,34 +158,26 @@ La sección sigue siendo `MultiSessionHost`.
         "MaxRetryCount": 3,
         "InitialBackoffMs": 1000,
         "Tags": [ "desktop-test" ]
-      },
-      {
-        "SessionId": "gamma",
-        "DisplayName": "Gamma Session",
-        "Enabled": true,
-        "TickIntervalMs": 1000,
-        "StartupDelayMs": 0,
-        "MaxParallelWorkItems": 1,
-        "MaxRetryCount": 3,
-        "InitialBackoffMs": 1000,
-        "Tags": [ "desktop-test" ]
       }
     ]
   }
 }
 ```
 
-### Reglas de validación
+### Validaciones de arranque
 
 - `DriverMode` debe ser válido.
-- `DesktopSessionMatchingMode` debe ser válido.
-- `TestAppBasePort` debe estar entre `1` y `65535`.
-- `EnableUiSnapshots=true` requiere `DriverMode=DesktopTestApp`.
-- `TestAppBasePort + cantidad de sesiones` no puede desbordar el rango de puertos.
+- `EnableUiSnapshots=true` requiere `DriverMode=DesktopTargetAdapter`.
+- cada `DesktopTargetProfile` debe tener `ProfileName` único y `Kind` válido.
+- cada `SessionTargetBinding` debe apuntar a una sesión configurada.
+- cada binding debe apuntar a un profile existente.
+- cada sesión requiere binding cuando `DriverMode=DesktopTargetAdapter`.
+- si un template usa variables como `{Port}`, cada binding debe proveerlas.
+- `BaseAddressTemplate` debe renderizar una URL absoluta válida para los targets HTTP.
 
-## Endpoints Admin API
+## Admin API
 
-Cuando `EnableAdminApi=true`, el Worker expone:
+Endpoints existentes mantenidos:
 
 - `GET /health`
 - `GET /sessions`
@@ -179,9 +191,47 @@ Cuando `EnableAdminApi=true`, el Worker expone:
 - `GET /sessions/{id}/ui/raw`
 - `POST /sessions/{id}/ui/refresh`
 
-Los endpoints de UI operan contra el runtime real del Worker y usan el mismo `ISessionCoordinator`.
+Endpoints nuevos de inspección:
 
-## Cómo correr 3 instancias de MultiSessionHost.TestDesktopApp
+- `GET /targets`
+- `GET /targets/{profileName}`
+- `GET /sessions/{id}/target`
+
+`/sessions/{id}/target` expone:
+
+- profile resuelto
+- binding aplicado
+- target renderizado
+- attachment actual si existe
+- adapter seleccionado
+
+## Cómo agregar un nuevo target kind
+
+1. agrega un valor nuevo a `DesktopTargetKind`
+2. implementa `IDesktopTargetAdapter`
+3. registra el adapter en `DesktopServiceCollectionExtensions`
+4. extiende `IUiTreeNormalizerResolver` y `IWorkItemPlannerResolver` si ese kind necesita pipeline distinto
+5. crea uno o más `DesktopTargetProfile` en configuración
+
+Scheduler y coordinator no necesitan cambios.
+
+## Cómo agregar un nuevo profile
+
+1. agrega una entrada a `DesktopTargets`
+2. define `Kind`, `ProcessName`, templates y metadata
+3. decide si soporta `/state` y snapshots UI
+4. crea bindings por sesión en `SessionTargetBindings`
+
+## Cómo bindear una sesión a un profile
+
+1. crea o reutiliza un `DesktopTargetProfile`
+2. agrega un `SessionTargetBinding`
+3. define `SessionId`
+4. define `TargetProfileName`
+5. agrega variables como `Port`
+6. si hace falta, usa `Overrides` para esa sesión
+
+## Cómo probar con MultiSessionHost.TestDesktopApp
 
 Compila primero:
 
@@ -189,88 +239,50 @@ Compila primero:
 dotnet build .\MultiSessionHost.sln
 ```
 
-Lanza tres instancias, una por sesión:
+Lanza una instancia por sesión:
 
 ```powershell
 dotnet run --project .\MultiSessionHost.TestDesktopApp\MultiSessionHost.TestDesktopApp.csproj -- --session-id alpha --port 7100
 dotnet run --project .\MultiSessionHost.TestDesktopApp\MultiSessionHost.TestDesktopApp.csproj -- --session-id beta --port 7101
-dotnet run --project .\MultiSessionHost.TestDesktopApp\MultiSessionHost.TestDesktopApp.csproj -- --session-id gamma --port 7102
 ```
 
-Cada ventana incluirá `SessionId` en el título y expondrá su propio endpoint local.
+Configura `MultiSessionHost.Worker/appsettings.Development.json` con `DriverMode=DesktopTargetAdapter` y el bloque `DesktopTargets` + `SessionTargetBindings` mostrado arriba.
 
-## Cómo iniciar el Worker con DesktopTestApp
-
-1. Ajusta `MultiSessionHost.Worker/appsettings.json` o `appsettings.Development.json`:
-
-```json
-{
-  "MultiSessionHost": {
-    "EnableAdminApi": true,
-    "AdminApiUrl": "http://localhost:5088",
-    "DriverMode": "DesktopTestApp",
-    "DesktopSessionMatchingMode": "WindowTitleAndCommandLine",
-    "TestAppBasePort": 7100,
-    "EnableUiSnapshots": true
-  }
-}
-```
-
-2. Inicia el Worker:
+Inicia el Worker:
 
 ```powershell
 dotnet run --project .\MultiSessionHost.Worker\MultiSessionHost.Worker.csproj
 ```
 
-## Ejemplos de llamadas HTTP
-
-### Listar sesiones
+Pruebas HTTP rápidas:
 
 ```powershell
-Invoke-RestMethod http://localhost:5088/sessions
-```
-
-### Refrescar UI de una sesión
-
-```powershell
+Invoke-RestMethod http://localhost:5088/targets
+Invoke-RestMethod http://localhost:5088/sessions/alpha/target
 Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/ui/refresh
-```
-
-### Obtener árbol UI proyectado
-
-```powershell
 Invoke-RestMethod http://localhost:5088/sessions/alpha/ui
-```
-
-### Obtener snapshot raw
-
-```powershell
 Invoke-RestMethod http://localhost:5088/sessions/alpha/ui/raw
 ```
 
-### Health y métricas
-
-```powershell
-Invoke-RestMethod http://localhost:5088/health
-Invoke-RestMethod http://localhost:5088/metrics
-```
-
-## Cómo probar
+## Cómo probar la solución
 
 ```powershell
 dotnet build .\MultiSessionHost.sln
 dotnet test .\MultiSessionHost.Tests\MultiSessionHost.Tests.csproj
 ```
 
-La suite cubre, entre otras cosas:
+La suite cubre ahora:
 
-- localización de instancias por `SessionId`
-- attach a la instancia correcta
-- varias instancias simultáneas
-- refresh de snapshots UI
-- normalización a `UiTree`
+- parse y validación de `DesktopTargets`
+- parse y validación de `SessionTargetBindings`
+- errores por binding faltante, profile inexistente o variables faltantes
+- render de templates por binding
+- aislamiento entre sesiones
+- registry de adapters
+- selección de adapter por el driver real
+- integración end-to-end con `DesktopTestApp`
 - endpoints `/sessions/{id}/ui`
 - endpoints `/sessions/{id}/ui/raw`
 - endpoints `/sessions/{id}/ui/refresh`
-- aislamiento entre sesiones
-
+- endpoints `/targets`
+- endpoint `/sessions/{id}/target`

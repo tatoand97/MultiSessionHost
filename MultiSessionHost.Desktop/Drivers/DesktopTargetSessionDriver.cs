@@ -107,7 +107,7 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
     {
         var current = await _attachedSessionStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
 
-        if (current is not null && current.Target == context.Target)
+        if (current is not null && AreEquivalent(current.Target, context.Target))
         {
             return current;
         }
@@ -248,5 +248,36 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
         {
             throw new InvalidOperationException("UI snapshots are disabled. Set EnableUiSnapshots=true to request raw or projected UI state.");
         }
+    }
+
+    private static bool AreEquivalent(DesktopSessionTarget left, DesktopSessionTarget right) =>
+        left.SessionId == right.SessionId &&
+        left.ProfileName == right.ProfileName &&
+        left.Kind == right.Kind &&
+        left.MatchingMode == right.MatchingMode &&
+        string.Equals(left.ProcessName, right.ProcessName, StringComparison.Ordinal) &&
+        string.Equals(left.WindowTitleFragment, right.WindowTitleFragment, StringComparison.Ordinal) &&
+        string.Equals(left.CommandLineFragment, right.CommandLineFragment, StringComparison.Ordinal) &&
+        Equals(left.BaseAddress, right.BaseAddress) &&
+        HaveSameMetadata(left.Metadata, right.Metadata);
+
+    private static bool HaveSameMetadata(
+        IReadOnlyDictionary<string, string?> left,
+        IReadOnlyDictionary<string, string?> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        foreach (var (key, value) in left)
+        {
+            if (!right.TryGetValue(key, out var otherValue) || !string.Equals(value, otherValue, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

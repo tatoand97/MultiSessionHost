@@ -19,13 +19,20 @@ public static class TestOptionsFactory
         };
 
     public static SessionHostOptions CreateDesktopTestAppOptions(int basePort, params SessionDefinitionOptions[] sessions) =>
+        CreateDesktopTestAppOptions(basePort, false, "http://localhost:5088", sessions);
+
+    public static SessionHostOptions CreateDesktopTestAppOptions(
+        int basePort,
+        bool enableAdminApi,
+        string adminApiUrl,
+        params SessionDefinitionOptions[] sessions) =>
         new()
         {
             MaxGlobalParallelSessions = sessions.Length,
             SchedulerIntervalMs = 50,
             HealthLogIntervalMs = 1_000,
-            EnableAdminApi = false,
-            AdminApiUrl = "http://localhost:5088",
+            EnableAdminApi = enableAdminApi,
+            AdminApiUrl = adminApiUrl,
             DriverMode = DriverMode.DesktopTargetAdapter,
             EnableUiSnapshots = true,
             DesktopTargets = [DesktopTestAppProfile()],

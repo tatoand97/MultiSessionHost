@@ -1,6 +1,8 @@
 using System.Text.Json;
 using MultiSessionHost.Contracts.Sessions;
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Interfaces;
+using MultiSessionHost.Desktop.Models;
 
 namespace MultiSessionHost.AdminApi.Mapping;
 
@@ -89,6 +91,73 @@ public static class DtoMappingExtensions
             state.ProjectedTree,
             state.LastDiff,
             state.PlannedWorkItems);
+
+    public static DesktopTargetProfileDto ToDto(this DesktopTargetProfile profile) =>
+        new(
+            profile.ProfileName,
+            profile.Kind.ToString(),
+            profile.ProcessName,
+            profile.WindowTitleFragment,
+            profile.CommandLineFragmentTemplate,
+            profile.BaseAddressTemplate,
+            profile.MatchingMode.ToString(),
+            profile.Metadata,
+            profile.SupportsUiSnapshots,
+            profile.SupportsStateEndpoint);
+
+    public static DesktopTargetProfileOverrideDto ToDto(this DesktopTargetProfileOverride profileOverride) =>
+        new(
+            profileOverride.ProcessName,
+            profileOverride.WindowTitleFragment,
+            profileOverride.CommandLineFragmentTemplate,
+            profileOverride.BaseAddressTemplate,
+            profileOverride.MatchingMode?.ToString(),
+            profileOverride.Metadata,
+            profileOverride.SupportsUiSnapshots,
+            profileOverride.SupportsStateEndpoint);
+
+    public static SessionTargetBindingDto ToDto(this SessionTargetBinding binding) =>
+        new(
+            binding.SessionId.Value,
+            binding.TargetProfileName,
+            binding.Variables,
+            binding.Overrides?.ToDto());
+
+    public static ResolvedDesktopTargetDto ToDto(this DesktopSessionTarget target) =>
+        new(
+            target.SessionId.Value,
+            target.ProfileName,
+            target.Kind.ToString(),
+            target.MatchingMode.ToString(),
+            target.ProcessName,
+            target.WindowTitleFragment,
+            target.CommandLineFragment,
+            target.BaseAddress?.ToString(),
+            target.Metadata);
+
+    public static SessionTargetAttachmentDto ToDto(this DesktopSessionAttachment attachment) =>
+        new(
+            attachment.Process.ProcessId,
+            attachment.Process.ProcessName,
+            attachment.Process.CommandLine,
+            attachment.Process.MainWindowHandle,
+            attachment.Window.WindowHandle,
+            attachment.Window.Title,
+            attachment.BaseAddress?.ToString(),
+            attachment.AttachedAtUtc);
+
+    public static SessionTargetDto ToDto(
+        this ResolvedDesktopTargetContext context,
+        DesktopSessionAttachment? attachment,
+        IDesktopTargetAdapter adapter) =>
+        new(
+            context.SessionId.Value,
+            context.Profile.ToDto(),
+            context.Binding.ToDto(),
+            context.Target.ToDto(),
+            attachment?.ToDto(),
+            adapter.Kind.ToString(),
+            adapter.GetType().Name);
 
     private static JsonElement? ParseRawSnapshot(string? rawSnapshotJson)
     {

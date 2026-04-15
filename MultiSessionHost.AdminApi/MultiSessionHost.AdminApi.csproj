@@ -3,11 +3,12 @@
   <ItemGroup>
     <ProjectReference Include="..\MultiSessionHost.Contracts\MultiSessionHost.Contracts.csproj" />
     <ProjectReference Include="..\MultiSessionHost.Core\MultiSessionHost.Core.csproj" />
+    <ProjectReference Include="..\MultiSessionHost.Desktop\MultiSessionHost.Desktop.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>

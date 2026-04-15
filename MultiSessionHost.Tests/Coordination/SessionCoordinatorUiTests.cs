@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Tests.Common;
