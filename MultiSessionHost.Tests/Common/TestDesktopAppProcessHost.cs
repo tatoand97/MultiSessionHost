@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
-using MultiSessionHost.Desktop.Models;
 
 namespace MultiSessionHost.Tests.Common;
 
@@ -28,6 +27,8 @@ public sealed class TestDesktopAppProcessHost : IAsyncDisposable
 
     public static async Task<TestDesktopAppProcessHost> StartAsync(string sessionId, int port)
     {
+        await StopExistingTestAppOnPortAsync(port).ConfigureAwait(false);
+
         var executablePath = GetExecutablePath();
         var startInfo = new ProcessStartInfo(executablePath, $"--session-id {sessionId} --port {port}")
         {
@@ -45,24 +46,32 @@ public sealed class TestDesktopAppProcessHost : IAsyncDisposable
 
         var host = new TestDesktopAppProcessHost(sessionId, port, process, client);
 
-        await TestWait.UntilAsync(
-            async () =>
-            {
-                try
+        try
+        {
+            await TestWait.UntilAsync(
+                async () =>
                 {
-                    var state = await host.GetStateAsync().ConfigureAwait(false);
-                    return string.Equals(state.SessionId, sessionId, StringComparison.OrdinalIgnoreCase) &&
-                        state.Port == port &&
-                        state.ProcessId == process.Id &&
-                        state.WindowHandle != 0;
-                }
-                catch
-                {
-                    return false;
-                }
-            },
-            TimeSpan.FromSeconds(10),
-            $"The test desktop app '{sessionId}' on port {port} did not become ready in time.").ConfigureAwait(false);
+                    try
+                    {
+                        var state = await host.GetStateAsync().ConfigureAwait(false);
+                        return string.Equals(state.SessionId, sessionId, StringComparison.OrdinalIgnoreCase) &&
+                            state.Port == port &&
+                            state.ProcessId == process.Id &&
+                            state.WindowHandle != 0;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                },
+                TimeSpan.FromSeconds(10),
+                $"The test desktop app '{sessionId}' on port {port} did not become ready in time.").ConfigureAwait(false);
+        }
+        catch
+        {
+            await host.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
 
         return host;
     }
@@ -81,6 +90,21 @@ public sealed class TestDesktopAppProcessHost : IAsyncDisposable
     {
         Client.Dispose();
 
+        try
+        {
+            using var shutdownClient = new HttpClient
+            {
+                BaseAddress = new Uri($"http://127.0.0.1:{Port}/", UriKind.Absolute),
+                Timeout = TimeSpan.FromSeconds(2)
+            };
+
+            using var shutdownResponse = await shutdownClient.PostAsync("shutdown", content: null).ConfigureAwait(false);
+            shutdownResponse.EnsureSuccessStatusCode();
+        }
+        catch
+        {
+        }
+
         if (_process.HasExited)
         {
             _process.Dispose();
@@ -89,15 +113,21 @@ public sealed class TestDesktopAppProcessHost : IAsyncDisposable
 
         try
         {
-            _process.CloseMainWindow();
-            await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-        }
-        catch
-        {
+            try
+            {
+                if (_process.CloseMainWindow())
+                {
+                    await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                }
+            }
+            catch
+            {
+            }
+
             if (!_process.HasExited)
             {
                 _process.Kill(entireProcessTree: true);
-                await _process.WaitForExitAsync().ConfigureAwait(false);
+                await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             }
         }
         finally
@@ -106,12 +136,63 @@ public sealed class TestDesktopAppProcessHost : IAsyncDisposable
         }
     }
 
+    private static async Task StopExistingTestAppOnPortAsync(int port)
+    {
+        using var client = new HttpClient
+        {
+            BaseAddress = new Uri($"http://127.0.0.1:{port}/", UriKind.Absolute),
+            Timeout = TimeSpan.FromSeconds(1)
+        };
+
+        try
+        {
+            var state = await client.GetFromJsonAsync<TestDesktopAppState>("state").ConfigureAwait(false);
+
+            if (state is null ||
+                state.Port != port ||
+                !state.WindowTitle.StartsWith("MultiSessionHost.TestDesktopApp", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            using var shutdownResponse = await client.PostAsync("shutdown", content: null).ConfigureAwait(false);
+            shutdownResponse.EnsureSuccessStatusCode();
+
+            await TestWait.UntilAsync(
+                async () =>
+                {
+                    try
+                    {
+                        using var response = await client.GetAsync("state").ConfigureAwait(false);
+                        return !response.IsSuccessStatusCode;
+                    }
+                    catch
+                    {
+                        return true;
+                    }
+                },
+                TimeSpan.FromSeconds(3),
+                $"The existing test desktop app on port {port} did not shut down in time.").ConfigureAwait(false);
+        }
+        catch
+        {
+        }
+    }
+
     private static string GetExecutablePath()
     {
-        var assemblyPath = typeof(MultiSessionHost.TestDesktopApp.Program).Assembly.Location;
-        var directory = Path.GetDirectoryName(assemblyPath)
-            ?? throw new InvalidOperationException("Could not resolve the test desktop app output directory.");
-        var executablePath = Path.Combine(directory, "MultiSessionHost.TestDesktopApp.exe");
+        var executablePath = Path.GetFullPath(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "..",
+                "..",
+                "..",
+                "..",
+                "MultiSessionHost.TestDesktopApp",
+                "bin",
+                "Debug",
+                "net10.0-windows",
+                "MultiSessionHost.TestDesktopApp.exe"));
 
         if (!File.Exists(executablePath))
         {
@@ -121,3 +202,17 @@ public sealed class TestDesktopAppProcessHost : IAsyncDisposable
         return executablePath;
     }
 }
+
+public sealed record TestDesktopAppState(
+    string SessionId,
+    string Status,
+    string Notes,
+    bool Enabled,
+    string? SelectedItem,
+    IReadOnlyList<string> Items,
+    int TickCount,
+    int Port,
+    int ProcessId,
+    long WindowHandle,
+    string WindowTitle,
+    DateTimeOffset CapturedAt);

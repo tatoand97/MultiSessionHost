@@ -64,6 +64,11 @@ public static class Program
         app.MapPost("/pause", (MainForm form) => form.PauseSessionAsync());
         app.MapPost("/resume", (MainForm form) => form.ResumeSessionAsync());
         app.MapPost("/stop", (MainForm form) => form.StopSessionAsync());
+        app.MapPost("/shutdown", async Task<IResult> (MainForm form) =>
+        {
+            await form.RequestShutdownAsync().ConfigureAwait(false);
+            return Results.Ok();
+        });
         app.MapPost("/tick", (MainForm form) => form.TickAsync());
         app.MapPost("/test/delay", (TestDelayRequest request, MainForm form) => Results.Ok(form.SetArtificialDelay(request.Milliseconds)));
 

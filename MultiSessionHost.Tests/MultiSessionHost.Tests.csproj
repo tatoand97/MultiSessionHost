@@ -28,7 +28,7 @@
     <ProjectReference Include="..\MultiSessionHost.Core\MultiSessionHost.Core.csproj" />
     <ProjectReference Include="..\MultiSessionHost.Desktop\MultiSessionHost.Desktop.csproj" />
     <ProjectReference Include="..\MultiSessionHost.Infrastructure\MultiSessionHost.Infrastructure.csproj" />
-    <ProjectReference Include="..\MultiSessionHost.TestDesktopApp\MultiSessionHost.TestDesktopApp.csproj" />
+    <ProjectReference Include="..\MultiSessionHost.TestDesktopApp\MultiSessionHost.TestDesktopApp.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\MultiSessionHost.UiModel\MultiSessionHost.UiModel.csproj" />
     <ProjectReference Include="..\MultiSessionHost.Worker\MultiSessionHost.Worker.csproj" />
   </ItemGroup>

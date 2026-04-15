@@ -8,6 +8,7 @@ using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Activity;
+using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
@@ -323,6 +324,23 @@ public static class AdminApiEndpointRouteBuilderExtensions
             });
 
         endpoints.MapGet(
+            "/decision-executions",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionDecisionPlanExecutionStore executionStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var snapshots = await executionStore.GetAllCurrentAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(snapshots.Select(static result => result.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
             "/policy-rules",
             async Task<IResult> (
                 HttpContext httpContext,
@@ -523,6 +541,64 @@ public static class AdminApiEndpointRouteBuilderExtensions
             });
 
         endpoints.MapGet(
+            "/sessions/{id}/decision-execution",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionDecisionPlanExecutionStore executionStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var execution = await executionStore.GetCurrentAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return execution is null ? Results.NotFound() : Results.Ok(execution.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/decision-execution/history",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionDecisionPlanExecutionStore executionStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var history = await executionStore.GetHistoryAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(sessionId.ToHistoryDto(history));
+            });
+
+        endpoints.MapGet(
             "/sessions/{id}/decision-plan/directives",
             async Task<IResult> (
                 string id,
@@ -580,6 +656,42 @@ public static class AdminApiEndpointRouteBuilderExtensions
 
                 var plan = await policyEngine.EvaluateAsync(sessionId, cancellationToken).ConfigureAwait(false);
                 return Results.Ok(plan.ToDto());
+            });
+
+        endpoints.MapPost(
+            "/sessions/{id}/decision-plan/execute",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionDecisionPlanStore decisionPlanStore,
+                IDecisionPlanExecutor decisionPlanExecutor,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var plan = await decisionPlanStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                if (plan is null)
+                {
+                    return Results.Conflict(new { Error = $"Decision plan for session '{sessionId.Value}' is not available." });
+                }
+
+                var executionResult = await decisionPlanExecutor.ExecuteLatestAsync(sessionId, wasAutoExecuted: false, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(executionResult.ToDto());
             });
 
         endpoints.MapGet(

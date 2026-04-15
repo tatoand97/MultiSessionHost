@@ -31,11 +31,28 @@ public sealed class SessionHostOptions
 
     public PolicyEngineOptions PolicyEngine { get; init; } = new();
 
+    public DecisionExecutionOptions DecisionExecution { get; init; } = new();
+
     public IReadOnlyList<DesktopTargetProfileOptions> DesktopTargets { get; init; } = [];
 
     public IReadOnlyList<SessionTargetBindingOptions> SessionTargetBindings { get; init; } = [];
 
     public IReadOnlyList<SessionDefinitionOptions> Sessions { get; init; } = [];
+}
+
+public sealed class DecisionExecutionOptions
+{
+    public bool EnableDecisionExecution { get; init; } = true;
+
+    public bool AutoExecuteAfterEvaluation { get; init; }
+
+    public int MaxHistoryEntries { get; init; } = 50;
+
+    public int RepeatSuppressionWindowMs { get; init; } = 1_000;
+
+    public bool FailOnUnhandledBlockingDirective { get; init; }
+
+    public bool RecordNoOpExecutions { get; init; } = true;
 }
 
 public sealed class SessionDefinitionOptions

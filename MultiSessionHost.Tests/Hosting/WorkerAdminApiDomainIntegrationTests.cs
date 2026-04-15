@@ -146,11 +146,19 @@ public sealed class WorkerAdminApiDomainIntegrationTests
     public async Task RuntimeBindingChanges_DoNotBreakDomainSnapshotRetrieval()
     {
         const string sessionId = "api-domain-binding";
-        var options = TestOptionsFactory.CreateDesktopTestAppOptions(
-            7870,
-            true,
-            "http://127.0.0.1:0",
-            TestOptionsFactory.Session(sessionId, enabled: false));
+        var options = new SessionHostOptions
+        {
+            MaxGlobalParallelSessions = 4,
+            SchedulerIntervalMs = 50,
+            HealthLogIntervalMs = 1_000,
+            EnableAdminApi = true,
+            AdminApiUrl = "http://127.0.0.1:0",
+            DriverMode = DriverMode.NoOp,
+            EnableUiSnapshots = false,
+            DesktopTargets = [TestOptionsFactory.DesktopTestAppProfile()],
+            SessionTargetBindings = [TestOptionsFactory.SessionTargetBinding(sessionId, "test-app", "7870")],
+            Sessions = [TestOptionsFactory.Session(sessionId, enabled: false)]
+        };
 
         await using var harness = await WorkerHostHarness.StartAsync(options);
         var client = Assert.IsType<HttpClient>(harness.Client);

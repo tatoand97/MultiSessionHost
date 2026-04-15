@@ -224,6 +224,17 @@ public sealed class MainForm : Form
         return await InvokeOnUiThreadAsync(StopSessionUnsafe).ConfigureAwait(false);
     }
 
+    public async Task RequestShutdownAsync()
+    {
+        await InvokeOnUiThreadAsync(
+            () =>
+            {
+                Application.Exit();
+                Close();
+                return true;
+            }).ConfigureAwait(false);
+    }
+
     public async Task<TestDesktopAppState> TickAsync()
     {
         await DelayIfConfiguredAsync().ConfigureAwait(false);

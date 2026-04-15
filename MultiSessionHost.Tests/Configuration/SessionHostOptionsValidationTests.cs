@@ -277,6 +277,61 @@ public sealed class SessionHostOptionsValidationTests
     }
 
     [Fact]
+    public void TryValidate_FailsWhenDecisionExecutionSuppressionWindowIsNegative()
+    {
+        var options = new SessionHostOptions
+        {
+            DecisionExecution = new DecisionExecutionOptions
+            {
+                RepeatSuppressionWindowMs = -1
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("RepeatSuppressionWindowMs", error);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenDecisionExecutionHistoryLimitIsInvalid()
+    {
+        var options = new SessionHostOptions
+        {
+            DecisionExecution = new DecisionExecutionOptions
+            {
+                MaxHistoryEntries = 0
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("MaxHistoryEntries", error);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenAutoExecutionEnabledButDecisionExecutionDisabled()
+    {
+        var options = new SessionHostOptions
+        {
+            DecisionExecution = new DecisionExecutionOptions
+            {
+                EnableDecisionExecution = false,
+                AutoExecuteAfterEvaluation = true
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("AutoExecuteAfterEvaluation", error);
+    }
+
+    [Fact]
     public void TryValidate_FailsWhenPolicyOrderContainsUnknownPolicy()
     {
         var options = new SessionHostOptions

@@ -92,6 +92,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidateDecisionExecution(options.DecisionExecution, out error))
+        {
+            return false;
+        }
+
         if (options.Sessions.Count == 0)
         {
             error = "At least one session must be configured.";
@@ -158,6 +163,34 @@ public static class SessionHostOptionsExtensions
         if ((options.DriverMode == DriverMode.DesktopTargetAdapter || options.DesktopTargets.Count > 0 || options.SessionTargetBindings.Count > 0) &&
             !TryValidateDesktopTargetConfiguration(options, configuredSessionIds, out error))
         {
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateDecisionExecution(
+        DecisionExecutionOptions options,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.MaxHistoryEntries <= 0)
+        {
+            error = "DecisionExecution.MaxHistoryEntries must be greater than zero.";
+            return false;
+        }
+
+        if (options.RepeatSuppressionWindowMs < 0)
+        {
+            error = "DecisionExecution.RepeatSuppressionWindowMs cannot be negative.";
+            return false;
+        }
+
+        if (options.AutoExecuteAfterEvaluation && !options.EnableDecisionExecution)
+        {
+            error = "DecisionExecution.AutoExecuteAfterEvaluation requires DecisionExecution.EnableDecisionExecution=true.";
             return false;
         }
 

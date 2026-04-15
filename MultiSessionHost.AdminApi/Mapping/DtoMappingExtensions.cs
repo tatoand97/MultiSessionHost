@@ -3,6 +3,7 @@ using MultiSessionHost.Contracts.Coordination;
 using MultiSessionHost.Contracts.Sessions;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Activity;
+using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
@@ -693,4 +694,59 @@ public static class DtoMappingExtensions
         new(
             snapshot.SessionId.Value,
             snapshot.History.Select(static entry => entry.ToDto()).ToArray());
+
+    public static DecisionPlanExecutionDto ToDto(this DecisionPlanExecutionResult result) =>
+        new(
+            result.SessionId.Value,
+            result.PlanFingerprint,
+            result.ExecutedAtUtc,
+            result.StartedAtUtc,
+            result.CompletedAtUtc,
+            result.ExecutionStatus.ToString(),
+            result.WasAutoExecuted,
+            result.DirectiveResults.Select(static directive => directive.ToDto()).ToArray(),
+            result.Summary.ToDto(),
+            result.DeferredUntilUtc,
+            result.FailureReason,
+            result.Warnings,
+            result.Metadata);
+
+    public static DecisionDirectiveExecutionResultDto ToDto(this DecisionDirectiveExecutionResult result) =>
+        new(
+            result.DirectiveId,
+            result.DirectiveKind.ToString(),
+            result.PolicyName,
+            result.Priority,
+            result.Status.ToString(),
+            result.StartedAtUtc,
+            result.CompletedAtUtc,
+            result.Message,
+            result.FailureCode,
+            result.DeferredUntilUtc,
+            result.Metadata);
+
+    public static DecisionPlanExecutionSummaryDto ToDto(this DecisionPlanExecutionSummary summary) =>
+        new(
+            summary.TotalDirectives,
+            summary.SucceededCount,
+            summary.FailedCount,
+            summary.SkippedCount,
+            summary.DeferredCount,
+            summary.NotHandledCount,
+            summary.BlockedCount,
+            summary.AbortedCount,
+            summary.ExecutedDirectiveKinds,
+            summary.SkippedDirectiveKinds,
+            summary.UnhandledDirectiveKinds);
+
+    public static DecisionPlanExecutionHistoryEntryDto ToDto(this DecisionPlanExecutionRecord record) =>
+        new(
+            record.SessionId.Value,
+            record.RecordedAtUtc,
+            record.Result.ToDto());
+
+    public static DecisionPlanExecutionHistoryDto ToHistoryDto(this SessionId sessionId, IReadOnlyList<DecisionPlanExecutionRecord> records) =>
+        new(
+            sessionId.Value,
+            records.Select(static record => record.ToDto()).ToArray());
 }

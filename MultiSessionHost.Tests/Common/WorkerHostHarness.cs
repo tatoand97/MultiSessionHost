@@ -100,7 +100,16 @@ public sealed class WorkerHostHarness : IAsyncDisposable
         }
         catch
         {
-            await host.StopAsync().ConfigureAwait(false);
+            using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            try
+            {
+                await host.StopAsync(stopCts.Token).ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+
             host.Dispose();
             throw;
         }
@@ -112,7 +121,17 @@ public sealed class WorkerHostHarness : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Client?.Dispose();
-        await Host.StopAsync().ConfigureAwait(false);
+
+        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        try
+        {
+            await Host.StopAsync(stopCts.Token).ConfigureAwait(false);
+        }
+        catch
+        {
+        }
+
         Host.Dispose();
     }
 }

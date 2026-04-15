@@ -1,8 +1,10 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Activity;
+using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
@@ -33,6 +35,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly ISessionRiskAssessmentStore _sessionRiskAssessmentStore;
     private readonly ISessionActivityStateEvaluator _activityStateEvaluator;
     private readonly ISessionActivityStateStore _activityStateStore;
+    private readonly IServiceProvider _serviceProvider;
     private readonly IClock _clock;
     private readonly ILogger<DefaultSessionUiRefreshService> _logger;
 
@@ -54,6 +57,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         ISessionRiskAssessmentStore sessionRiskAssessmentStore,
         ISessionActivityStateEvaluator activityStateEvaluator,
         ISessionActivityStateStore activityStateStore,
+        IServiceProvider serviceProvider,
         IClock clock,
         ILogger<DefaultSessionUiRefreshService> logger)
     {
@@ -74,6 +78,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _sessionRiskAssessmentStore = sessionRiskAssessmentStore;
         _activityStateEvaluator = activityStateEvaluator;
         _activityStateStore = activityStateStore;
+        _serviceProvider = serviceProvider;
         _clock = clock;
         _logger = logger;
     }
@@ -229,6 +234,20 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
 
             var activityEvaluationResult = await _activityStateEvaluator.EvaluateAsync(activityEvaluationContext, cancellationToken).ConfigureAwait(false);
             await _activityStateStore.UpsertAsync(snapshot.SessionId, activityEvaluationResult.NewSnapshot, cancellationToken).ConfigureAwait(false);
+
+            if (_options.DecisionExecution.EnableDecisionExecution && _options.DecisionExecution.AutoExecuteAfterEvaluation)
+            {
+                var executionContext = new DecisionPlanExecutionContext(
+                    snapshot.SessionId,
+                    currentDecisionPlan,
+                    updatedDomainState,
+                    currentRiskAssessment,
+                    activityEvaluationResult.NewSnapshot,
+                    _clock.UtcNow,
+                    WasAutoExecuted: true);
+                var decisionPlanExecutor = _serviceProvider.GetRequiredService<IDecisionPlanExecutor>();
+                await decisionPlanExecutor.ExecuteAsync(executionContext, cancellationToken).ConfigureAwait(false);
+            }
 
             return await _sessionUiStateStore.UpdateAsync(
                 snapshot.SessionId,

@@ -156,8 +156,67 @@ Worker session
   -> decision plan store
   -> activity state evaluation
   -> SessionActivityStateStore
+  -> optional decision plan execution
+  -> SessionDecisionPlanExecutionStore
   -> Admin API inspection
 ```
+
+## DecisionPlan execution bridge (Fase 2.4)
+
+La evaluación de políticas y la ejecución de directivas son ahora capas separadas:
+
+- `DecisionPlan` sigue siendo la salida de planificación del policy engine.
+- `IDecisionPlanExecutor` es el puente de ejecución determinística de directivas finales.
+- `ISessionDecisionPlanExecutionStore` conserva snapshot actual + historial acotado por sesión.
+
+Semántica principal de ejecución:
+
+- orden determinístico: se respeta el orden final de directivas en el `DecisionPlan`.
+- waits sin bloqueo: `WaitDirectiveHandler` devuelve `Deferred` con `DeferredUntilUtc`; no bloquea hilos.
+- abort/block: una directiva abortiva o bloqueante detiene directivas posteriores.
+- directivas no manejadas: se registran como `NotHandled`; no generan crash.
+- supresión de repetición: planes idénticos dentro de `RepeatSuppressionWindowMs` se suprimen con resultado `Skipped` y traza explícita.
+
+Handlers base incluidos (genéricos):
+
+- `ObserveDirectiveHandler`
+- `WaitDirectiveHandler`
+- `PauseActivityDirectiveHandler` (usa `ISessionControlGateway` interno)
+- `AbortDirectiveHandler` (usa `ISessionControlGateway` interno)
+
+Directivas target-facing (ejemplo: `SelectSite`, `PrioritizeTarget`, `AvoidTarget`, `ConserveResource`, `Withdraw`) permanecen pluggables vía `IDecisionDirectiveHandler`. El core no impone comportamiento específico de juego/app.
+
+### Configuración de DecisionExecution
+
+`MultiSessionHost:DecisionExecution`:
+
+```json
+{
+  "DecisionExecution": {
+    "EnableDecisionExecution": true,
+    "AutoExecuteAfterEvaluation": false,
+    "MaxHistoryEntries": 50,
+    "RepeatSuppressionWindowMs": 1000,
+    "FailOnUnhandledBlockingDirective": false,
+    "RecordNoOpExecutions": true
+  }
+}
+```
+
+Validaciones:
+
+- `MaxHistoryEntries > 0`
+- `RepeatSuppressionWindowMs >= 0`
+- `AutoExecuteAfterEvaluation` requiere `EnableDecisionExecution=true`
+
+### Admin API nueva
+
+- `GET /decision-executions`
+- `GET /sessions/{id}/decision-execution`
+- `GET /sessions/{id}/decision-execution/history`
+- `POST /sessions/{id}/decision-plan/execute`
+
+`POST /sessions/{id}/decision-plan/execute` ejecuta el último `DecisionPlan` persistido para la sesión. Si no existe plan, responde `409 Conflict`.
 
 ## Modelo de dominio por sesión
 
