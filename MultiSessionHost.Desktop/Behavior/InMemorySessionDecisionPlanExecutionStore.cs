@@ -100,6 +100,28 @@ public sealed class InMemorySessionDecisionPlanExecutionStore : ISessionDecision
         return ValueTask.CompletedTask;
     }
 
+    public ValueTask RestoreAsync(
+        SessionId sessionId,
+        DecisionPlanExecutionResult? current,
+        IReadOnlyList<DecisionPlanExecutionRecord> history,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+
+        lock (_gate)
+        {
+            var state = GetOrCreateStateUnsafe(sessionId);
+            state.Current = current;
+            state.History.Clear();
+            state.History.AddRange(history
+                .Where(record => record.SessionId == sessionId)
+                .OrderBy(static record => record.RecordedAtUtc)
+                .TakeLast(_maxHistoryEntries));
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
     private SessionExecutionState GetOrCreateStateUnsafe(SessionId sessionId)
     {
         if (_states.TryGetValue(sessionId, out var state))

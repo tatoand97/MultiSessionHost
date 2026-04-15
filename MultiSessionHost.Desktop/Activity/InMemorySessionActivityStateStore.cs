@@ -66,6 +66,24 @@ public sealed class InMemorySessionActivityStateStore : ISessionActivityStateSto
         }
     }
 
+    public ValueTask RestoreAsync(SessionId sessionId, SessionActivitySnapshot snapshot, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        lock (_gate)
+        {
+            _snapshots[sessionId] = snapshot with
+            {
+                History = snapshot.History
+                    .OrderBy(static entry => entry.OccurredAtUtc)
+                    .TakeLast(MaxHistoryPerSession)
+                    .ToArray()
+            };
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
     public ValueTask RemoveAsync(SessionId sessionId, CancellationToken cancellationToken)
     {
         lock (_gate)

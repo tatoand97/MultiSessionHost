@@ -125,6 +125,28 @@ public sealed class InMemorySessionOperationalMemoryStore : ISessionOperationalM
         return ValueTask.CompletedTask;
     }
 
+    public ValueTask RestoreAsync(
+        SessionId sessionId,
+        SessionOperationalMemorySnapshot? snapshot,
+        IReadOnlyList<MemoryObservationRecord> history,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+
+        lock (_gate)
+        {
+            var state = GetOrCreateStateUnsafe(sessionId);
+            state.Current = snapshot;
+            state.History.Clear();
+            state.History.AddRange(history
+                .Where(record => record.SessionId == sessionId)
+                .OrderBy(static record => record.ObservedAtUtc)
+                .TakeLast(_maxHistoryEntries));
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
     private SessionMemoryState GetOrCreateStateUnsafe(SessionId sessionId)
     {
         if (_states.TryGetValue(sessionId, out var state))

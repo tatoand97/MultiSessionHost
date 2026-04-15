@@ -42,7 +42,11 @@ public sealed class WorkerHostHarness : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(options);
 
+        var contentRoot = Path.Combine(Path.GetTempPath(), "MultiSessionHost.Tests.Hosts", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(contentRoot);
+
         var hostBuilder = Microsoft.Extensions.Hosting.Host.CreateDefaultBuilder()
+            .UseContentRoot(contentRoot)
             .ConfigureLogging(
                 logging =>
                 {

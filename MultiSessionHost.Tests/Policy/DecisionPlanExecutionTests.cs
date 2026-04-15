@@ -188,11 +188,12 @@ public sealed class DecisionPlanExecutionTests
         var executionStore = new InMemorySessionDecisionPlanExecutionStore(options);
         var executor = new DefaultDecisionPlanExecutor(
             options,
-            new InMemorySessionDecisionPlanStore(),
+            new InMemorySessionDecisionPlanStore(options),
             new InMemorySessionDomainStateStore(),
             new InMemorySessionRiskAssessmentStore(),
             new InMemorySessionActivityStateStore(),
             executionStore,
+            new MultiSessionHost.Desktop.Persistence.NoOpRuntimePersistenceCoordinator(),
             handlers,
             clock,
             NullLogger<DefaultDecisionPlanExecutor>.Instance);

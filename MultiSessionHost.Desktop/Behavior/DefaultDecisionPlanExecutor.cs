@@ -6,6 +6,7 @@ using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Activity;
+using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 
@@ -19,6 +20,7 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
     private readonly ISessionRiskAssessmentStore _riskAssessmentStore;
     private readonly ISessionActivityStateStore _activityStateStore;
     private readonly ISessionDecisionPlanExecutionStore _executionStore;
+    private readonly IRuntimePersistenceCoordinator _runtimePersistenceCoordinator;
     private readonly IReadOnlyList<IDecisionDirectiveHandler> _directiveHandlers;
     private readonly IClock _clock;
     private readonly ILogger<DefaultDecisionPlanExecutor> _logger;
@@ -30,6 +32,7 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
         ISessionRiskAssessmentStore riskAssessmentStore,
         ISessionActivityStateStore activityStateStore,
         ISessionDecisionPlanExecutionStore executionStore,
+        IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
         IEnumerable<IDecisionDirectiveHandler> directiveHandlers,
         IClock clock,
         ILogger<DefaultDecisionPlanExecutor> logger)
@@ -40,6 +43,7 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
         _riskAssessmentStore = riskAssessmentStore;
         _activityStateStore = activityStateStore;
         _executionStore = executionStore;
+        _runtimePersistenceCoordinator = runtimePersistenceCoordinator;
         _directiveHandlers = directiveHandlers.ToArray();
         _clock = clock;
         _logger = logger;
@@ -237,7 +241,13 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
             sessionId,
             new DecisionPlanExecutionRecord(sessionId, _clock.UtcNow, result),
             cancellationToken).ConfigureAwait(false);
+        await FlushIfEnabledAsync(sessionId, cancellationToken).ConfigureAwait(false);
     }
+
+    private Task FlushIfEnabledAsync(SessionId sessionId, CancellationToken cancellationToken) =>
+        _options.RuntimePersistence.AutoFlushAfterStateChanges
+            ? _runtimePersistenceCoordinator.FlushSessionAsync(sessionId, cancellationToken)
+            : Task.CompletedTask;
 
     private bool ShouldSuppressDuplicate(
         string planFingerprint,

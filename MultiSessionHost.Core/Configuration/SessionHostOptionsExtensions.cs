@@ -102,6 +102,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidateRuntimePersistence(options.RuntimePersistence, out error))
+        {
+            return false;
+        }
+
         if (options.Sessions.Count == 0)
         {
             error = "At least one session must be configured.";
@@ -220,6 +225,58 @@ public static class SessionHostOptionsExtensions
         if (options.StaleAfterMinutes < 0)
         {
             error = "OperationalMemory.StaleAfterMinutes cannot be negative.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateRuntimePersistence(
+        RuntimePersistenceOptions options,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (!Enum.IsDefined(options.Mode))
+        {
+            error = $"RuntimePersistence.Mode '{options.Mode}' is not valid.";
+            return false;
+        }
+
+        if (!options.EnableRuntimePersistence)
+        {
+            error = null;
+            return true;
+        }
+
+        if (options.Mode == RuntimePersistenceMode.None)
+        {
+            error = "RuntimePersistence.Mode cannot be None when RuntimePersistence.EnableRuntimePersistence=true.";
+            return false;
+        }
+
+        if (options.Mode == RuntimePersistenceMode.JsonFile && string.IsNullOrWhiteSpace(options.BasePath))
+        {
+            error = "RuntimePersistence.BasePath is required when RuntimePersistence.Mode=JsonFile.";
+            return false;
+        }
+
+        if (options.SchemaVersion <= 0)
+        {
+            error = "RuntimePersistence.SchemaVersion must be greater than zero.";
+            return false;
+        }
+
+        if (options.MaxDecisionHistoryEntries <= 0)
+        {
+            error = "RuntimePersistence.MaxDecisionHistoryEntries must be greater than zero.";
+            return false;
+        }
+
+        if (options.MaxPersistedSessions < 0)
+        {
+            error = "RuntimePersistence.MaxPersistedSessions cannot be negative.";
             return false;
         }
 

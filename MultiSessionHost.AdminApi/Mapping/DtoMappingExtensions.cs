@@ -9,6 +9,7 @@ using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 
@@ -362,6 +363,17 @@ public static class DtoMappingExtensions
             plan.Summary.BlockingPolicies,
             plan.Summary.AbortingPolicies,
             plan.Warnings);
+
+    public static DecisionPlanHistoryEntryDto ToDto(this DecisionPlanHistoryEntry entry) =>
+        new(
+            entry.SessionId.Value,
+            entry.RecordedAtUtc,
+            entry.Plan.ToDto());
+
+    public static DecisionPlanHistoryDto ToDecisionHistoryDto(this SessionId sessionId, IReadOnlyList<DecisionPlanHistoryEntry> entries) =>
+        new(
+            sessionId.Value,
+            entries.Select(static entry => entry.ToDto()).ToArray());
 
     public static DecisionDirectiveDto ToDto(this DecisionDirective directive) =>
         new(
@@ -867,4 +879,26 @@ public static class DtoMappingExtensions
         new(
             sessionId.Value,
             records.Select(static record => record.ToDto()).ToArray());
+
+    public static RuntimePersistenceStatusDto ToDto(this RuntimePersistenceStatusSnapshot snapshot) =>
+        new(
+            snapshot.Enabled,
+            snapshot.Mode,
+            snapshot.BasePath,
+            snapshot.SchemaVersion,
+            snapshot.CapturedAtUtc,
+            snapshot.Sessions.Select(static session => session.ToDto()).ToArray());
+
+    public static RuntimePersistenceSessionStatusDto ToDto(this RuntimePersistenceSessionStatus status) =>
+        new(
+            status.SessionId.Value,
+            status.Rehydrated,
+            status.LastLoadedAtUtc,
+            status.LastSavedAtUtc,
+            status.LastError,
+            status.PersistedPath,
+            status.ActivityHistoryCount,
+            status.OperationalMemoryHistoryCount,
+            status.DecisionPlanHistoryCount,
+            status.DecisionExecutionHistoryCount);
 }

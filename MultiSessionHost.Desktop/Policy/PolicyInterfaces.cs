@@ -30,7 +30,15 @@ public interface ISessionDecisionPlanStore
 
     ValueTask<IReadOnlyCollection<DecisionPlan>> GetAllAsync(CancellationToken cancellationToken);
 
+    ValueTask<IReadOnlyList<DecisionPlanHistoryEntry>> GetHistoryAsync(SessionId sessionId, CancellationToken cancellationToken);
+
     ValueTask<DecisionPlan> UpdateAsync(SessionId sessionId, DecisionPlan plan, CancellationToken cancellationToken);
+
+    ValueTask RestoreAsync(
+        SessionId sessionId,
+        DecisionPlan? latestPlan,
+        IReadOnlyList<DecisionPlanHistoryEntry> history,
+        CancellationToken cancellationToken);
 
     ValueTask RemoveAsync(SessionId sessionId, CancellationToken cancellationToken);
 }

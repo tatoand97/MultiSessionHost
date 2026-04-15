@@ -13,6 +13,7 @@ using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
+using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.UiModel.Models;
@@ -342,6 +343,39 @@ public static class AdminApiEndpointRouteBuilderExtensions
             });
 
         endpoints.MapGet(
+            "/persistence",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                return Results.Ok(runtimePersistenceCoordinator.GetStatus().ToDto());
+            });
+
+        endpoints.MapPost(
+            "/persistence/flush",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                await runtimePersistenceCoordinator.FlushAllAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Accepted("/persistence", runtimePersistenceCoordinator.GetStatus().ToDto());
+            });
+
+        endpoints.MapGet(
             "/memory",
             async Task<IResult> (
                 HttpContext httpContext,
@@ -559,6 +593,35 @@ public static class AdminApiEndpointRouteBuilderExtensions
             });
 
         endpoints.MapGet(
+            "/sessions/{id}/decision-plan/history",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionDecisionPlanStore decisionPlanStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var history = await decisionPlanStore.GetHistoryAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(sessionId.ToDecisionHistoryDto(history));
+            });
+
+        endpoints.MapGet(
             "/sessions/{id}/decision-execution",
             async Task<IResult> (
                 string id,
@@ -585,6 +648,69 @@ public static class AdminApiEndpointRouteBuilderExtensions
 
                 var execution = await executionStore.GetCurrentAsync(sessionId, cancellationToken).ConfigureAwait(false);
                 return execution is null ? Results.NotFound() : Results.Ok(execution.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/persistence",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var status = runtimePersistenceCoordinator.GetStatus()
+                    .Sessions
+                    .FirstOrDefault(session => session.SessionId == sessionId);
+                return status is null ? Results.NotFound() : Results.Ok(status.ToDto());
+            });
+
+        endpoints.MapPost(
+            "/sessions/{id}/persistence/flush",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                await runtimePersistenceCoordinator.FlushSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                var status = runtimePersistenceCoordinator.GetStatus()
+                    .Sessions
+                    .FirstOrDefault(session => session.SessionId == sessionId);
+                return status is null ? Results.NotFound() : Results.Accepted($"/sessions/{sessionId.Value}/persistence", status.ToDto());
             });
 
         endpoints.MapGet(
@@ -778,6 +904,8 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 ISessionActivityStateStore activityStateStore,
                 ISessionOperationalMemoryStore operationalMemoryStore,
                 ISessionOperationalMemoryUpdater operationalMemoryUpdater,
+                IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
+                MultiSessionHost.Core.Configuration.SessionHostOptions options,
                 IClock clock,
                 CancellationToken cancellationToken) =>
             {
@@ -824,6 +952,11 @@ public static class AdminApiEndpointRouteBuilderExtensions
                         memoryResult.Snapshot,
                         memoryResult.AddedObservationRecords,
                         cancellationToken).ConfigureAwait(false);
+                }
+
+                if (options.RuntimePersistence.AutoFlushAfterStateChanges)
+                {
+                    await runtimePersistenceCoordinator.FlushSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
                 }
 
                 return Results.Ok(executionResult.ToDto());

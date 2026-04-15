@@ -15,6 +15,7 @@ public static class TestOptionsFactory
             AdminApiUrl = "http://localhost:5088",
             DriverMode = DriverMode.NoOp,
             EnableUiSnapshots = false,
+            RuntimePersistence = TestRuntimePersistenceOptions(),
             Sessions = sessions
         };
 
@@ -35,6 +36,7 @@ public static class TestOptionsFactory
             AdminApiUrl = adminApiUrl,
             DriverMode = DriverMode.DesktopTargetAdapter,
             EnableUiSnapshots = true,
+            RuntimePersistence = TestRuntimePersistenceOptions(),
             DesktopTargets = [DesktopTestAppProfile()],
             SessionTargetBindings = sessions
                 .Select(
@@ -61,6 +63,7 @@ public static class TestOptionsFactory
             AdminApiUrl = adminApiUrl,
             DriverMode = DriverMode.DesktopTargetAdapter,
             EnableUiSnapshots = true,
+            RuntimePersistence = TestRuntimePersistenceOptions(),
             RiskClassification = riskClassification,
             DesktopTargets = [DesktopTestAppProfile()],
             SessionTargetBindings = sessions
@@ -183,5 +186,15 @@ public static class TestOptionsFactory
                     Reason = "Unknown-tagged candidates should be observed."
                 }
             ]
+        };
+
+    public static RuntimePersistenceOptions TestRuntimePersistenceOptions(string? basePath = null) =>
+        new()
+        {
+            EnableRuntimePersistence = true,
+            Mode = RuntimePersistenceMode.JsonFile,
+            BasePath = basePath ?? Path.Combine(Path.GetTempPath(), "MultiSessionHost.Tests", Guid.NewGuid().ToString("N")),
+            AutoFlushAfterStateChanges = true,
+            FailOnPersistenceErrors = false
         };
 }

@@ -253,8 +253,8 @@ public sealed class PolicyEngineTests
         var semanticStore = new InMemorySessionSemanticExtractionStore();
         var riskStore = new InMemorySessionRiskAssessmentStore();
         var queue = new ChannelBasedWorkQueue();
-        var planStore = new InMemorySessionDecisionPlanStore();
         var options = new SessionHostOptions();
+        var planStore = new InMemorySessionDecisionPlanStore(options);
 
         foreach (var sessionId in new[] { alphaId, betaId })
         {
@@ -279,6 +279,7 @@ public sealed class PolicyEngineTests
             CreatePolicies(options),
             new DefaultDecisionPlanAggregator(options),
             planStore,
+            new MultiSessionHost.Desktop.Persistence.NoOpRuntimePersistenceCoordinator(),
             clock,
             NullLogger<DefaultPolicyEngine>.Instance);
 

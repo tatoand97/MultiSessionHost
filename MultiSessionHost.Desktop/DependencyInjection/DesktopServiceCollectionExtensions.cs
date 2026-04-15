@@ -11,6 +11,7 @@ using MultiSessionHost.Desktop.Drivers;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
+using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Processes;
 using MultiSessionHost.Desktop.Risk;
@@ -122,6 +123,24 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionOperationalMemoryStore>(static serviceProvider => serviceProvider.GetRequiredService<InMemorySessionOperationalMemoryStore>());
         services.AddSingleton<ISessionOperationalMemoryReader>(static serviceProvider => serviceProvider.GetRequiredService<InMemorySessionOperationalMemoryStore>());
         services.AddSingleton<ISessionOperationalMemoryUpdater, DefaultSessionOperationalMemoryUpdater>();
+        services.AddSingleton<IRuntimePersistenceBackend>(
+            static serviceProvider =>
+            {
+                var options = serviceProvider.GetRequiredService<SessionHostOptions>();
+
+                if (!options.RuntimePersistence.EnableRuntimePersistence)
+                {
+                    return new NoOpRuntimePersistenceBackend();
+                }
+
+                return options.RuntimePersistence.Mode switch
+                {
+                    RuntimePersistenceMode.None => new NoOpRuntimePersistenceBackend(),
+                    RuntimePersistenceMode.JsonFile => ActivatorUtilities.CreateInstance<JsonFileRuntimePersistenceBackend>(serviceProvider),
+                    _ => throw new InvalidOperationException($"RuntimePersistence.Mode '{options.RuntimePersistence.Mode}' is not supported.")
+                };
+            });
+        services.AddSingleton<IRuntimePersistenceCoordinator, RuntimePersistenceCoordinator>();
         services.AddSingleton<ISessionUiRefreshService, DefaultSessionUiRefreshService>();
         services.AddSingleton<SelfHostedHttpUiTreeNormalizer>();
         services.AddSingleton<TestAppUiTreeNormalizer>();

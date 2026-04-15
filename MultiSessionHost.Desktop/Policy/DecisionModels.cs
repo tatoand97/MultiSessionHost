@@ -135,3 +135,8 @@ public sealed record DecisionPlan(
             new PolicyExecutionSummary([], [], [], [], 0, 0, new Dictionary<string, int>()),
             []);
 }
+
+public sealed record DecisionPlanHistoryEntry(
+    SessionId SessionId,
+    DateTimeOffset RecordedAtUtc,
+    DecisionPlan Plan);

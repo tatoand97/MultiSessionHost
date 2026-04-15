@@ -9,6 +9,7 @@ using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Targets;
@@ -38,6 +39,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly ISessionActivityStateStore _activityStateStore;
     private readonly ISessionOperationalMemoryStore _operationalMemoryStore;
     private readonly ISessionOperationalMemoryUpdater _operationalMemoryUpdater;
+    private readonly IRuntimePersistenceCoordinator _runtimePersistenceCoordinator;
     private readonly IServiceProvider _serviceProvider;
     private readonly IClock _clock;
     private readonly ILogger<DefaultSessionUiRefreshService> _logger;
@@ -62,6 +64,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         ISessionActivityStateStore activityStateStore,
         ISessionOperationalMemoryStore operationalMemoryStore,
         ISessionOperationalMemoryUpdater operationalMemoryUpdater,
+        IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
         IServiceProvider serviceProvider,
         IClock clock,
         ILogger<DefaultSessionUiRefreshService> logger)
@@ -85,6 +88,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _activityStateStore = activityStateStore;
         _operationalMemoryStore = operationalMemoryStore;
         _operationalMemoryUpdater = operationalMemoryUpdater;
+        _runtimePersistenceCoordinator = runtimePersistenceCoordinator;
         _serviceProvider = serviceProvider;
         _clock = clock;
         _logger = logger;
@@ -268,6 +272,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 activityEvaluationResult.NewSnapshot,
                 cancellationToken).ConfigureAwait(false);
 
+            await FlushIfEnabledAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
+
             return await _sessionUiStateStore.UpdateAsync(
                 snapshot.SessionId,
                 current => current with
@@ -285,6 +291,11 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
             throw;
         }
     }
+
+    private Task FlushIfEnabledAsync(SessionId sessionId, CancellationToken cancellationToken) =>
+        _options.RuntimePersistence.AutoFlushAfterStateChanges
+            ? _runtimePersistenceCoordinator.FlushSessionAsync(sessionId, cancellationToken)
+            : Task.CompletedTask;
 
     public async Task<SessionUiState> RefreshAsync(
         SessionSnapshot snapshot,

@@ -35,6 +35,8 @@ public sealed class SessionHostOptions
 
     public OperationalMemoryOptions OperationalMemory { get; init; } = new();
 
+    public RuntimePersistenceOptions RuntimePersistence { get; init; } = new();
+
     public IReadOnlyList<DesktopTargetProfileOptions> DesktopTargets { get; init; } = [];
 
     public IReadOnlyList<SessionTargetBindingOptions> SessionTargetBindings { get; init; } = [];
@@ -74,6 +76,33 @@ public sealed class OperationalMemoryOptions
     public int MaxOutcomeObservationsPerSession { get; init; } = 100;
 
     public int StaleAfterMinutes { get; init; } = 60;
+}
+
+public sealed class RuntimePersistenceOptions
+{
+    public bool EnableRuntimePersistence { get; init; } = true;
+
+    public RuntimePersistenceMode Mode { get; init; } = RuntimePersistenceMode.JsonFile;
+
+    public string? BasePath { get; init; } = "runtime-state";
+
+    public int SchemaVersion { get; init; } = 1;
+
+    public int MaxDecisionHistoryEntries { get; init; } = 50;
+
+    public int? MaxPersistedSessions { get; init; }
+
+    public bool PersistDecisionHistory { get; init; } = true;
+
+    public bool PersistActivityState { get; init; } = true;
+
+    public bool PersistOperationalMemory { get; init; } = true;
+
+    public bool PersistDecisionExecution { get; init; } = true;
+
+    public bool AutoFlushAfterStateChanges { get; init; } = true;
+
+    public bool FailOnPersistenceErrors { get; init; }
 }
 
 public sealed class SessionDefinitionOptions

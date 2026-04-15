@@ -127,6 +127,7 @@ La integración de escritorio ya no está acoplada a `MultiSessionHost.TestDeskt
   - conserva razones trazables para inspección
 - `ISessionDecisionPlanStore`
   - mantiene el último `DecisionPlan` por `SessionId`
+  - conserva historial acotado de planes para inspección y rehidratación
   - thread-safe, en memoria y aislado por sesión
 - `ISessionOperationalMemoryStore`
   - mantiene memoria operacional por `SessionId`
@@ -136,6 +137,10 @@ La integración de escritorio ya no está acoplada a `MultiSessionHost.TestDeskt
   - proyecta señales runtime hacia memoria operacional
   - centraliza derivación de worksite, riesgo, presencia, timing y outcomes
   - no persiste en base de datos y no reemplaza `SessionDomainState` ni `DecisionPlan`
+- `IRuntimePersistenceCoordinator`
+  - construye y rehidrata envelopes durables por sesión
+  - centraliza flush, errores, status y backend pluggable
+  - usa backend local JSON primero, con escritura atómica
 
 ## Flujo runtime
 
@@ -230,9 +235,9 @@ Validaciones:
 
 ## Operational memory (Fase 3.1)
 
-La memoria operacional es una capa **in-memory**, por sesión, thread-safe e inspeccionable que recuerda observaciones runtime a través del tiempo. Su objetivo es dar contexto histórico a futuras políticas sin obligarlas a leer stores raw ni a reconstruir historial desde `SessionDomainState`, `RiskAssessmentResult`, actividad o ejecución.
+La memoria operacional es una capa por sesión, thread-safe e inspeccionable que recuerda observaciones runtime a través del tiempo. Su objetivo es dar contexto histórico a futuras políticas sin obligarlas a leer stores raw ni a reconstruir historial desde `SessionDomainState`, `RiskAssessmentResult`, actividad o ejecución.
 
-No es persistencia a DB todavía. Al reiniciar el proceso se pierde, igual que otros stores in-memory actuales.
+Desde Fase 3.2, su snapshot actual y su historial acotado pueden rehidratarse desde la persistencia runtime durable. La memoria sigue siendo un store en memoria durante la ejecución normal; la persistencia se aplica como snapshot resumido de arranque/flush, no como reemplazo DB-backed del store.
 
 ### Qué guarda
 
@@ -343,6 +348,109 @@ Ejemplo abreviado:
   "metadata": {}
 }
 ```
+
+## Runtime persistence (Fase 3.2)
+
+Fase 3.2 agrega la primera capa durable real para estado operacional runtime, adicional a la persistencia de bindings que ya existía. El worker sigue siendo Worker-first sobre Generic Host y la Admin API sigue en el mismo proceso/DI container. Los stores principales siguen siendo in-memory; la persistencia guarda envelopes resumidos para rehidratación segura después de reinicio.
+
+### Qué se persiste
+
+- `SessionActivitySnapshot`, incluyendo su historial de transiciones ya acotado.
+- `SessionOperationalMemorySnapshot`.
+- historial acotado de `MemoryObservationRecord`.
+- último `DecisionPlan`.
+- historial acotado de planes (`DecisionPlanHistoryEntry`).
+- último `DecisionPlanExecutionResult`.
+- historial acotado de `DecisionPlanExecutionRecord`.
+- metadata pequeña de persistencia, como `schemaVersion` y `savedAtUtc`.
+
+### Qué no se persiste
+
+- raw UI snapshot JSON.
+- `UiTree` proyectado.
+- árboles semánticos raw o payloads grandes.
+- estado de attachment/procesos/ventanas.
+- bindings de sesión dentro del envelope runtime.
+
+Los bindings mantienen su mecanismo existente (`BindingStorePersistenceMode` y `BindingStoreFilePath`). Fase 3.2 no lo reemplaza ni duplica.
+
+### Backend local JSON
+
+El backend inicial es `JsonFile`. Guarda un archivo determinístico por sesión bajo `RuntimePersistence:BasePath` con sufijo `.runtime.json`. Cada escritura usa archivo temporal y replace/move atómico. El directorio se crea automáticamente.
+
+Lectura tolerante:
+
+- si no existe archivo, la sesión arranca sin estado rehidratado.
+- si un archivo está corrupto, se registra warning, se marca error de persistencia y se ignora ese archivo.
+- un archivo corrupto de una sesión no impide cargar otras sesiones.
+- sesiones persistidas que ya no están en configuración se ignoran sin borrar el archivo.
+
+### Configuración
+
+`MultiSessionHost:RuntimePersistence`:
+
+```json
+{
+  "RuntimePersistence": {
+    "EnableRuntimePersistence": true,
+    "Mode": "JsonFile",
+    "BasePath": "data/runtime-state",
+    "SchemaVersion": 1,
+    "MaxDecisionHistoryEntries": 50,
+    "PersistDecisionHistory": true,
+    "PersistActivityState": true,
+    "PersistOperationalMemory": true,
+    "PersistDecisionExecution": true,
+    "AutoFlushAfterStateChanges": true,
+    "FailOnPersistenceErrors": false
+  }
+}
+```
+
+Defaults:
+
+- `EnableRuntimePersistence=true`
+- `Mode=JsonFile`
+- `BasePath=runtime-state`
+- `AutoFlushAfterStateChanges=true`
+- `FailOnPersistenceErrors=false`
+
+Validaciones:
+
+- `BasePath` es obligatorio cuando `Mode=JsonFile` y la persistencia está habilitada.
+- `SchemaVersion > 0`.
+- `MaxDecisionHistoryEntries > 0`.
+- límites negativos no son válidos.
+- `Mode=None` no es válido si `EnableRuntimePersistence=true`.
+
+### Rehidratación
+
+Al arrancar, el worker:
+
+1. inicializa bindings con el mecanismo existente.
+2. inicializa sesiones/stores normales del coordinator.
+3. carga envelopes persistidos para sesiones configuradas.
+4. rehidrata actividad, memoria operacional, historial de planes y ejecución.
+5. ignora sesiones persistidas ausentes de la configuración actual.
+
+Después de mutaciones relevantes, el coordinator hace flush del envelope actual cuando `AutoFlushAfterStateChanges=true`. Esto ocurre después de evaluación de políticas, ejecución de planes, updates de actividad y memoria operacional. Los errores se loguean y quedan visibles por Admin API; solo hacen fallar la operación si `FailOnPersistenceErrors=true`.
+
+### Admin API de persistencia
+
+- `GET /persistence`
+- `POST /persistence/flush`
+- `GET /sessions/{id}/persistence`
+- `POST /sessions/{id}/persistence/flush`
+- `GET /sessions/{id}/decision-plan/history`
+
+Los endpoints de status exponen:
+
+- persistencia habilitada/modo/base path/schema.
+- timestamps `LastLoadedAtUtc` y `LastSavedAtUtc`.
+- `LastError` si hubo error de carga o guardado.
+- si la sesión fue rehidratada desde disco.
+- path del archivo cuando aplica.
+- conteos de historiales persistidos.
 
 ## Modelo de dominio por sesión
 
@@ -1128,6 +1236,19 @@ La sección sigue siendo `MultiSessionHost`.
     "EnableUiSnapshots": true,
     "BindingStorePersistenceMode": "JsonFile",
     "BindingStoreFilePath": "data/session-target-bindings.json",
+    "RuntimePersistence": {
+      "EnableRuntimePersistence": true,
+      "Mode": "JsonFile",
+      "BasePath": "data/runtime-state",
+      "SchemaVersion": 1,
+      "MaxDecisionHistoryEntries": 50,
+      "PersistDecisionHistory": true,
+      "PersistActivityState": true,
+      "PersistOperationalMemory": true,
+      "PersistDecisionExecution": true,
+      "AutoFlushAfterStateChanges": true,
+      "FailOnPersistenceErrors": false
+    },
     "ExecutionCoordination": {
       "EnableTargetCoordination": true,
       "EnableGlobalCoordination": false,
@@ -1270,6 +1391,10 @@ La sección sigue siendo `MultiSessionHost`.
 - reglas no-site deben declarar al menos un matcher o threshold.
 - fallbacks habilitados deben tener `RuleName`, `DirectiveKind`, `Priority` y `Reason`, no pueden declarar matchers y deben usar directive kinds permitidos para su familia.
 - reglas de agregación deben tener nombres únicos, directive kinds válidos y status válidos.
+- `RuntimePersistence.BasePath` es obligatorio cuando `RuntimePersistence.Mode=JsonFile`.
+- `RuntimePersistence.SchemaVersion` debe ser mayor que cero.
+- `RuntimePersistence.MaxDecisionHistoryEntries` debe ser mayor que cero.
+- `RuntimePersistence.Mode=None` solo es válido cuando `RuntimePersistence.EnableRuntimePersistence=false`.
 
 ## Admin API
 
@@ -1305,7 +1430,12 @@ Endpoints existentes mantenidos:
 - `GET /sessions/{id}/decision-plan/explanation`
 - `GET /sessions/{id}/decision-plan/summary`
 - `GET /sessions/{id}/decision-plan/directives`
+- `GET /sessions/{id}/decision-plan/history`
 - `POST /sessions/{id}/decision-plan/evaluate`
+- `GET /persistence`
+- `GET /sessions/{id}/persistence`
+- `POST /persistence/flush`
+- `POST /sessions/{id}/persistence/flush`
 - `GET /policy-rules`
 - `GET /policy-rules/site-selection`
 - `GET /policy-rules/threat-response`
@@ -1426,7 +1556,11 @@ Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan
 Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan/explanation
 Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan/summary
 Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan/directives
+Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan/history
 Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/decision-plan/evaluate
+Invoke-RestMethod http://localhost:5088/persistence
+Invoke-RestMethod http://localhost:5088/sessions/alpha/persistence
+Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/persistence/flush
 Invoke-RestMethod http://localhost:5088/policy-rules
 Invoke-RestMethod http://localhost:5088/policy-rules/site-selection
 Invoke-RestMethod http://localhost:5088/policy-rules/threat-response
@@ -1613,6 +1747,14 @@ La suite cubre ahora:
 - parse y validación de `DesktopTargets`
 - parse y validación de `SessionTargetBindings`
 - validación de persistencia `JsonFile`
+- validación de `RuntimePersistence`
+- backend runtime JSON con escritura/carga y archivos corruptos tolerados
+- rehidratación de actividad, memoria operacional, decisión y ejecución
+- historial acotado de `DecisionPlan`
+- endpoints `/persistence`
+- endpoint `/sessions/{id}/persistence`
+- endpoint `/sessions/{id}/decision-plan/history`
+- rehidratación de historial de decisión después de reinicio del worker
 - errores por binding faltante, profile inexistente o variables faltantes
 - render de templates por binding
 - store runtime editable de bindings

@@ -30,6 +30,12 @@ public interface ISessionOperationalMemoryStore : ISessionOperationalMemoryReade
         SessionOperationalMemorySnapshot snapshot,
         IReadOnlyList<MemoryObservationRecord> newObservationRecords,
         CancellationToken cancellationToken);
+
+    ValueTask RestoreAsync(
+        SessionId sessionId,
+        SessionOperationalMemorySnapshot? snapshot,
+        IReadOnlyList<MemoryObservationRecord> history,
+        CancellationToken cancellationToken);
 }
 
 public interface ISessionOperationalMemoryUpdater

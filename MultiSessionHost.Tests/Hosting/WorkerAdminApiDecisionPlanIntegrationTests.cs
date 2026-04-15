@@ -124,6 +124,62 @@ public sealed class WorkerAdminApiDecisionPlanIntegrationTests
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    [Fact]
+    public async Task PersistenceEndpointsExposeStatusAndRehydratedDecisionHistory()
+    {
+        const string sessionId = "api-persistence-history";
+        var persistencePath = Path.Combine(Path.GetTempPath(), "MultiSessionHost.Tests", Guid.NewGuid().ToString("N"));
+        var options = new MultiSessionHost.Core.Configuration.SessionHostOptions
+        {
+            MaxGlobalParallelSessions = 4,
+            SchedulerIntervalMs = 50,
+            HealthLogIntervalMs = 1_000,
+            EnableAdminApi = true,
+            AdminApiUrl = "http://127.0.0.1:0",
+            DriverMode = DriverMode.NoOp,
+            EnableUiSnapshots = false,
+            RuntimePersistence = new MultiSessionHost.Core.Configuration.RuntimePersistenceOptions
+            {
+                EnableRuntimePersistence = true,
+                Mode = RuntimePersistenceMode.JsonFile,
+                BasePath = persistencePath,
+                AutoFlushAfterStateChanges = true
+            },
+            Sessions = [TestOptionsFactory.Session(sessionId, enabled: false)]
+        };
+
+        await using (var firstHarness = await WorkerHostHarness.StartAsync(options))
+        {
+            var firstClient = Assert.IsType<HttpClient>(firstHarness.Client);
+
+            (await firstClient.PostAsync($"/sessions/{sessionId}/decision-plan/evaluate", content: null)).EnsureSuccessStatusCode();
+            (await firstClient.PostAsync($"/sessions/{sessionId}/persistence/flush", content: null)).EnsureSuccessStatusCode();
+
+            var firstHistory = await firstClient.GetFromJsonAsync<DecisionPlanHistoryDto>($"/sessions/{sessionId}/decision-plan/history");
+            var firstStatus = await firstClient.GetFromJsonAsync<RuntimePersistenceSessionStatusDto>($"/sessions/{sessionId}/persistence");
+
+            Assert.NotNull(firstHistory);
+            Assert.NotEmpty(firstHistory!.Entries);
+            Assert.NotNull(firstStatus);
+            Assert.NotNull(firstStatus!.LastSavedAtUtc);
+        }
+
+        await using (var secondHarness = await WorkerHostHarness.StartAsync(options))
+        {
+            var secondClient = Assert.IsType<HttpClient>(secondHarness.Client);
+            var rehydratedPlan = await secondClient.GetFromJsonAsync<DecisionPlanDto>($"/sessions/{sessionId}/decision-plan");
+            var rehydratedHistory = await secondClient.GetFromJsonAsync<DecisionPlanHistoryDto>($"/sessions/{sessionId}/decision-plan/history");
+            var persistence = await secondClient.GetFromJsonAsync<RuntimePersistenceStatusDto>("/persistence");
+
+            Assert.NotNull(rehydratedPlan);
+            Assert.Equal(sessionId, rehydratedPlan!.SessionId);
+            Assert.NotNull(rehydratedHistory);
+            Assert.NotEmpty(rehydratedHistory!.Entries);
+            Assert.NotNull(persistence);
+            Assert.Contains(persistence!.Sessions, session => session.SessionId == sessionId && session.Rehydrated);
+        }
+    }
+
     private static Task WaitUntilRunningAsync(WorkerHostHarness harness, string sessionId) =>
         TestWait.UntilAsync(
             () => harness.Coordinator.GetSession(new SessionId(sessionId))?.Runtime.CurrentStatus == SessionStatus.Running,

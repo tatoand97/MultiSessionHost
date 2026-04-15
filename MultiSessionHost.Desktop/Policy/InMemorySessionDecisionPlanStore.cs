@@ -1,22 +1,38 @@
+using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Models;
 
 namespace MultiSessionHost.Desktop.Policy;
 
 public sealed class InMemorySessionDecisionPlanStore : ISessionDecisionPlanStore
 {
+    private sealed class SessionDecisionPlanState
+    {
+        public DecisionPlan? Current { get; set; }
+
+        public List<DecisionPlanHistoryEntry> History { get; } = [];
+    }
+
     private readonly object _gate = new();
-    private readonly Dictionary<SessionId, DecisionPlan> _plans = [];
+    private readonly int _maxHistoryEntries;
+    private readonly Dictionary<SessionId, SessionDecisionPlanState> _states = [];
+
+    public InMemorySessionDecisionPlanStore(SessionHostOptions options)
+    {
+        _maxHistoryEntries = options.RuntimePersistence.MaxDecisionHistoryEntries;
+    }
 
     public ValueTask InitializeAsync(SessionId sessionId, DecisionPlan plan, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
-            if (_plans.ContainsKey(sessionId))
+            if (_states.TryGetValue(sessionId, out var existing) && existing.Current is not null)
             {
                 throw new InvalidOperationException($"Decision plan for session '{sessionId}' is already initialized.");
             }
 
-            _plans[sessionId] = plan;
+            var state = GetOrCreateStateUnsafe(sessionId);
+            state.Current = plan;
+            AppendHistoryUnsafe(state, new DecisionPlanHistoryEntry(sessionId, plan.PlannedAtUtc, plan));
         }
 
         return ValueTask.CompletedTask;
@@ -26,7 +42,7 @@ public sealed class InMemorySessionDecisionPlanStore : ISessionDecisionPlanStore
     {
         lock (_gate)
         {
-            return ValueTask.FromResult(_plans.TryGetValue(sessionId, out var plan) ? plan : null);
+            return ValueTask.FromResult(_states.TryGetValue(sessionId, out var state) ? state.Current : null);
         }
     }
 
@@ -34,7 +50,20 @@ public sealed class InMemorySessionDecisionPlanStore : ISessionDecisionPlanStore
     {
         lock (_gate)
         {
-            return ValueTask.FromResult<IReadOnlyCollection<DecisionPlan>>(_plans.Values.ToArray());
+            return ValueTask.FromResult<IReadOnlyCollection<DecisionPlan>>(
+                _states.Values
+                    .Where(static state => state.Current is not null)
+                    .Select(static state => state.Current!)
+                    .ToArray());
+        }
+    }
+
+    public ValueTask<IReadOnlyList<DecisionPlanHistoryEntry>> GetHistoryAsync(SessionId sessionId, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            return ValueTask.FromResult<IReadOnlyList<DecisionPlanHistoryEntry>>(
+                _states.TryGetValue(sessionId, out var state) ? state.History.ToArray() : []);
         }
     }
 
@@ -42,18 +71,64 @@ public sealed class InMemorySessionDecisionPlanStore : ISessionDecisionPlanStore
     {
         lock (_gate)
         {
-            _plans[sessionId] = plan;
+            var state = GetOrCreateStateUnsafe(sessionId);
+            state.Current = plan;
+            AppendHistoryUnsafe(state, new DecisionPlanHistoryEntry(sessionId, plan.PlannedAtUtc, plan));
             return ValueTask.FromResult(plan);
         }
+    }
+
+    public ValueTask RestoreAsync(
+        SessionId sessionId,
+        DecisionPlan? latestPlan,
+        IReadOnlyList<DecisionPlanHistoryEntry> history,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+
+        lock (_gate)
+        {
+            var state = GetOrCreateStateUnsafe(sessionId);
+            state.Current = latestPlan;
+            state.History.Clear();
+            state.History.AddRange(history
+                .Where(entry => entry.SessionId == sessionId)
+                .OrderBy(static entry => entry.RecordedAtUtc)
+                .TakeLast(_maxHistoryEntries));
+        }
+
+        return ValueTask.CompletedTask;
     }
 
     public ValueTask RemoveAsync(SessionId sessionId, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
-            _plans.Remove(sessionId);
+            _states.Remove(sessionId);
         }
 
         return ValueTask.CompletedTask;
+    }
+
+    private SessionDecisionPlanState GetOrCreateStateUnsafe(SessionId sessionId)
+    {
+        if (_states.TryGetValue(sessionId, out var state))
+        {
+            return state;
+        }
+
+        state = new SessionDecisionPlanState();
+        _states[sessionId] = state;
+        return state;
+    }
+
+    private void AppendHistoryUnsafe(SessionDecisionPlanState state, DecisionPlanHistoryEntry entry)
+    {
+        state.History.Add(entry);
+
+        if (state.History.Count > _maxHistoryEntries)
+        {
+            state.History.RemoveRange(0, state.History.Count - _maxHistoryEntries);
+        }
     }
 }

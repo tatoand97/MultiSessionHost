@@ -35,6 +35,8 @@ public interface ISessionActivityStateStore
     /// </summary>
     ValueTask<IReadOnlyList<SessionActivityHistoryEntry>> GetHistoryAsync(SessionId sessionId, CancellationToken cancellationToken);
 
+    ValueTask RestoreAsync(SessionId sessionId, SessionActivitySnapshot snapshot, CancellationToken cancellationToken);
+
     /// <summary>
     /// Removes all data for a session (e.g., on session cleanup).
     /// </summary>

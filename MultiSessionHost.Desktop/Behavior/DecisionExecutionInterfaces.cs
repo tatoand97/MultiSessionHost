@@ -22,6 +22,12 @@ public interface ISessionDecisionPlanExecutionStore
     ValueTask UpsertCurrentAsync(SessionId sessionId, DecisionPlanExecutionResult executionResult, CancellationToken cancellationToken);
 
     ValueTask AppendHistoryAsync(SessionId sessionId, DecisionPlanExecutionRecord record, CancellationToken cancellationToken);
+
+    ValueTask RestoreAsync(
+        SessionId sessionId,
+        DecisionPlanExecutionResult? current,
+        IReadOnlyList<DecisionPlanExecutionRecord> history,
+        CancellationToken cancellationToken);
 }
 
 public interface IDecisionPlanExecutor

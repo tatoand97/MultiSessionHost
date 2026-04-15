@@ -3,6 +3,7 @@ using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Extraction;
+using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Risk;
 
 namespace MultiSessionHost.Desktop.Policy;
@@ -20,6 +21,7 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
     private readonly IEnumerable<IPolicy> _policies;
     private readonly IDecisionPlanAggregator _aggregator;
     private readonly ISessionDecisionPlanStore _decisionPlanStore;
+    private readonly IRuntimePersistenceCoordinator _runtimePersistenceCoordinator;
     private readonly IClock _clock;
     private readonly ILogger<DefaultPolicyEngine> _logger;
 
@@ -35,6 +37,7 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
         IEnumerable<IPolicy> policies,
         IDecisionPlanAggregator aggregator,
         ISessionDecisionPlanStore decisionPlanStore,
+        IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
         IClock clock,
         ILogger<DefaultPolicyEngine> logger)
     {
@@ -49,6 +52,7 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
         _policies = policies;
         _aggregator = aggregator;
         _decisionPlanStore = decisionPlanStore;
+        _runtimePersistenceCoordinator = runtimePersistenceCoordinator;
         _clock = clock;
         _logger = logger;
     }
@@ -63,7 +67,9 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
             {
                 Warnings = ["Policy engine is disabled."]
             };
-            return await _decisionPlanStore.UpdateAsync(sessionId, disabledPlan, cancellationToken).ConfigureAwait(false);
+            var storedDisabledPlan = await _decisionPlanStore.UpdateAsync(sessionId, disabledPlan, cancellationToken).ConfigureAwait(false);
+            await FlushIfEnabledAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            return storedDisabledPlan;
         }
 
         var context = await BuildContextAsync(sessionId, now, cancellationToken).ConfigureAwait(false);
@@ -85,8 +91,15 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
         }
 
         var plan = _aggregator.Aggregate(sessionId, now, results);
-        return await _decisionPlanStore.UpdateAsync(sessionId, plan, cancellationToken).ConfigureAwait(false);
+        var storedPlan = await _decisionPlanStore.UpdateAsync(sessionId, plan, cancellationToken).ConfigureAwait(false);
+        await FlushIfEnabledAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        return storedPlan;
     }
+
+    private Task FlushIfEnabledAsync(SessionId sessionId, CancellationToken cancellationToken) =>
+        _options.RuntimePersistence.AutoFlushAfterStateChanges
+            ? _runtimePersistenceCoordinator.FlushSessionAsync(sessionId, cancellationToken)
+            : Task.CompletedTask;
 
     private async ValueTask<PolicyEvaluationContext> BuildContextAsync(
         SessionId sessionId,
