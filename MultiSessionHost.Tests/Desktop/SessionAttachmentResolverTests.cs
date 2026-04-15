@@ -1,8 +1,8 @@
 using MultiSessionHost.Core.Configuration;
-using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Attachments;
 using MultiSessionHost.Desktop.Processes;
+using MultiSessionHost.Desktop.Targets;
 using MultiSessionHost.Desktop.Windows;
 using MultiSessionHost.Tests.Common;
 
@@ -22,9 +22,10 @@ public sealed class SessionAttachmentResolverTests
 
         var options = CreateDesktopOptions(basePort, alphaId, betaId);
         var resolver = new DefaultSessionAttachmentResolver(
-            options,
+            new ConfiguredDesktopTargetProfileResolver(options),
             new Win32ProcessLocator(),
             new Win32WindowLocator(),
+            new DefaultDesktopTargetMatcher(),
             new FakeClock(DateTimeOffset.UtcNow));
 
         var alphaAttachment = await resolver.ResolveAsync(CreateSnapshot(options, alphaId), CancellationToken.None);
@@ -32,8 +33,10 @@ public sealed class SessionAttachmentResolverTests
 
         Assert.Equal(alpha.ProcessId, alphaAttachment.Process.ProcessId);
         Assert.Equal(beta.ProcessId, betaAttachment.Process.ProcessId);
-        Assert.Equal(basePort, alphaAttachment.BaseAddress.Port);
-        Assert.Equal(basePort + 1, betaAttachment.BaseAddress.Port);
+        Assert.NotNull(alphaAttachment.BaseAddress);
+        Assert.NotNull(betaAttachment.BaseAddress);
+        Assert.Equal(basePort, alphaAttachment.BaseAddress!.Port);
+        Assert.Equal(basePort + 1, betaAttachment.BaseAddress!.Port);
         Assert.Contains(alphaId, alphaAttachment.Window.Title, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(betaId, betaAttachment.Window.Title, StringComparison.OrdinalIgnoreCase);
     }
@@ -50,9 +53,10 @@ public sealed class SessionAttachmentResolverTests
 
         var options = CreateDesktopOptions(basePort, sessionIds);
         var resolver = new DefaultSessionAttachmentResolver(
-            options,
+            new ConfiguredDesktopTargetProfileResolver(options),
             new Win32ProcessLocator(),
             new Win32WindowLocator(),
+            new DefaultDesktopTargetMatcher(),
             new FakeClock(DateTimeOffset.UtcNow));
 
         var attachments = new[]
@@ -65,23 +69,11 @@ public sealed class SessionAttachmentResolverTests
         Assert.Equal(3, attachments.Select(static attachment => attachment.Process.ProcessId).Distinct().Count());
         Assert.Equal(3, attachments.Select(static attachment => attachment.Window.WindowHandle).Distinct().Count());
         Assert.Equal(sessionIds, attachments.Select(static attachment => attachment.SessionId.Value).ToArray());
-        Assert.Equal(new[] { basePort, basePort + 1, basePort + 2 }, attachments.Select(static attachment => attachment.BaseAddress.Port).ToArray());
+        Assert.Equal(new[] { basePort, basePort + 1, basePort + 2 }, attachments.Select(static attachment => attachment.BaseAddress!.Port).ToArray());
     }
 
     private static SessionHostOptions CreateDesktopOptions(int basePort, params string[] sessionIds) =>
-        new()
-        {
-            MaxGlobalParallelSessions = sessionIds.Length,
-            SchedulerIntervalMs = 50,
-            HealthLogIntervalMs = 1_000,
-            EnableAdminApi = false,
-            AdminApiUrl = "http://localhost:5088",
-            DriverMode = DriverMode.DesktopTestApp,
-            DesktopSessionMatchingMode = DesktopSessionMatchingMode.WindowTitleAndCommandLine,
-            TestAppBasePort = basePort,
-            EnableUiSnapshots = true,
-            Sessions = sessionIds.Select(id => TestOptionsFactory.Session(id, startupDelayMs: 0)).ToArray()
-        };
+        TestOptionsFactory.CreateDesktopTestAppOptions(basePort, sessionIds.Select(id => TestOptionsFactory.Session(id, startupDelayMs: 0)).ToArray());
 
     private static SessionSnapshot CreateSnapshot(SessionHostOptions options, string sessionId)
     {

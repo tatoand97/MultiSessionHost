@@ -19,11 +19,11 @@ public sealed class SessionHostOptions
 
     public DriverMode DriverMode { get; init; } = DriverMode.NoOp;
 
-    public DesktopSessionMatchingMode DesktopSessionMatchingMode { get; init; } = DesktopSessionMatchingMode.WindowTitleAndCommandLine;
-
-    public int TestAppBasePort { get; init; } = 7100;
-
     public bool EnableUiSnapshots { get; init; }
+
+    public IReadOnlyList<DesktopTargetProfileOptions> DesktopTargets { get; init; } = [];
+
+    public IReadOnlyList<SessionTargetBindingOptions> SessionTargetBindings { get; init; } = [];
 
     public IReadOnlyList<SessionDefinitionOptions> Sessions { get; init; } = [];
 }
@@ -47,4 +47,57 @@ public sealed class SessionDefinitionOptions
     public int InitialBackoffMs { get; init; } = 1_000;
 
     public IReadOnlyList<string> Tags { get; init; } = [];
+}
+
+public sealed class DesktopTargetProfileOptions
+{
+    public string ProfileName { get; init; } = string.Empty;
+
+    public DesktopTargetKind Kind { get; init; } = DesktopTargetKind.SelfHostedHttpDesktop;
+
+    public string ProcessName { get; init; } = string.Empty;
+
+    public string? WindowTitleFragment { get; init; }
+
+    public string? CommandLineFragmentTemplate { get; init; }
+
+    public string? BaseAddressTemplate { get; init; }
+
+    public DesktopSessionMatchingMode MatchingMode { get; init; } = DesktopSessionMatchingMode.WindowTitleAndCommandLine;
+
+    public Dictionary<string, string?> Metadata { get; init; } = [];
+
+    public bool SupportsUiSnapshots { get; init; }
+
+    public bool SupportsStateEndpoint { get; init; }
+}
+
+public sealed class SessionTargetBindingOptions
+{
+    public string SessionId { get; init; } = string.Empty;
+
+    public string TargetProfileName { get; init; } = string.Empty;
+
+    public Dictionary<string, string?> Variables { get; init; } = [];
+
+    public DesktopTargetProfileOverrideOptions? Overrides { get; init; }
+}
+
+public sealed class DesktopTargetProfileOverrideOptions
+{
+    public string? ProcessName { get; init; }
+
+    public string? WindowTitleFragment { get; init; }
+
+    public string? CommandLineFragmentTemplate { get; init; }
+
+    public string? BaseAddressTemplate { get; init; }
+
+    public DesktopSessionMatchingMode? MatchingMode { get; init; }
+
+    public Dictionary<string, string?> Metadata { get; init; } = [];
+
+    public bool? SupportsUiSnapshots { get; init; }
+
+    public bool? SupportsStateEndpoint { get; init; }
 }

@@ -7,5 +7,5 @@ public sealed record DesktopSessionAttachment(
     DesktopSessionTarget Target,
     DesktopProcessInfo Process,
     DesktopWindowInfo Window,
-    Uri BaseAddress,
+    Uri? BaseAddress,
     DateTimeOffset AttachedAtUtc);

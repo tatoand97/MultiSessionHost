@@ -28,7 +28,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IHealthReporter, DefaultHealthReporter>();
         services.AddSingleton<ISessionScheduler, RoundRobinSessionScheduler>();
         services.AddSingleton<NoOpSessionDriver>();
-        services.AddSingleton<MockDesktopSessionAdapter>();
         services.AddDesktopSessionServices();
         services.AddSingleton<ISessionDriver>(
             static serviceProvider =>
@@ -38,7 +37,7 @@ public static class ServiceCollectionExtensions
                 return options.DriverMode switch
                 {
                     DriverMode.NoOp => serviceProvider.GetRequiredService<NoOpSessionDriver>(),
-                    DriverMode.DesktopTestApp => serviceProvider.GetRequiredService<DesktopTestAppSessionDriver>(),
+                    DriverMode.DesktopTargetAdapter => serviceProvider.GetRequiredService<DesktopTargetSessionDriver>(),
                     _ => throw new InvalidOperationException($"DriverMode '{options.DriverMode}' is not supported.")
                 };
             });

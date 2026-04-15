@@ -1,13 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
 using MultiSessionHost.Core.Configuration;
-using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.DependencyInjection;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Tests.Common;
 using MultiSessionHost.UiModel.Extensions;
-using MultiSessionHost.UiModel.Interfaces;
 using MultiSessionHost.UiModel.Models;
 
 namespace MultiSessionHost.Tests.Desktop;
@@ -21,19 +19,7 @@ public sealed class UiSnapshotPipelineTests
         const int basePort = 7610;
 
         await using var host = await TestDesktopAppProcessHost.StartAsync(sessionId, basePort);
-        var options = new SessionHostOptions
-        {
-            MaxGlobalParallelSessions = 1,
-            SchedulerIntervalMs = 50,
-            HealthLogIntervalMs = 1_000,
-            EnableAdminApi = false,
-            AdminApiUrl = "http://localhost:5088",
-            DriverMode = DriverMode.DesktopTestApp,
-            DesktopSessionMatchingMode = DesktopSessionMatchingMode.WindowTitleAndCommandLine,
-            TestAppBasePort = basePort,
-            EnableUiSnapshots = true,
-            Sessions = [TestOptionsFactory.Session(sessionId, startupDelayMs: 0)]
-        };
+        var options = TestOptionsFactory.CreateDesktopTestAppOptions(basePort, TestOptionsFactory.Session(sessionId, startupDelayMs: 0));
 
         var services = new ServiceCollection();
         services.AddSingleton(options);
@@ -41,17 +27,22 @@ public sealed class UiSnapshotPipelineTests
         services.AddDesktopSessionServices();
         using var provider = services.BuildServiceProvider();
 
+        var snapshot = CreateSnapshot(options, sessionId);
         var resolver = provider.GetRequiredService<ISessionAttachmentResolver>();
+        var profileResolver = provider.GetRequiredService<IDesktopTargetProfileResolver>();
         var snapshotProvider = provider.GetRequiredService<IUiSnapshotProvider>();
-        var normalizer = provider.GetRequiredService<IUiTreeNormalizer>();
-        var planner = provider.GetRequiredService<IWorkItemPlanner>();
+        var normalizerResolver = provider.GetRequiredService<IUiTreeNormalizerResolver>();
+        var plannerResolver = provider.GetRequiredService<IWorkItemPlannerResolver>();
         var selector = provider.GetRequiredService<IUiNodeSelector>();
-        var attachment = await resolver.ResolveAsync(CreateSnapshot(options, sessionId), CancellationToken.None);
+        var attachment = await resolver.ResolveAsync(snapshot, CancellationToken.None);
+        var context = profileResolver.Resolve(snapshot);
+        var normalizer = normalizerResolver.Resolve(context);
+        var planner = plannerResolver.Resolve(context);
         var envelope = await snapshotProvider.CaptureAsync(attachment, CancellationToken.None);
 
         var metadata = new UiSnapshotMetadata(
             sessionId,
-            "DesktopTestApp",
+            context.Profile.ProfileName,
             envelope.CapturedAtUtc,
             envelope.Process.ProcessId,
             envelope.Window.WindowHandle,

@@ -1,6 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using MultiSessionHost.Core.Configuration;
-using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Tests.Common;
@@ -20,23 +18,10 @@ public sealed class SessionCoordinatorUiTests
         await using var alphaApp = await TestDesktopAppProcessHost.StartAsync(alphaId, basePort);
         await using var betaApp = await TestDesktopAppProcessHost.StartAsync(betaId, basePort + 1);
 
-        var options = new SessionHostOptions
-        {
-            MaxGlobalParallelSessions = 2,
-            SchedulerIntervalMs = 50,
-            HealthLogIntervalMs = 1_000,
-            EnableAdminApi = false,
-            AdminApiUrl = "http://localhost:5088",
-            DriverMode = DriverMode.DesktopTestApp,
-            DesktopSessionMatchingMode = DesktopSessionMatchingMode.WindowTitleAndCommandLine,
-            TestAppBasePort = basePort,
-            EnableUiSnapshots = true,
-            Sessions =
-            [
-                TestOptionsFactory.Session(alphaId, startupDelayMs: 0),
-                TestOptionsFactory.Session(betaId, startupDelayMs: 0)
-            ]
-        };
+        var options = TestOptionsFactory.CreateDesktopTestAppOptions(
+            basePort,
+            TestOptionsFactory.Session(alphaId, startupDelayMs: 0),
+            TestOptionsFactory.Session(betaId, startupDelayMs: 0));
 
         await using var harness = await WorkerHostHarness.StartAsync(options);
         var alphaSessionId = new SessionId(alphaId);

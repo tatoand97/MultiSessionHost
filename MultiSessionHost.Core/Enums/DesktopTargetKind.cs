@@ -1,0 +1,7 @@
+namespace MultiSessionHost.Core.Enums;
+
+public enum DesktopTargetKind
+{
+    SelfHostedHttpDesktop = 0,
+    DesktopTestApp = 1
+}
