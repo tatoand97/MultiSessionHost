@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
@@ -28,6 +29,10 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly ISessionSemanticExtractionStore _semanticExtractionStore;
     private readonly IRiskClassificationPipeline _riskClassificationPipeline;
     private readonly IPolicyEngine _policyEngine;
+    private readonly ISessionDecisionPlanStore _sessionDecisionPlanStore;
+    private readonly ISessionRiskAssessmentStore _sessionRiskAssessmentStore;
+    private readonly ISessionActivityStateEvaluator _activityStateEvaluator;
+    private readonly ISessionActivityStateStore _activityStateStore;
     private readonly IClock _clock;
     private readonly ILogger<DefaultSessionUiRefreshService> _logger;
 
@@ -45,6 +50,10 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         ISessionSemanticExtractionStore semanticExtractionStore,
         IRiskClassificationPipeline riskClassificationPipeline,
         IPolicyEngine policyEngine,
+        ISessionDecisionPlanStore sessionDecisionPlanStore,
+        ISessionRiskAssessmentStore sessionRiskAssessmentStore,
+        ISessionActivityStateEvaluator activityStateEvaluator,
+        ISessionActivityStateStore activityStateStore,
         IClock clock,
         ILogger<DefaultSessionUiRefreshService> logger)
     {
@@ -61,6 +70,10 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _semanticExtractionStore = semanticExtractionStore;
         _riskClassificationPipeline = riskClassificationPipeline;
         _policyEngine = policyEngine;
+        _sessionDecisionPlanStore = sessionDecisionPlanStore;
+        _sessionRiskAssessmentStore = sessionRiskAssessmentStore;
+        _activityStateEvaluator = activityStateEvaluator;
+        _activityStateStore = activityStateStore;
         _clock = clock;
         _logger = logger;
     }
@@ -198,6 +211,24 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 cancellationToken).ConfigureAwait(false);
 
             await _policyEngine.EvaluateAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
+
+            var updatedDomainState = await _sessionDomainStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Domain state for session '{snapshot.SessionId}' was not refreshed.");
+            var currentDecisionPlan = await _sessionDecisionPlanStore.GetLatestAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Decision plan for session '{snapshot.SessionId}' was not generated.");
+            var currentRiskAssessment = await _sessionRiskAssessmentStore.GetLatestAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
+            var previousActivitySnapshot = await _activityStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
+
+            var activityEvaluationContext = new SessionActivityEvaluationContext(
+                snapshot.SessionId,
+                updatedDomainState,
+                currentDecisionPlan,
+                currentRiskAssessment,
+                previousActivitySnapshot,
+                _clock.UtcNow);
+
+            var activityEvaluationResult = await _activityStateEvaluator.EvaluateAsync(activityEvaluationContext, cancellationToken).ConfigureAwait(false);
+            await _activityStateStore.UpsertAsync(snapshot.SessionId, activityEvaluationResult.NewSnapshot, cancellationToken).ConfigureAwait(false);
 
             return await _sessionUiStateStore.UpdateAsync(
                 snapshot.SessionId,

@@ -2,6 +2,7 @@ using System.Text.Json;
 using MultiSessionHost.Contracts.Coordination;
 using MultiSessionHost.Contracts.Sessions;
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
@@ -666,4 +667,30 @@ public static class DtoMappingExtensions
 
         return JsonSerializer.Deserialize<JsonElement>(rawSnapshotJson);
     }
+
+    public static SessionActivitySnapshotDto ToDto(this SessionActivitySnapshot snapshot) =>
+        new(
+            snapshot.SessionId.Value,
+            snapshot.CurrentState.ToString(),
+            snapshot.PreviousState?.ToString(),
+            snapshot.LastTransitionAtUtc,
+            snapshot.LastReasonCode,
+            snapshot.LastReason,
+            snapshot.LastMetadata,
+            snapshot.History.Select(static entry => entry.ToDto()).ToArray(),
+            snapshot.IsTerminal);
+
+    public static SessionActivityHistoryEntryDto ToDto(this SessionActivityHistoryEntry entry) =>
+        new(
+            entry.FromState.ToString(),
+            entry.ToState.ToString(),
+            entry.ReasonCode,
+            entry.Reason,
+            entry.OccurredAtUtc,
+            entry.Metadata);
+
+    public static SessionActivityHistoryDto ToHistoryDto(this SessionActivitySnapshot snapshot) =>
+        new(
+            snapshot.SessionId.Value,
+            snapshot.History.Select(static entry => entry.ToDto()).ToArray());
 }

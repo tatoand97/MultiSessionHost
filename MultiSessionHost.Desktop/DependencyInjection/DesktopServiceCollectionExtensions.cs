@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Enums;
+using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Adapters;
 using MultiSessionHost.Desktop.Attachments;
 using MultiSessionHost.Desktop.Bindings;
@@ -106,6 +107,8 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<IDecisionPlanAggregator, DefaultDecisionPlanAggregator>();
         services.AddSingleton<ISessionDecisionPlanStore, InMemorySessionDecisionPlanStore>();
         services.AddSingleton<IPolicyEngine, DefaultPolicyEngine>();
+        services.AddSingleton<ISessionActivityStateStore, InMemorySessionActivityStateStore>();
+        services.AddSingleton<ISessionActivityStateEvaluator, DefaultSessionActivityStateEvaluator>();
         services.AddSingleton<ISessionUiRefreshService, DefaultSessionUiRefreshService>();
         services.AddSingleton<SelfHostedHttpUiTreeNormalizer>();
         services.AddSingleton<TestAppUiTreeNormalizer>();

@@ -154,6 +154,8 @@ Worker session
   -> decision plan aggregator
   -> DecisionPlan
   -> decision plan store
+  -> activity state evaluation
+  -> SessionActivityStateStore
   -> Admin API inspection
 ```
 
@@ -642,6 +644,201 @@ Esto permite que `alpha` y `beta` sigan corriendo en paralelo cuando apuntan a t
 `ExecutionCoordination.DefaultTargetCooldownMs` agrega una pausa mínima entre operaciones sobre la misma key de target. El cooldown se aplica después de liberar la lease anterior del target. Un waiter por cooldown no hace busy-wait: el coordinator programa un wake-up async cuando expira la ventana.
 
 El default es `0`, por lo que no hay cooldown salvo que se configure.
+
+## Session Activity Lifecycle State Machine
+
+Después de que el policy engine produce un `DecisionPlan`, el evaluador de actividad determina el estado del ciclo de vida de la sesión. Este es un modelo explícito, de primera clase, que explica la sesión como `estado + transición + razón + timestamp`, separado de `SessionDomainState` y `DecisionPlan`.
+
+### Estados de actividad
+
+El evaluador mantiene la sesión en uno de 11 estados:
+
+- **Idle**: sin actividad, sin directivas accionables.
+- **SelectingWorksite**: plan indica fase de selección de sitio de trabajo.
+- **Traveling**: navegación en progreso activo hacia destino.
+- **Arriving**: navegación completada, en destino.
+- **WaitingForSpawn**: en ubicación, esperando oportunidad de objetivo/acción.
+- **Engaging**: combate activo o acoplamiento de objetivo.
+- **MonitoringRisk**: actividad en curso, riesgo presente, sin estado más fuerte aplicable.
+- **Withdrawing**: directiva de retiro crítico de seguridad activa.
+- **Hiding**: directiva `PauseActivity` para mitigación de riesgo (búsqueda de seguridad).
+- **Recovering**: recuperación de estado anterior de bloqueo (degradación de recurso/combate).
+- **Faulted**: error terminal, sesión/runtime/dominio degradado.
+
+### Precedencia de evaluación
+
+El evaluador sigue un orden explícito de precedencia (se evalúan en este orden; primera coincidencia gana):
+
+1. **Faulted** – indica error runtime o estado de sesión degradado
+2. **Withdrawing** – `DecisionPlan` contiene directiva `Withdraw` O indicador crítico de riesgo
+3. **Hiding** – `DecisionPlan` contiene directiva `PauseActivity`
+4. **Recovering** – ruta de recuperación degradada después de Withdrawing/Hiding
+5. **Traveling** – navegación en progreso
+6. **Arriving** – navegación completada, contexto de destino detectado
+7. **WaitingForSpawn** – en ubicación, sin acoplamiento aún, plan es observar/esperar
+8. **Engaging** – combate/acoplamiento de objetivo activo
+9. **MonitoringRisk** – actividad en curso, riesgo presente
+10. **SelectingWorksite** – fase de selección de sitio activa
+11. **Idle** – fallback cuando ningún estado más fuerte aplica
+
+### Evaluación determinística
+
+La evaluación consume:
+
+- `SessionId`
+- `SessionDomainState` actual
+- `RiskAssessmentResult` si existe
+- `DecisionPlan` más reciente
+- snapshot de actividad anterior (si existe)
+- timestamp actual
+
+Produce:
+
+- nuevo `SessionActivitySnapshot` con estado actual, anterior, razón de transición y metadata
+- `SessionActivityTransition` si el estado cambió
+- `ReasonCode` y `Reason` explicables
+- metadata dict con señales de dominio que motivaron la decisión
+
+La evaluación es **determinística**: los mismos inputs siempre producen el mismo estado.
+
+### Transiciones e historial
+
+Cada transición se registra con:
+
+- `FromState` y `ToState`
+- `ReasonCode` genérico (ej: `navigation-in-progress`, `active-engagement-detected`, `decision-plan-withdraw`)
+- `Reason` legible
+- `OccurredAtUtc` timestamp
+- metadata dict
+
+El historial es **append-only** y **acotado**: se conservan hasta 1000 transiciones más recientes por sesión para evitar crecimiento de memoria ilimitado.
+
+Las reevaluaciones con el mismo estado **no crean transiciones duplicadas**: si el estado no cambió, solo se actualiza el snapshot, pero no se añade al historial.
+
+### Integración en el flujo de refresh
+
+Después de que se completa el pipeline de decisión:
+
+```text
+ui refresh
+  -> semantic extraction
+  -> risk classification
+  -> domain projection
+  -> policy engine
+  -> decision plan store
+  -> activity state evaluation    [NUEVO]
+  -> activity state store         [NUEVO]
+  -> Admin API inspection
+```
+
+La evaluación ocurre en `DefaultSessionUiRefreshService.ProjectAsync()` después de que el policy engine produce el `DecisionPlan`, usando:
+
+- `ISessionActivityStateEvaluator` para calcular el nuevo estado
+- `ISessionActivityStateStore` para persistir el snapshot y el historial
+
+### Admin API de actividad
+
+Tres nuevos endpoints inspeccionan el estado y historial de actividad:
+
+- `GET /activity` – devuelve snapshots de actividad de todas las sesiones
+- `GET /sessions/{id}/activity` – snapshot actual de actividad para la sesión `{id}`
+- `GET /sessions/{id}/activity/history` – historial de transiciones para la sesión `{id}`, acotado a las últimas 100 entradas
+
+Respuesta de ejemplo para `GET /sessions/alpha/activity`:
+
+```json
+{
+  "sessionId": "alpha",
+  "currentState": "Engaging",
+  "previousState": "WaitingForSpawn",
+  "lastTransitionAtUtc": "2025-01-15T14:32:18.567Z",
+  "reasonCode": "active-engagement-detected",
+  "reason": "Target is actively engaged and combat state indicates hostility.",
+  "metadata": {
+    "source_directives": "['Prioritize']",
+    "active_target": "enemy_fighter",
+    "threat_count": 3,
+    "threat_severity": "Critical",
+    "source_risk_policy": "ThreatResponse"
+  },
+  "isTerminal": false
+}
+```
+
+Respuesta de ejemplo para `GET /sessions/alpha/activity/history`:
+
+```json
+{
+  "sessionId": "alpha",
+  "entries": [
+    {
+      "fromState": "Idle",
+      "toState": "SelectingWorksite",
+      "reasonCode": "decision-plan-select-site",
+      "reason": "Decision plan contains SelectSite directive.",
+      "occurredAtUtc": "2025-01-15T14:25:01.123Z",
+      "metadata": {
+        "source_directives": "['SelectSite']",
+        "navigation_status": "Idle"
+      }
+    },
+    {
+      "fromState": "SelectingWorksite",
+      "toState": "Traveling",
+      "reasonCode": "navigation-in-progress",
+      "reason": "Navigation state indicates active transit.",
+      "occurredAtUtc": "2025-01-15T14:28:45.456Z",
+      "metadata": {
+        "destination": "primary-worksite",
+        "progress_percent": 45
+      }
+    },
+    {
+      "fromState": "Traveling",
+      "toState": "Arriving",
+      "reasonCode": "navigation-arrival-detected",
+      "reason": "Navigation just completed; now at destination.",
+      "occurredAtUtc": "2025-01-15T14:31:02.789Z",
+      "metadata": {
+        "destination": "primary-worksite",
+        "location_context": "worksite-entrance"
+      }
+    },
+    {
+      "fromState": "Arriving",
+      "toState": "WaitingForSpawn",
+      "reasonCode": "no-actionable-directives",
+      "reason": "At location, no engagement or navigation directive active.",
+      "occurredAtUtc": "2025-01-15T14:31:15.234Z",
+      "metadata": {
+        "plan_status": "WaitingForUpdate"
+      }
+    },
+    {
+      "fromState": "WaitingForSpawn",
+      "toState": "Engaging",
+      "reasonCode": "active-engagement-detected",
+      "reason": "Target is actively engaged and combat state indicates hostility.",
+      "occurredAtUtc": "2025-01-15T14:32:18.567Z",
+      "metadata": {
+        "active_target": "enemy_fighter",
+        "threat_count": 3,
+        "threat_severity": "Critical"
+      }
+    }
+  ],
+  "count": 5
+}
+```
+
+### Garantías e invariantes
+
+- **Por sesión**: cada `SessionId` tiene su propio snapshot y historial, aislado mediante lock.
+- **Thread-safe**: el store usa sincronización por lock para mantener aislamiento cuando múltiples threads acceden a datos por sesión.
+- **Determinístico**: la misma entrada (domain, risk, plan, previous state) siempre produce el mismo nuevo estado.
+- **No reemplaza**: este modelo explica el ciclo de vida de la actividad; no reemplaza `SessionDomainState`, `RiskAssessmentResult` ni `DecisionPlan`.
+- **Append-only history**: las transiciones solo se añaden cuando el estado cambia; historial acotado evita crescimiento ilimitado.
+- **Explícito y centralizado**: toda lógica de transición vive en `ISessionActivityStateEvaluator`; evita decisiones de estado esparcidas entre políticas.
 
 ## Store de bindings editable en runtime
 
