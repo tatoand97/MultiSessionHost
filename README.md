@@ -20,6 +20,22 @@ La integración de escritorio ya no está acoplada a `MultiSessionHost.TestDeskt
 
 ## Arquitectura actual
 
+### Consola de administración
+
+`MultiSessionHost.AdminDesktop` es una consola WPF de operador sobre la Admin API HTTP existente. No llama al worker por internals ni reemplaza el runtime: consume el mismo surface administrativo que ya expone el proceso worker en el mismo contenedor DI.
+
+Inicio rápido:
+
+- `dotnet run --project .\MultiSessionHost.AdminDesktop\MultiSessionHost.AdminDesktop.csproj`
+- Configura la base URL de la Admin API en la barra superior, por ejemplo `http://127.0.0.1:5000`
+
+La consola permite inspeccionar sesiones, target/binding, UI, semántica, riesgo, dominio, actividad, decisión, ejecución, memoria, persistencia, coordinación y policy control. También expone acciones operativas como refresh, evaluate, execute, pause/resume de runtime, pause/resume de policy, comandos semánticos y edición de bindings.
+
+Distinción importante:
+
+- `pause/resume` afecta al runtime de la sesión.
+- `pause-policy/resume-policy` afecta solo la policy por sesión y esa decisión se persiste.
+
 ### Principios
 
 - `MultiSessionHost.Worker` sigue siendo el único proceso principal del runtime.

@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MultiSessionHost.AdminApi\MultiSessionHost.AdminApi.csproj" />
+    <ProjectReference Include="..\MultiSessionHost.AdminDesktop\MultiSessionHost.AdminDesktop.csproj" />
     <ProjectReference Include="..\MultiSessionHost.Contracts\MultiSessionHost.Contracts.csproj" />
     <ProjectReference Include="..\MultiSessionHost.Core\MultiSessionHost.Core.csproj" />
     <ProjectReference Include="..\MultiSessionHost.Desktop\MultiSessionHost.Desktop.csproj" />
