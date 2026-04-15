@@ -71,6 +71,12 @@ public sealed class TestDesktopAppProcessHost : IAsyncDisposable
         await Client.GetFromJsonAsync<TestDesktopAppState>("state").ConfigureAwait(false)
         ?? throw new InvalidOperationException($"The test desktop app '{SessionId}' returned an empty state payload.");
 
+    public async Task SetArtificialDelayAsync(int milliseconds)
+    {
+        using var response = await Client.PostAsJsonAsync("test/delay", new { milliseconds }).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+    }
+
     public async ValueTask DisposeAsync()
     {
         Client.Dispose();

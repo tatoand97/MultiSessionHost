@@ -169,4 +169,41 @@ public sealed class SessionHostOptionsValidationTests
         Assert.False(valid);
         Assert.Contains("BindingStoreFilePath", error);
     }
+
+    [Fact]
+    public void TryValidate_FailsWhenExecutionCoordinationCooldownIsNegative()
+    {
+        var options = new SessionHostOptions
+        {
+            ExecutionCoordination = new ExecutionCoordinationOptions
+            {
+                DefaultTargetCooldownMs = -1
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("DefaultTargetCooldownMs", error);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenGlobalExecutionCoordinationLimitIsInvalid()
+    {
+        var options = new SessionHostOptions
+        {
+            ExecutionCoordination = new ExecutionCoordinationOptions
+            {
+                EnableGlobalCoordination = true,
+                MaxConcurrentGlobalTargetOperations = 0
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("MaxConcurrentGlobalTargetOperations", error);
+    }
 }

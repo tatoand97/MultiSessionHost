@@ -12,7 +12,10 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
 {
     private readonly ISessionCoordinator _sessionCoordinator;
     private readonly IDesktopTargetProfileResolver _targetProfileResolver;
-    private readonly ISessionAttachmentRuntime _sessionAttachmentRuntime;
+    private readonly ISessionAttachmentOperations _attachmentOperations;
+    private readonly IExecutionCoordinator _executionCoordinator;
+    private readonly IExecutionResourceResolver _executionResourceResolver;
+    private readonly ISessionUiRefreshService _uiRefreshService;
     private readonly IUiActionResolver _actionResolver;
     private readonly IReadOnlyDictionary<DesktopTargetKind, IUiInteractionAdapter> _interactionAdapters;
     private readonly IClock _clock;
@@ -21,7 +24,10 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
     public UiCommandExecutor(
         ISessionCoordinator sessionCoordinator,
         IDesktopTargetProfileResolver targetProfileResolver,
-        ISessionAttachmentRuntime sessionAttachmentRuntime,
+        ISessionAttachmentOperations attachmentOperations,
+        IExecutionCoordinator executionCoordinator,
+        IExecutionResourceResolver executionResourceResolver,
+        ISessionUiRefreshService uiRefreshService,
         IUiActionResolver actionResolver,
         IEnumerable<IUiInteractionAdapter> interactionAdapters,
         IClock clock,
@@ -29,7 +35,10 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
     {
         _sessionCoordinator = sessionCoordinator;
         _targetProfileResolver = targetProfileResolver;
-        _sessionAttachmentRuntime = sessionAttachmentRuntime;
+        _attachmentOperations = attachmentOperations;
+        _executionCoordinator = executionCoordinator;
+        _executionResourceResolver = executionResourceResolver;
+        _uiRefreshService = uiRefreshService;
         _actionResolver = actionResolver;
         _clock = clock;
         _logger = logger;
@@ -49,11 +58,6 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
                 return Fail(command, $"Session '{command.SessionId}' was not found.", UiCommandFailureCodes.SessionNotFound);
             }
 
-            if (command.Kind == UiCommandKind.RefreshUi)
-            {
-                return await RefreshUiAsync(command, cancellationToken).ConfigureAwait(false);
-            }
-
             if (session.Runtime.CurrentStatus is not (SessionStatus.Starting or SessionStatus.Running or SessionStatus.Paused))
             {
                 return Fail(
@@ -62,11 +66,29 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
                     UiCommandFailureCodes.SessionNotActive);
             }
 
+            var context = _targetProfileResolver.Resolve(session);
+            var request = _executionResourceResolver.CreateForUiCommand(session, context, command);
+
+            await using var lease = await _executionCoordinator.AcquireAsync(request, cancellationToken).ConfigureAwait(false);
+            var attachment = await _attachmentOperations.EnsureAttachedAsync(session, context, cancellationToken).ConfigureAwait(false);
+
+            if (command.Kind == UiCommandKind.RefreshUi)
+            {
+                return await RefreshUiAsync(command, session, context, attachment, cancellationToken).ConfigureAwait(false);
+            }
+
             var uiState = _sessionCoordinator.GetSessionUiState(command.SessionId);
 
             if (uiState?.ProjectedTree is null)
             {
-                uiState = await _sessionCoordinator.RefreshSessionUiAsync(command.SessionId, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    uiState = await _uiRefreshService.RefreshAsync(session, context, attachment, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    return Fail(command, exception.Message, UiCommandFailureCodes.UiRefreshFailed);
+                }
             }
 
             if (uiState.ProjectedTree is null)
@@ -76,9 +98,6 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
                     $"Session '{command.SessionId}' does not have projected UI state available.",
                     UiCommandFailureCodes.UiStateUnavailable);
             }
-
-            var context = _targetProfileResolver.Resolve(session);
-            var attachment = await _sessionAttachmentRuntime.EnsureAttachedAsync(session, cancellationToken).ConfigureAwait(false);
 
             var resolvedAction = _actionResolver.Resolve(uiState.ProjectedTree, command);
             var interactionAdapter = ResolveInteractionAdapter(context.Profile.Kind);
@@ -95,7 +114,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
                     interactionResult.FailureCode ?? UiCommandFailureCodes.InteractionFailed);
             }
 
-            return await RefreshUiAfterSuccessAsync(command, interactionResult, cancellationToken).ConfigureAwait(false);
+            return await RefreshUiAfterSuccessAsync(command, session, context, attachment, interactionResult, cancellationToken).ConfigureAwait(false);
         }
         catch (UiCommandFailureException exception)
         {
@@ -108,32 +127,22 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
         }
     }
 
-    private async Task<UiCommandResult> RefreshUiAsync(UiCommand command, CancellationToken cancellationToken)
+    private async Task<UiCommandResult> RefreshUiAsync(
+        UiCommand command,
+        SessionSnapshot session,
+        ResolvedDesktopTargetContext context,
+        DesktopSessionAttachment attachment,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var state = await _sessionCoordinator.RefreshSessionUiAsync(command.SessionId, cancellationToken).ConfigureAwait(false);
-            var message = state.LastRefreshError is null
-                ? $"UI refresh completed for session '{command.SessionId}'."
-                : $"UI refresh completed with error for session '{command.SessionId}': {state.LastRefreshError}";
-
-            if (state.LastRefreshError is not null)
-            {
-                return UiCommandResult.Failure(
-                    command.SessionId,
-                    command.NodeId,
-                    command.Kind,
-                    message,
-                    _clock.UtcNow,
-                    UiCommandFailureCodes.UiRefreshFailed,
-                    updatedUiStateAvailable: state.ProjectedTree is not null);
-            }
+            var state = await _uiRefreshService.RefreshAsync(session, context, attachment, cancellationToken).ConfigureAwait(false);
 
             return UiCommandResult.Success(
                 command.SessionId,
                 command.NodeId,
                 command.Kind,
-                message,
+                $"UI refresh completed for session '{command.SessionId}'.",
                 _clock.UtcNow,
                 updatedUiStateAvailable: state.ProjectedTree is not null);
         }
@@ -145,12 +154,15 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
 
     private async Task<UiCommandResult> RefreshUiAfterSuccessAsync(
         UiCommand command,
+        SessionSnapshot session,
+        ResolvedDesktopTargetContext context,
+        DesktopSessionAttachment attachment,
         UiInteractionResult interactionResult,
         CancellationToken cancellationToken)
     {
         try
         {
-            var state = await _sessionCoordinator.RefreshSessionUiAsync(command.SessionId, cancellationToken).ConfigureAwait(false);
+            var state = await _uiRefreshService.RefreshAsync(session, context, attachment, cancellationToken).ConfigureAwait(false);
             return UiCommandResult.Success(
                 command.SessionId,
                 command.NodeId,

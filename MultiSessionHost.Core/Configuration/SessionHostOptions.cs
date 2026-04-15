@@ -25,6 +25,8 @@ public sealed class SessionHostOptions
 
     public string? BindingStoreFilePath { get; init; }
 
+    public ExecutionCoordinationOptions ExecutionCoordination { get; init; } = new();
+
     public IReadOnlyList<DesktopTargetProfileOptions> DesktopTargets { get; init; } = [];
 
     public IReadOnlyList<SessionTargetBindingOptions> SessionTargetBindings { get; init; } = [];

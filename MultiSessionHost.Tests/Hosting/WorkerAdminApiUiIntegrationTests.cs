@@ -135,7 +135,7 @@ public sealed class WorkerAdminApiUiIntegrationTests
             basePort,
             true,
             "http://127.0.0.1:0",
-            TestOptionsFactory.Session(alphaId, startupDelayMs: 0));
+            TestOptionsFactory.Session(alphaId, tickIntervalMs: 60_000, startupDelayMs: 0));
 
         await using var harness = await WorkerHostHarness.StartAsync(options);
         var client = Assert.IsType<HttpClient>(harness.Client);

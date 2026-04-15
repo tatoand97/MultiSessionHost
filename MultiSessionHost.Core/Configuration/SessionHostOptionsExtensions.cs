@@ -77,6 +77,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidateExecutionCoordination(options.ExecutionCoordination, out error))
+        {
+            return false;
+        }
+
         if (options.Sessions.Count == 0)
         {
             error = "At least one session must be configured.";
@@ -461,4 +466,59 @@ public static class SessionHostOptionsExtensions
 
     private static bool RequiresHttpBaseAddress(DesktopTargetKind kind) =>
         kind is DesktopTargetKind.SelfHostedHttpDesktop or DesktopTargetKind.DesktopTestApp;
+
+    private static bool TryValidateExecutionCoordination(
+        ExecutionCoordinationOptions options,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.DefaultTargetCooldownMs < 0)
+        {
+            error = "ExecutionCoordination.DefaultTargetCooldownMs cannot be negative.";
+            return false;
+        }
+
+        if (options.MaxConcurrentGlobalTargetOperations <= 0)
+        {
+            error = "ExecutionCoordination.MaxConcurrentGlobalTargetOperations must be greater than zero.";
+            return false;
+        }
+
+        if (options.WaitWarningThresholdMs < 0)
+        {
+            error = "ExecutionCoordination.WaitWarningThresholdMs cannot be negative.";
+            return false;
+        }
+
+        if (!TryValidateExecutionOperationKinds(options.SessionExclusiveOperationKinds, nameof(ExecutionCoordinationOptions.SessionExclusiveOperationKinds), out error) ||
+            !TryValidateExecutionOperationKinds(options.TargetExclusiveOperationKinds, nameof(ExecutionCoordinationOptions.TargetExclusiveOperationKinds), out error) ||
+            !TryValidateExecutionOperationKinds(options.GlobalExclusiveOperationKinds, nameof(ExecutionCoordinationOptions.GlobalExclusiveOperationKinds), out error))
+        {
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateExecutionOperationKinds(
+        IReadOnlyList<ExecutionOperationKind> values,
+        string propertyName,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+
+        foreach (var value in values)
+        {
+            if (!Enum.IsDefined(value))
+            {
+                error = $"ExecutionCoordination.{propertyName} contains an invalid execution operation kind '{value}'.";
+                return false;
+            }
+        }
+
+        error = null;
+        return true;
+    }
 }

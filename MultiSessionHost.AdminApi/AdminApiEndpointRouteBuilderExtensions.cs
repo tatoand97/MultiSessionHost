@@ -132,6 +132,52 @@ public static class AdminApiEndpointRouteBuilderExtensions
             });
 
         endpoints.MapGet(
+            "/coordination",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IExecutionCoordinator executionCoordinator,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var snapshot = await executionCoordinator.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(snapshot.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/coordination/sessions/{id}",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                IExecutionCoordinator executionCoordinator,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var snapshot = await executionCoordinator.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(snapshot.ToDto(sessionId));
+            });
+
+        endpoints.MapGet(
             "/sessions",
             async Task<IResult> (HttpContext httpContext, IAdminAuthorizationPolicy authorizationPolicy, ISessionCoordinator sessionCoordinator, CancellationToken cancellationToken) =>
             {

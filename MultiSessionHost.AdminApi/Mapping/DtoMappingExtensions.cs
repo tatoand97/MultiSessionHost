@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MultiSessionHost.Contracts.Coordination;
 using MultiSessionHost.Contracts.Sessions;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Bindings;
@@ -176,6 +177,86 @@ public static class DtoMappingExtensions
             result.ExecutedAtUtc,
             result.UpdatedUiStateAvailable,
             result.FailureCode);
+
+    public static ExecutionCoordinationSnapshotDto ToDto(this ExecutionCoordinationSnapshot snapshot) =>
+        snapshot.ToDto(sessionId: null);
+
+    public static ExecutionCoordinationSnapshotDto ToDto(this ExecutionCoordinationSnapshot snapshot, SessionId sessionId) =>
+        snapshot.ToDto((SessionId?)sessionId);
+
+    private static ExecutionCoordinationSnapshotDto ToDto(this ExecutionCoordinationSnapshot snapshot, SessionId? sessionId)
+    {
+        var activeExecutions = snapshot.ActiveExecutions
+            .Where(entry => sessionId is null || entry.Lease.SessionId == sessionId)
+            .ToArray();
+        var waitingExecutions = snapshot.WaitingExecutions
+            .Where(entry => sessionId is null || entry.Request.SessionId == sessionId)
+            .ToArray();
+        var resourceKeys = activeExecutions
+            .SelectMany(static entry => entry.Lease.ResourceSet.GetAllKeys())
+            .Concat(waitingExecutions.SelectMany(static entry => entry.Request.ResourceSet.GetAllKeys()))
+            .Concat(waitingExecutions.SelectMany(static entry => entry.BlockingResourceKeys))
+            .ToHashSet();
+        var resources = sessionId is null
+            ? snapshot.Resources
+            : snapshot.Resources.Where(resource => resourceKeys.Contains(resource.ResourceKey)).ToArray();
+
+        return new ExecutionCoordinationSnapshotDto(
+            snapshot.CapturedAtUtc,
+            activeExecutions.Select(static entry => entry.ToDto()).ToArray(),
+            waitingExecutions.Select(static entry => entry.ToDto()).ToArray(),
+            resources.Select(static resource => resource.ToDto()).ToArray(),
+            snapshot.TotalAcquisitions,
+            snapshot.AverageWaitDurationMs,
+            snapshot.CooldownHitCount,
+            snapshot.ContentionByScope.Select(static stat => new ExecutionContentionStatDto(stat.Scope.ToString(), stat.ContentionHits)).ToArray());
+    }
+
+    private static ActiveExecutionEntryDto ToDto(this ActiveExecutionEntry entry) =>
+        new(
+            entry.Lease.ExecutionId,
+            entry.Lease.SessionId.Value,
+            entry.Lease.OperationKind.ToString(),
+            entry.Lease.WorkItemKind?.ToString(),
+            entry.Lease.UiCommandKind?.ToString(),
+            entry.Lease.RequestedAtUtc,
+            entry.Lease.AcquiredAtUtc,
+            entry.Lease.WaitDuration.TotalMilliseconds,
+            entry.RunningDuration.TotalMilliseconds,
+            entry.Lease.ResourceSet.ToDto(),
+            entry.Lease.Description);
+
+    private static WaitingExecutionEntryDto ToDto(this WaitingExecutionEntry entry) =>
+        new(
+            entry.Request.ExecutionId,
+            entry.Request.SessionId.Value,
+            entry.Request.OperationKind.ToString(),
+            entry.Request.WorkItemKind?.ToString(),
+            entry.Request.UiCommandKind?.ToString(),
+            entry.Request.RequestedAtUtc,
+            entry.WaitDuration.TotalMilliseconds,
+            entry.Request.ResourceSet.ToDto(),
+            entry.BlockingResourceKeys.Select(static key => key.ToDto()).ToArray(),
+            entry.Request.Description);
+
+    private static ExecutionResourceStateDto ToDto(this ExecutionResourceState resource) =>
+        new(
+            resource.ResourceKey.ToDto(),
+            resource.Capacity,
+            resource.ActiveExecutionIds,
+            resource.WaitingExecutionIds,
+            resource.LastCompletedAtUtc,
+            resource.CooldownUntilUtc);
+
+    private static ExecutionResourceSetDto ToDto(this ExecutionResourceSet resourceSet) =>
+        new(
+            resourceSet.SessionResourceKey.ToDto(),
+            resourceSet.TargetResourceKey?.ToDto(),
+            resourceSet.GlobalResourceKey?.ToDto(),
+            resourceSet.TargetCooldown.TotalMilliseconds);
+
+    private static ExecutionResourceKeyDto ToDto(this ExecutionResourceKey resourceKey) =>
+        new(resourceKey.Scope.ToString(), resourceKey.Value);
 
     private static JsonElement? ParseRawSnapshot(string? rawSnapshotJson)
     {

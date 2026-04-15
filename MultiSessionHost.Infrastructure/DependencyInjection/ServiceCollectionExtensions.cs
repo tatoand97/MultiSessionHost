@@ -27,6 +27,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWorkQueue, ChannelBasedWorkQueue>();
         services.AddSingleton<IHealthReporter, DefaultHealthReporter>();
         services.AddSingleton<ISessionScheduler, RoundRobinSessionScheduler>();
+        services.AddSingleton<IExecutionCoordinator, InMemoryExecutionCoordinator>();
         services.AddSingleton<NoOpSessionDriver>();
         services.AddDesktopSessionServices();
         services.AddSingleton<ISessionDriver>(

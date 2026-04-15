@@ -49,12 +49,15 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionTargetBindingBootstrapper, SessionTargetBindingStoreBootstrapper>();
         services.AddSingleton<ISessionTargetBindingManager, SessionTargetBindingManager>();
         services.AddSingleton<IDesktopTargetProfileResolver, ConfiguredDesktopTargetProfileResolver>();
+        services.AddSingleton<IExecutionResourceResolver, DefaultExecutionResourceResolver>();
         services.AddSingleton<IDesktopTargetMatcher, DefaultDesktopTargetMatcher>();
         services.AddSingleton<ISessionAttachmentResolver, DefaultSessionAttachmentResolver>();
         services.AddSingleton<IAttachedSessionStore, InMemoryAttachedSessionStore>();
+        services.AddSingleton<ISessionAttachmentOperations, DefaultSessionAttachmentOperations>();
         services.AddSingleton<ISessionAttachmentRuntime, DefaultSessionAttachmentRuntime>();
         services.AddSingleton<IUiSnapshotSerializer, JsonUiSnapshotSerializer>();
         services.AddSingleton<IUiSnapshotProvider, SelfHostedHttpUiSnapshotProvider>();
+        services.AddSingleton<ISessionUiRefreshService, DefaultSessionUiRefreshService>();
         services.AddSingleton<SelfHostedHttpUiTreeNormalizer>();
         services.AddSingleton<TestAppUiTreeNormalizer>();
         services.AddSingleton<IUiTreeNormalizerResolver, DefaultUiTreeNormalizerResolver>();

@@ -65,6 +65,7 @@ public static class Program
         app.MapPost("/resume", (MainForm form) => form.ResumeSessionAsync());
         app.MapPost("/stop", (MainForm form) => form.StopSessionAsync());
         app.MapPost("/tick", (MainForm form) => form.TickAsync());
+        app.MapPost("/test/delay", (TestDelayRequest request, MainForm form) => Results.Ok(form.SetArtificialDelay(request.Milliseconds)));
 
         app.MapGet("/", () => Results.Ok(new { Status = "ok" }));
     }
@@ -78,4 +79,6 @@ public static class Program
                 UiCommandFailureCodes.InvalidCommandPayload => Results.BadRequest(result),
                 _ => Results.Conflict(result)
             };
+
+    public sealed record TestDelayRequest(int Milliseconds);
 }

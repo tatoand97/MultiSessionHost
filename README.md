@@ -93,6 +93,14 @@ No incluye ni pretende incluir:
   - sin coordenadas ni input simulation
 - `IUiTreeNormalizerResolver` y `IWorkItemPlannerResolver`
   - permiten seleccionar pipeline UI por kind/profile
+- `IExecutionResourceResolver`
+  - deriva keys de sesión, target efectivo y global opcional
+  - centraliza el formato determinístico de identidad de target
+- `IExecutionCoordinator`
+  - concede leases async para ejecución target-facing
+  - aplica exclusión por sesión, target y límite global opcional
+  - aplica cooldown por target cuando está configurado
+  - expone snapshot operativo de ejecuciones activas/en espera
 
 ## Flujo runtime
 
@@ -111,6 +119,60 @@ Worker session
   -> project
   -> planned work items
 ```
+
+### Coordinación de ejecución real
+
+Los gates de lifecycle por sesión evitan carreras durante `start/stop/pause/resume`, pero no eran suficientes para la ejecución real contra targets. Antes, un command UI, un refresh, un work item y una invalidación de attachment podían tocar el mismo target por rutas distintas.
+
+Ahora toda operación target-facing pasa por una lease común:
+
+```text
+Worker session
+  -> DesktopTargetSessionDriver / UiCommandExecutor / DefaultSessionAttachmentRuntime
+  -> IExecutionResourceResolver
+  -> IExecutionCoordinator
+  -> session resource key
+  -> target resource key
+  -> optional global resource key
+  -> execution lease
+  -> attachment / target adapter / interaction adapter / UI refresh
+  -> release
+```
+
+Scopes soportados:
+
+- `Session`: serializa operaciones target-facing para la misma sesión.
+- `Target`: serializa sesiones distintas si resuelven al mismo target efectivo.
+- `Global`: opcional; limita concurrencia global de operaciones target-facing.
+
+Operation kinds coordinados:
+
+- `WorkItem`
+- `UiCommand`
+- `UiRefresh`
+- `AttachmentEnsure`
+- `AttachmentInvalidate`
+
+### Modelo de resource key
+
+La key de sesión usa `SessionId`. La key global usa una identidad fija para operaciones target-facing. La key de target no usa solamente la sesión: se deriva del target efectivo resuelto después de aplicar profile, binding runtime, variables y overrides.
+
+La identidad de target incluye:
+
+- `DesktopTargetKind`
+- `ProfileName`
+- `ProcessName`
+- `BaseAddress` si existe
+- `WindowTitleFragment` si existe
+- `CommandLineFragment` si existe
+
+Esto permite que `alpha` y `beta` sigan corriendo en paralelo cuando apuntan a targets distintos, pero se serialicen si un rebind los hace resolver al mismo target físico/cooperativo.
+
+### Cooldown por target
+
+`ExecutionCoordination.DefaultTargetCooldownMs` agrega una pausa mínima entre operaciones sobre la misma key de target. El cooldown se aplica después de liberar la lease anterior del target. Un waiter por cooldown no hace busy-wait: el coordinator programa un wake-up async cuando expira la ventana.
+
+El default es `0`, por lo que no hay cooldown salvo que se configure.
 
 ## Store de bindings editable en runtime
 
@@ -215,6 +277,28 @@ La sección sigue siendo `MultiSessionHost`.
     "EnableUiSnapshots": true,
     "BindingStorePersistenceMode": "JsonFile",
     "BindingStoreFilePath": "data/session-target-bindings.json",
+    "ExecutionCoordination": {
+      "EnableTargetCoordination": true,
+      "EnableGlobalCoordination": false,
+      "DefaultTargetCooldownMs": 0,
+      "MaxConcurrentGlobalTargetOperations": 1,
+      "WaitWarningThresholdMs": 1000,
+      "SessionExclusiveOperationKinds": [
+        "WorkItem",
+        "UiCommand",
+        "UiRefresh",
+        "AttachmentEnsure",
+        "AttachmentInvalidate"
+      ],
+      "TargetExclusiveOperationKinds": [
+        "WorkItem",
+        "UiCommand",
+        "UiRefresh",
+        "AttachmentEnsure",
+        "AttachmentInvalidate"
+      ],
+      "GlobalExclusiveOperationKinds": []
+    },
     "DesktopTargets": [
       {
         "ProfileName": "test-app",
@@ -287,6 +371,10 @@ La sección sigue siendo `MultiSessionHost`.
 - cada sesión requiere binding cuando `DriverMode=DesktopTargetAdapter`.
 - si un template usa variables como `{Port}`, cada binding debe proveerlas.
 - `BaseAddressTemplate` debe renderizar una URL absoluta válida para los targets HTTP.
+- `ExecutionCoordination.DefaultTargetCooldownMs` no puede ser negativo.
+- `ExecutionCoordination.MaxConcurrentGlobalTargetOperations` debe ser mayor que cero.
+- `ExecutionCoordination.WaitWarningThresholdMs` no puede ser negativo.
+- los operation kinds configurados para coordinación deben existir.
 
 ## Admin API
 
@@ -300,6 +388,8 @@ Endpoints existentes mantenidos:
 - `POST /sessions/{id}/pause`
 - `POST /sessions/{id}/resume`
 - `GET /metrics`
+- `GET /coordination`
+- `GET /coordination/sessions/{id}`
 - `GET /sessions/{id}/ui`
 - `GET /sessions/{id}/ui/raw`
 - `POST /sessions/{id}/ui/refresh`
@@ -333,6 +423,29 @@ Endpoints nuevos de mutación de bindings:
 - target renderizado
 - attachment actual si existe
 - adapter seleccionado
+
+`/coordination` expone:
+
+- ejecuciones activas
+- ejecuciones esperando
+- resource keys retenidas o con waiters
+- duración de espera/running
+- último completion por resource
+- cooldown activo por target
+- contención por scope
+
+Ejemplos:
+
+```powershell
+Invoke-RestMethod http://localhost:5088/coordination
+Invoke-RestMethod http://localhost:5088/coordination/sessions/alpha
+```
+
+Escenarios esperados:
+
+- misma sesión: un `UiCommand` y un `ui/refresh` se serializan por la key `session:alpha`.
+- dos sesiones, mismo target efectivo: `alpha` y `beta` esperan por la misma key `target:...`.
+- dos sesiones, targets distintos: pueden ejecutar en paralelo porque las keys de target son diferentes.
 
 ### Decisión sobre UI state faltante
 
@@ -446,6 +559,8 @@ Pruebas HTTP rápidas:
 Invoke-RestMethod http://localhost:5088/targets
 Invoke-RestMethod http://localhost:5088/bindings
 Invoke-RestMethod http://localhost:5088/sessions/alpha/target
+Invoke-RestMethod http://localhost:5088/coordination
+Invoke-RestMethod http://localhost:5088/coordination/sessions/alpha
 Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/ui/refresh
 Invoke-RestMethod http://localhost:5088/sessions/alpha/ui
 Invoke-RestMethod http://localhost:5088/sessions/alpha/ui/raw
@@ -523,3 +638,11 @@ La suite cubre ahora:
 - `SetText`, `ToggleNode` y `SelectItem`
 - refresh UI posterior al comando
 - aislamiento de comandos entre `alpha` y `beta`
+- exclusión de ejecución por sesión
+- exclusión por target efectivo compartido
+- concurrencia cuando los targets efectivos son distintos
+- cooldown por target
+- cancelación limpia de waiters
+- snapshot de coordinación activo/en espera
+- endpoints `/coordination`
+- rebind runtime actualizando la key de target y reattach

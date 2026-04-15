@@ -11,6 +11,7 @@ using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
 using MultiSessionHost.Desktop.Snapshots;
 using MultiSessionHost.Desktop.Targets;
+using MultiSessionHost.Infrastructure.Coordination;
 using MultiSessionHost.Infrastructure.State;
 using MultiSessionHost.Tests.Common;
 using MultiSessionHost.UiModel.Interfaces;
@@ -87,32 +88,33 @@ public sealed class DesktopTargetAdapterSystemTests
         var uiStateStore = new InMemorySessionUiStateStore();
         await uiStateStore.InitializeAsync(SessionUiState.Create(sessionId), CancellationToken.None);
 
+        var options = new SessionHostOptions
+        {
+            DriverMode = DriverMode.DesktopTargetAdapter,
+            EnableUiSnapshots = false,
+            Sessions = [TestOptionsFactory.Session("alpha")]
+        };
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
         var adapter = new SpyDesktopTargetAdapter(DesktopTargetKind.SelfHostedHttpDesktop);
         var attachmentRuntime = new StubSessionAttachmentRuntime(attachment);
+        var attachmentOperations = new StubSessionAttachmentOperations(attachment);
         var driver = new DesktopTargetSessionDriver(
-            new SessionHostOptions
-            {
-                DriverMode = DriverMode.DesktopTargetAdapter,
-                EnableUiSnapshots = false,
-                Sessions = [TestOptionsFactory.Session("alpha")]
-            },
             attachmentRuntime,
+            attachmentOperations,
+            new InMemoryExecutionCoordinator(options, clock, NullLogger<InMemoryExecutionCoordinator>.Instance),
+            new DefaultExecutionResourceResolver(options, clock),
             new StubDesktopTargetProfileResolver(context),
             new DesktopTargetAdapterRegistry([adapter]),
-            new JsonUiSnapshotSerializer(),
-            new StubUiTreeNormalizerResolver(),
-            new StubUiStateProjector(),
-            new StubWorkItemPlannerResolver(),
-            uiStateStore,
-            new FakeClock(DateTimeOffset.UtcNow),
-            NullLogger<DesktopTargetSessionDriver>.Instance);
+            new StubSessionUiRefreshService(),
+            uiStateStore);
 
         await driver.ExecuteWorkItemAsync(
             snapshot,
             SessionWorkItem.Create(sessionId, SessionWorkItemKind.Tick, DateTimeOffset.UtcNow, "adapter dispatch test"),
             CancellationToken.None);
 
-        Assert.Equal(1, attachmentRuntime.EnsureCalls);
+        Assert.Equal(0, attachmentRuntime.EnsureCalls);
+        Assert.Equal(1, attachmentOperations.EnsureCalls);
         Assert.Equal(0, adapter.ValidateCalls);
         Assert.Equal(0, adapter.AttachCalls);
         Assert.Equal(1, adapter.ExecuteCalls);
@@ -206,6 +208,33 @@ public sealed class DesktopTargetAdapterSystemTests
             Task.FromResult(true);
     }
 
+    private sealed class StubSessionAttachmentOperations : ISessionAttachmentOperations
+    {
+        private readonly DesktopSessionAttachment _attachment;
+
+        public StubSessionAttachmentOperations(DesktopSessionAttachment attachment)
+        {
+            _attachment = attachment;
+        }
+
+        public int EnsureCalls { get; private set; }
+
+        public Task<DesktopSessionAttachment> EnsureAttachedAsync(
+            SessionSnapshot snapshot,
+            ResolvedDesktopTargetContext context,
+            CancellationToken cancellationToken)
+        {
+            EnsureCalls++;
+            return Task.FromResult(_attachment);
+        }
+
+        public Task<bool> InvalidateAsync(
+            SessionId sessionId,
+            DesktopSessionAttachment currentAttachment,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(true);
+    }
+
     private sealed class StubDesktopTargetProfileResolver : IDesktopTargetProfileResolver
     {
         private readonly ResolvedDesktopTargetContext _context;
@@ -254,5 +283,29 @@ public sealed class DesktopTargetAdapterSystemTests
         private readonly IWorkItemPlanner _planner = new StubPlanner();
 
         public IWorkItemPlanner Resolve(ResolvedDesktopTargetContext context) => _planner;
+    }
+
+    private sealed class StubSessionUiRefreshService : ISessionUiRefreshService
+    {
+        public Task<SessionUiState> CaptureAsync(
+            SessionSnapshot snapshot,
+            ResolvedDesktopTargetContext context,
+            DesktopSessionAttachment attachment,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<SessionUiState> ProjectAsync(
+            SessionSnapshot snapshot,
+            ResolvedDesktopTargetContext context,
+            DesktopSessionAttachment? attachment,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<SessionUiState> RefreshAsync(
+            SessionSnapshot snapshot,
+            ResolvedDesktopTargetContext context,
+            DesktopSessionAttachment attachment,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 }

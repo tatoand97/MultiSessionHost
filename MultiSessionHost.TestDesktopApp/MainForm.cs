@@ -22,6 +22,7 @@ public sealed class MainForm : Form
     private readonly Button _tickButton;
     private readonly Label _tickCountLabel;
     private int _tickCount;
+    private int _artificialDelayMs;
 
     public MainForm(TestDesktopAppOptions options)
     {
@@ -117,29 +118,52 @@ public sealed class MainForm : Form
         Controls.Add(rootPanel);
     }
 
-    public Task<TestDesktopAppState> CaptureStateAsync() =>
-        InvokeOnUiThreadAsync(CaptureStateUnsafe);
+    public async Task<TestDesktopAppState> CaptureStateAsync()
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(CaptureStateUnsafe).ConfigureAwait(false);
+    }
 
-    public Task<UiSnapshotEnvelope> CaptureUiSnapshotAsync() =>
-        InvokeOnUiThreadAsync(CaptureUiSnapshotUnsafe);
+    public async Task<UiSnapshotEnvelope> CaptureUiSnapshotAsync()
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(CaptureUiSnapshotUnsafe).ConfigureAwait(false);
+    }
 
-    public Task<TestDesktopAppState> StartSessionAsync() =>
-        InvokeOnUiThreadAsync(StartSessionUnsafe);
+    public async Task<TestDesktopAppState> StartSessionAsync()
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(StartSessionUnsafe).ConfigureAwait(false);
+    }
 
-    public Task<TestDesktopAppState> PauseSessionAsync() =>
-        InvokeOnUiThreadAsync(PauseSessionUnsafe);
+    public async Task<TestDesktopAppState> PauseSessionAsync()
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(PauseSessionUnsafe).ConfigureAwait(false);
+    }
 
-    public Task<TestDesktopAppState> ResumeSessionAsync() =>
-        InvokeOnUiThreadAsync(ResumeSessionUnsafe);
+    public async Task<TestDesktopAppState> ResumeSessionAsync()
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(ResumeSessionUnsafe).ConfigureAwait(false);
+    }
 
-    public Task<TestDesktopAppState> StopSessionAsync() =>
-        InvokeOnUiThreadAsync(StopSessionUnsafe);
+    public async Task<TestDesktopAppState> StopSessionAsync()
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(StopSessionUnsafe).ConfigureAwait(false);
+    }
 
-    public Task<TestDesktopAppState> TickAsync() =>
-        InvokeOnUiThreadAsync(TickUnsafe);
+    public async Task<TestDesktopAppState> TickAsync()
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(TickUnsafe).ConfigureAwait(false);
+    }
 
-    public Task<UiInteractionResult> ClickNodeAsync(string nodeId) =>
-        InvokeOnUiThreadAsync(
+    public async Task<UiInteractionResult> ClickNodeAsync(string nodeId)
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(
             () =>
             {
                 if (!TryFindControl(nodeId, out var control))
@@ -153,10 +177,13 @@ public sealed class MainForm : Form
                     CheckBox checkBox => ToggleCheckBox(checkBox, requestedValue: null, operationName: "click"),
                     _ => Failure(UiCommandFailureCodes.UnsupportedCommand, $"Node '{nodeId}' does not support click.")
                 };
-            });
+            }).ConfigureAwait(false);
+    }
 
-    public Task<UiInteractionResult> InvokeNodeActionAsync(string nodeId, string? actionName) =>
-        InvokeOnUiThreadAsync(
+    public async Task<UiInteractionResult> InvokeNodeActionAsync(string nodeId, string? actionName)
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(
             () =>
             {
                 if (!TryFindControl(nodeId, out var control))
@@ -180,10 +207,13 @@ public sealed class MainForm : Form
 
                 button.PerformClick();
                 return Success($"Invoked action '{actionName ?? button.Text}' on node '{nodeId}'.");
-            });
+            }).ConfigureAwait(false);
+    }
 
-    public Task<UiInteractionResult> SetNodeTextAsync(string nodeId, string? textValue) =>
-        InvokeOnUiThreadAsync(
+    public async Task<UiInteractionResult> SetNodeTextAsync(string nodeId, string? textValue)
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(
             () =>
             {
                 if (!TryFindControl(nodeId, out var control))
@@ -198,10 +228,13 @@ public sealed class MainForm : Form
 
                 textBox.Text = textValue ?? string.Empty;
                 return Success($"Updated text for node '{nodeId}'.");
-            });
+            }).ConfigureAwait(false);
+    }
 
-    public Task<UiInteractionResult> ToggleNodeAsync(string nodeId, bool? boolValue) =>
-        InvokeOnUiThreadAsync(
+    public async Task<UiInteractionResult> ToggleNodeAsync(string nodeId, bool? boolValue)
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(
             () =>
             {
                 if (!TryFindControl(nodeId, out var control))
@@ -212,10 +245,13 @@ public sealed class MainForm : Form
                 return control is CheckBox checkBox
                     ? ToggleCheckBox(checkBox, boolValue, operationName: "toggle")
                     : Failure(UiCommandFailureCodes.UnsupportedCommand, $"Node '{nodeId}' does not support toggle.");
-            });
+            }).ConfigureAwait(false);
+    }
 
-    public Task<UiInteractionResult> SelectItemAsync(string nodeId, string? selectedValue) =>
-        InvokeOnUiThreadAsync(
+    public async Task<UiInteractionResult> SelectItemAsync(string nodeId, string? selectedValue)
+    {
+        await DelayIfConfiguredAsync().ConfigureAwait(false);
+        return await InvokeOnUiThreadAsync(
             () =>
             {
                 if (!TryFindControl(nodeId, out var control))
@@ -244,7 +280,15 @@ public sealed class MainForm : Form
 
                 listBox.SelectedItem = match;
                 return Success($"Selected '{selectedValue}' on node '{nodeId}'.");
-            });
+            }).ConfigureAwait(false);
+    }
+
+    public object SetArtificialDelay(int milliseconds)
+    {
+        var normalized = Math.Max(0, milliseconds);
+        Interlocked.Exchange(ref _artificialDelayMs, normalized);
+        return new { delayMs = normalized };
+    }
 
     private Label CreateCaption(string text) =>
         new()
@@ -474,6 +518,16 @@ public sealed class MainForm : Form
 
     private static UiInteractionResult Failure(string failureCode, string message) =>
         UiInteractionResult.Failure(message, failureCode, DateTimeOffset.UtcNow);
+
+    private async Task DelayIfConfiguredAsync()
+    {
+        var delayMs = Volatile.Read(ref _artificialDelayMs);
+
+        if (delayMs > 0)
+        {
+            await Task.Delay(delayMs).ConfigureAwait(false);
+        }
+    }
 
     private Task<T> InvokeOnUiThreadAsync<T>(Func<T> callback)
     {
