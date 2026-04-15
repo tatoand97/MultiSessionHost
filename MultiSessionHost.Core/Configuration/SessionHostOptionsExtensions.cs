@@ -728,6 +728,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidateAggregationRules(options.AggregationRules, out error))
+        {
+            return false;
+        }
+
         if (!TryValidatePolicyRuleSet("PolicyEngine.Rules.SiteSelection.AllowRules", options.Rules.SiteSelection.AllowRules, requireMatcher: false, out error) ||
             !TryValidatePolicyRuleSet("PolicyEngine.Rules.ThreatResponse.RetreatRules", options.Rules.ThreatResponse.RetreatRules, requireMatcher: true, out error) ||
             !TryValidatePolicyRuleSet("PolicyEngine.Rules.ThreatResponse.DenyRules", options.Rules.ThreatResponse.DenyRules, requireMatcher: true, out error) ||
@@ -755,6 +760,89 @@ public static class SessionHostOptionsExtensions
         {
             error = "PolicyEngine.Rules.SiteSelection.MinimumWaitMs cannot be negative.";
             return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateAggregationRules(
+        DecisionPlanAggregationRulesOptions options,
+        out string? error)
+    {
+        var suppressionNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rule in options.SuppressionRules.Where(static rule => rule.Enabled))
+        {
+            if (string.IsNullOrWhiteSpace(rule.RuleName))
+            {
+                error = "PolicyEngine.AggregationRules.SuppressionRules contains an enabled rule without RuleName.";
+                return false;
+            }
+
+            var ruleName = rule.RuleName.Trim();
+
+            if (!suppressionNames.Add(ruleName))
+            {
+                error = $"PolicyEngine.AggregationRules.SuppressionRules contains duplicate rule '{rule.RuleName}'.";
+                return false;
+            }
+
+            if (rule.TriggerDirectiveKinds.Count == 0)
+            {
+                error = $"PolicyEngine.AggregationRules.SuppressionRules.{ruleName} must define TriggerDirectiveKinds.";
+                return false;
+            }
+
+            if (rule.SuppressedDirectiveKinds.Count == 0)
+            {
+                error = $"PolicyEngine.AggregationRules.SuppressionRules.{ruleName} must define SuppressedDirectiveKinds.";
+                return false;
+            }
+
+            if (!TryValidateDirectiveKindList(rule.TriggerDirectiveKinds, allowWildcard: false, $"PolicyEngine.AggregationRules.SuppressionRules.{ruleName}.TriggerDirectiveKinds", out error) ||
+                !TryValidateDirectiveKindList(rule.SuppressedDirectiveKinds, allowWildcard: true, $"PolicyEngine.AggregationRules.SuppressionRules.{ruleName}.SuppressedDirectiveKinds", out error) ||
+                !TryValidateDirectiveKindList(rule.PreserveDirectiveKinds, allowWildcard: false, $"PolicyEngine.AggregationRules.SuppressionRules.{ruleName}.PreserveDirectiveKinds", out error) ||
+                !TryValidateDirectiveKindList(rule.BlockedByDirectiveKinds, allowWildcard: false, $"PolicyEngine.AggregationRules.SuppressionRules.{ruleName}.BlockedByDirectiveKinds", out error))
+            {
+                return false;
+            }
+        }
+
+        var statusNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rule in options.StatusRules.Where(static rule => rule.Enabled))
+        {
+            if (string.IsNullOrWhiteSpace(rule.RuleName))
+            {
+                error = "PolicyEngine.AggregationRules.StatusRules contains an enabled rule without RuleName.";
+                return false;
+            }
+
+            var ruleName = rule.RuleName.Trim();
+
+            if (!statusNames.Add(ruleName))
+            {
+                error = $"PolicyEngine.AggregationRules.StatusRules contains duplicate rule '{rule.RuleName}'.";
+                return false;
+            }
+
+            if (!IsValidPlanStatus(rule.Status))
+            {
+                error = $"PolicyEngine.AggregationRules.StatusRules.{ruleName}.Status '{rule.Status}' is not valid.";
+                return false;
+            }
+
+            if (rule.DirectiveKinds.Count == 0 && !rule.IncludePolicyAbortFlag)
+            {
+                error = $"PolicyEngine.AggregationRules.StatusRules.{ruleName} must define DirectiveKinds or IncludePolicyAbortFlag.";
+                return false;
+            }
+
+            if (!TryValidateDirectiveKindList(rule.DirectiveKinds, allowWildcard: false, $"PolicyEngine.AggregationRules.StatusRules.{ruleName}.DirectiveKinds", out error))
+            {
+                return false;
+            }
         }
 
         error = null;
@@ -905,6 +993,48 @@ public static class SessionHostOptionsExtensions
                 "Withdraw",
                 "Abort",
                 "Wait"
+            ],
+            StringComparer.OrdinalIgnoreCase).Contains(value.Trim());
+    }
+
+    private static bool TryValidateDirectiveKindList(
+        IReadOnlyList<string> values,
+        bool allowWildcard,
+        string propertyName,
+        out string? error)
+    {
+        foreach (var value in values)
+        {
+            if (allowWildcard && string.Equals(value, "*", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!IsValidDirectiveKind(value))
+            {
+                error = $"{propertyName} contains invalid directive kind '{value}'.";
+                return false;
+            }
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool IsValidPlanStatus(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return new HashSet<string>(
+            [
+                "Unknown",
+                "Idle",
+                "Ready",
+                "Blocked",
+                "Aborting"
             ],
             StringComparer.OrdinalIgnoreCase).Contains(value.Trim());
     }

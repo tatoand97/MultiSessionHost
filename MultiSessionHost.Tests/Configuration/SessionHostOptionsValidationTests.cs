@@ -376,4 +376,62 @@ public sealed class SessionHostOptionsValidationTests
         Assert.False(valid);
         Assert.Contains("minimum cannot be greater", error, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void TryValidate_FailsWhenAggregationSuppressionRuleUsesInvalidDirective()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                AggregationRules = new DecisionPlanAggregationRulesOptions
+                {
+                    SuppressionRules =
+                    [
+                        new DirectiveSuppressionRuleOptions
+                        {
+                            RuleName = "bad-kind",
+                            TriggerDirectiveKinds = ["MissingDirective"],
+                            SuppressedDirectiveKinds = ["SelectSite"]
+                        }
+                    ]
+                }
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("MissingDirective", error);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenAggregationStatusRuleUsesInvalidStatus()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                AggregationRules = new DecisionPlanAggregationRulesOptions
+                {
+                    StatusRules =
+                    [
+                        new DecisionPlanStatusRuleOptions
+                        {
+                            RuleName = "bad-status",
+                            Status = "WaitingAround",
+                            DirectiveKinds = ["Wait"]
+                        }
+                    ]
+                }
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("WaitingAround", error);
+    }
 }

@@ -30,52 +30,7 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
         var directives = RemoveDuplicates(producedDirectives);
         var suppressedCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
-        if (options.BlockOnAbort && directives.Any(static directive => directive.DirectiveKind == DecisionDirectiveKind.Abort))
-        {
-            directives = Suppress(
-                directives,
-                static directive => directive.DirectiveKind != DecisionDirectiveKind.Abort,
-                "AbortPolicy",
-                suppressedCounts);
-        }
-        else
-        {
-            if (options.PreferThreatResponseOverSelection &&
-                directives.Any(static directive => directive.DirectiveKind is DecisionDirectiveKind.Withdraw or DecisionDirectiveKind.PauseActivity))
-            {
-                directives = Suppress(
-                    directives,
-                    static directive => directive.DirectiveKind is DecisionDirectiveKind.SelectSite or DecisionDirectiveKind.Navigate or DecisionDirectiveKind.SelectTarget,
-                    "ThreatResponse",
-                    suppressedCounts);
-            }
-
-            var strongestThreatPriority = directives
-                .Where(static directive => directive.DirectiveKind is DecisionDirectiveKind.Withdraw or DecisionDirectiveKind.PauseActivity or DecisionDirectiveKind.AvoidTarget)
-                .Select(static directive => directive.Priority)
-                .DefaultIfEmpty(0)
-                .Max();
-
-            var waitPriority = directives
-                .Where(static directive => directive.DirectiveKind == DecisionDirectiveKind.Wait)
-                .Select(static directive => directive.Priority)
-                .DefaultIfEmpty(0)
-                .Max();
-
-            if (options.PreferTransitStability && waitPriority > 0 && strongestThreatPriority <= waitPriority)
-            {
-                directives = Suppress(
-                    directives,
-                    directive => directive.Priority < waitPriority &&
-                        directive.DirectiveKind is DecisionDirectiveKind.SelectSite
-                            or DecisionDirectiveKind.Navigate
-                            or DecisionDirectiveKind.SelectTarget
-                            or DecisionDirectiveKind.PrioritizeTarget
-                            or DecisionDirectiveKind.UseResource,
-                    "TransitStability",
-                    suppressedCounts);
-            }
-        }
+        directives = ApplySuppressionRules(directives, options.AggregationRules.SuppressionRules, suppressedCounts);
 
         directives = directives
             .OrderByDescending(static directive => directive.Priority)
@@ -103,7 +58,7 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
         return new DecisionPlan(
             sessionId,
             plannedAtUtc,
-            ResolveStatus(directives, policyResults),
+            ResolveStatus(directives, policyResults, options.AggregationRules.StatusRules),
             directives,
             reasons,
             summary,
@@ -151,21 +106,108 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
         return retained.ToArray();
     }
 
-    private static DecisionPlanStatus ResolveStatus(
+    private static DecisionDirective[] ApplySuppressionRules(
         IReadOnlyList<DecisionDirective> directives,
-        IReadOnlyList<PolicyEvaluationResult> policyResults)
+        IReadOnlyList<DirectiveSuppressionRuleOptions> rules,
+        IDictionary<string, int> suppressedCounts)
     {
-        if (directives.Any(static directive => directive.DirectiveKind == DecisionDirectiveKind.Abort) ||
-            policyResults.Any(static result => result.DidAbort))
+        var current = directives.ToArray();
+
+        foreach (var rule in rules.Where(static rule => rule.Enabled))
         {
-            return DecisionPlanStatus.Aborting;
+            var triggerKinds = ParseDirectiveKinds(rule.TriggerDirectiveKinds);
+            var suppressedKinds = ParseDirectiveKinds(rule.SuppressedDirectiveKinds);
+            var preserveKinds = ParseDirectiveKinds(rule.PreserveDirectiveKinds);
+            var blockedByKinds = ParseDirectiveKinds(rule.BlockedByDirectiveKinds);
+            var wildcardSuppression = rule.SuppressedDirectiveKinds.Any(static value => string.Equals(value, "*", StringComparison.Ordinal));
+            var triggers = current
+                .Where(directive => triggerKinds.Contains(directive.DirectiveKind))
+                .ToArray();
+
+            if (triggers.Length == 0)
+            {
+                continue;
+            }
+
+            if (blockedByKinds.Count > 0)
+            {
+                var strongestBlockingPriority = current
+                    .Where(directive => blockedByKinds.Contains(directive.DirectiveKind))
+                    .Select(static directive => directive.Priority)
+                    .DefaultIfEmpty(0)
+                    .Max();
+                var strongestTriggerPriority = triggers.Max(static directive => directive.Priority);
+
+                if (strongestBlockingPriority > strongestTriggerPriority)
+                {
+                    continue;
+                }
+            }
+
+            current = Suppress(
+                current,
+                directive => ShouldSuppressDirective(rule, triggers, wildcardSuppression, suppressedKinds, preserveKinds, directive),
+                rule.RuleName,
+                suppressedCounts);
         }
 
-        if (directives.Any(static directive => directive.DirectiveKind is DecisionDirectiveKind.Withdraw or DecisionDirectiveKind.PauseActivity or DecisionDirectiveKind.Wait))
+        return current;
+    }
+
+    private static bool ShouldSuppressDirective(
+        DirectiveSuppressionRuleOptions rule,
+        IReadOnlyList<DecisionDirective> triggers,
+        bool wildcardSuppression,
+        IReadOnlySet<DecisionDirectiveKind> suppressedKinds,
+        IReadOnlySet<DecisionDirectiveKind> preserveKinds,
+        DecisionDirective directive)
+    {
+        if (preserveKinds.Contains(directive.DirectiveKind))
         {
-            return DecisionPlanStatus.Blocked;
+            return false;
+        }
+
+        if (!wildcardSuppression && !suppressedKinds.Contains(directive.DirectiveKind))
+        {
+            return false;
+        }
+
+        if (!rule.SuppressLowerPriorityOnly)
+        {
+            return true;
+        }
+
+        return triggers.Any(trigger => directive.Priority < trigger.Priority);
+    }
+
+    private static DecisionPlanStatus ResolveStatus(
+        IReadOnlyList<DecisionDirective> directives,
+        IReadOnlyList<PolicyEvaluationResult> policyResults,
+        IReadOnlyList<DecisionPlanStatusRuleOptions> rules)
+    {
+        foreach (var rule in rules.Where(static rule => rule.Enabled))
+        {
+            var directiveKinds = ParseDirectiveKinds(rule.DirectiveKinds);
+            var matchedDirective = directiveKinds.Count > 0 &&
+                directives.Any(directive => directiveKinds.Contains(directive.DirectiveKind));
+            var matchedPolicyAbort = rule.IncludePolicyAbortFlag &&
+                policyResults.Any(static result => result.DidAbort);
+
+            if (matchedDirective || matchedPolicyAbort)
+            {
+                return ParsePlanStatus(rule.Status);
+            }
         }
 
         return directives.Count == 0 ? DecisionPlanStatus.Idle : DecisionPlanStatus.Ready;
     }
+
+    private static IReadOnlySet<DecisionDirectiveKind> ParseDirectiveKinds(IReadOnlyList<string> values) =>
+        values
+            .Where(static value => !string.Equals(value, "*", StringComparison.Ordinal))
+            .Select(static value => Enum.Parse<DecisionDirectiveKind>(value, ignoreCase: true))
+            .ToHashSet();
+
+    private static DecisionPlanStatus ParsePlanStatus(string value) =>
+        Enum.Parse<DecisionPlanStatus>(value, ignoreCase: true);
 }

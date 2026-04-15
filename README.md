@@ -363,11 +363,11 @@ Orden default:
 5. `TargetPrioritizationPolicy`
 6. `SelectNextSitePolicy`
 
-Precedencia:
+Precedencia default, ahora expresada como `PolicyEngine:AggregationRules`:
 
-- `Abort` suprime el resto cuando `BlockOnAbort=true`.
-- `Withdraw` y `PauseActivity` suprimen selección/navegación normal.
-- `Wait` de tránsito suprime navegación, selección y uso de recursos de menor prioridad cuando no existe amenaza más fuerte.
+- `abort-overrides`: conserva `Abort` y suprime el resto.
+- `blocking-response-over-selection`: `Withdraw` y `PauseActivity` suprimen selección/navegación normal.
+- `transit-wait-stability`: `Wait` suprime navegación, selección y uso de recursos de menor prioridad cuando no existe una directiva bloqueante más fuerte.
 - las directivas se ordenan por prioridad y después por política/kind/id para mantener determinismo.
 
 El orden y límites se configuran bajo `MultiSessionHost:PolicyEngine`:
@@ -381,7 +381,42 @@ El orden y límites se configuran bajo `MultiSessionHost:PolicyEngine`:
     "BlockOnAbort": true,
     "PreferThreatResponseOverSelection": true,
     "PreferTransitStability": true,
-    "MinDirectivePriority": 0
+    "MinDirectivePriority": 0,
+    "AggregationRules": {
+      "SuppressionRules": [
+        {
+          "RuleName": "abort-overrides",
+          "TriggerDirectiveKinds": [ "Abort" ],
+          "PreserveDirectiveKinds": [ "Abort" ],
+          "SuppressedDirectiveKinds": [ "*" ]
+        },
+        {
+          "RuleName": "blocking-response-over-selection",
+          "TriggerDirectiveKinds": [ "Withdraw", "PauseActivity" ],
+          "SuppressedDirectiveKinds": [ "SelectSite", "Navigate", "SelectTarget" ]
+        },
+        {
+          "RuleName": "transit-wait-stability",
+          "TriggerDirectiveKinds": [ "Wait" ],
+          "SuppressedDirectiveKinds": [ "SelectSite", "Navigate", "SelectTarget", "PrioritizeTarget", "UseResource" ],
+          "SuppressLowerPriorityOnly": true,
+          "BlockedByDirectiveKinds": [ "Withdraw", "PauseActivity", "AvoidTarget" ]
+        }
+      ],
+      "StatusRules": [
+        {
+          "RuleName": "aborting-directives",
+          "Status": "Aborting",
+          "DirectiveKinds": [ "Abort" ],
+          "IncludePolicyAbortFlag": true
+        },
+        {
+          "RuleName": "blocked-directives",
+          "Status": "Blocked",
+          "DirectiveKinds": [ "Withdraw", "PauseActivity", "Wait" ]
+        }
+      ]
+    }
   }
 }
 ```
@@ -830,6 +865,7 @@ La sección sigue siendo `MultiSessionHost`.
 - duraciones `MinimumWaitMs` no pueden ser negativas.
 - rangos de progreso, recurso y confianza deben ser coherentes.
 - reglas no-site deben declarar al menos un matcher o threshold.
+- reglas de agregación deben tener nombres únicos, directive kinds válidos y status válidos.
 
 ## Admin API
 

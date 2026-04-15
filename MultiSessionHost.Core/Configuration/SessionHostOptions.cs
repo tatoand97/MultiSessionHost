@@ -182,6 +182,8 @@ public sealed class PolicyEngineOptions
 
     public int MinDirectivePriority { get; init; }
 
+    public DecisionPlanAggregationRulesOptions AggregationRules { get; init; } = new();
+
     public AbortPolicyOptions AbortPolicy { get; init; } = new();
 
     public ThreatResponsePolicyOptions ThreatResponsePolicy { get; init; } = new();
@@ -263,6 +265,81 @@ public sealed class SelectNextSitePolicyOptions
     public int ObservePriority { get; init; } = 150;
 
     public SiteSelectionRulesOptions Rules { get; init; } = new();
+}
+
+public sealed class DecisionPlanAggregationRulesOptions
+{
+    public IReadOnlyList<DirectiveSuppressionRuleOptions> SuppressionRules { get; init; } =
+    [
+        new()
+        {
+            RuleName = "abort-overrides",
+            TriggerDirectiveKinds = ["Abort"],
+            PreserveDirectiveKinds = ["Abort"],
+            SuppressedDirectiveKinds = ["*"]
+        },
+        new()
+        {
+            RuleName = "blocking-response-over-selection",
+            TriggerDirectiveKinds = ["Withdraw", "PauseActivity"],
+            SuppressedDirectiveKinds = ["SelectSite", "Navigate", "SelectTarget"]
+        },
+        new()
+        {
+            RuleName = "transit-wait-stability",
+            TriggerDirectiveKinds = ["Wait"],
+            SuppressedDirectiveKinds = ["SelectSite", "Navigate", "SelectTarget", "PrioritizeTarget", "UseResource"],
+            SuppressLowerPriorityOnly = true,
+            BlockedByDirectiveKinds = ["Withdraw", "PauseActivity", "AvoidTarget"]
+        }
+    ];
+
+    public IReadOnlyList<DecisionPlanStatusRuleOptions> StatusRules { get; init; } =
+    [
+        new()
+        {
+            RuleName = "aborting-directives",
+            Status = "Aborting",
+            DirectiveKinds = ["Abort"],
+            IncludePolicyAbortFlag = true
+        },
+        new()
+        {
+            RuleName = "blocked-directives",
+            Status = "Blocked",
+            DirectiveKinds = ["Withdraw", "PauseActivity", "Wait"]
+        }
+    ];
+}
+
+public sealed class DirectiveSuppressionRuleOptions
+{
+    public string RuleName { get; init; } = string.Empty;
+
+    public bool Enabled { get; init; } = true;
+
+    public IReadOnlyList<string> TriggerDirectiveKinds { get; init; } = [];
+
+    public IReadOnlyList<string> SuppressedDirectiveKinds { get; init; } = [];
+
+    public IReadOnlyList<string> PreserveDirectiveKinds { get; init; } = [];
+
+    public bool SuppressLowerPriorityOnly { get; init; }
+
+    public IReadOnlyList<string> BlockedByDirectiveKinds { get; init; } = [];
+}
+
+public sealed class DecisionPlanStatusRuleOptions
+{
+    public string RuleName { get; init; } = string.Empty;
+
+    public bool Enabled { get; init; } = true;
+
+    public string Status { get; init; } = "Ready";
+
+    public IReadOnlyList<string> DirectiveKinds { get; init; } = [];
+
+    public bool IncludePolicyAbortFlag { get; init; }
 }
 
 public sealed class BehaviorRulesOptions

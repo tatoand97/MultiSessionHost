@@ -124,7 +124,7 @@ public sealed class PolicyEngineTests
         Assert.Equal(DecisionPlanStatus.Aborting, plan.PlanStatus);
         Assert.Single(plan.Directives);
         Assert.Equal(DecisionDirectiveKind.Abort, plan.Directives[0].DirectiveKind);
-        Assert.Equal(1, plan.Summary.SuppressedDirectiveCounts["AbortPolicy"]);
+        Assert.Equal(1, plan.Summary.SuppressedDirectiveCounts["abort-overrides"]);
     }
 
     [Fact]
@@ -161,6 +161,83 @@ public sealed class PolicyEngineTests
         Assert.Equal(DecisionPlanStatus.Blocked, plan.PlanStatus);
         Assert.Single(plan.Directives);
         Assert.Equal(DecisionDirectiveKind.Wait, plan.Directives[0].DirectiveKind);
+    }
+
+    [Fact]
+    public void Aggregator_SuppressionRulesAreConfigurable()
+    {
+        var sessionId = new SessionId("aggregate-configurable");
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                AggregationRules = new DecisionPlanAggregationRulesOptions
+                {
+                    SuppressionRules = [],
+                    StatusRules = []
+                }
+            }
+        };
+        var aggregator = new DefaultDecisionPlanAggregator(options);
+
+        var plan = aggregator.Aggregate(
+            sessionId,
+            DateTimeOffset.Parse("2026-04-15T12:00:00Z"),
+            [
+                Result("AbortPolicy", Directive("AbortPolicy", DecisionDirectiveKind.Abort, 1000), didBlock: true, didAbort: true),
+                Result("SelectNextSitePolicy", Directive("SelectNextSitePolicy", DecisionDirectiveKind.SelectSite, 250))
+            ]);
+
+        Assert.Equal(2, plan.Directives.Count);
+        Assert.Equal(DecisionPlanStatus.Ready, plan.PlanStatus);
+        Assert.Empty(plan.Summary.SuppressedDirectiveCounts);
+    }
+
+    [Fact]
+    public void Aggregator_CustomSuppressionRuleControlsDirectiveKindSemantics()
+    {
+        var sessionId = new SessionId("aggregate-custom-rule");
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                AggregationRules = new DecisionPlanAggregationRulesOptions
+                {
+                    SuppressionRules =
+                    [
+                        new DirectiveSuppressionRuleOptions
+                        {
+                            RuleName = "custom-observe-suppresses-use",
+                            TriggerDirectiveKinds = ["Observe"],
+                            SuppressedDirectiveKinds = ["UseResource"]
+                        }
+                    ],
+                    StatusRules =
+                    [
+                        new DecisionPlanStatusRuleOptions
+                        {
+                            RuleName = "observe-blocked",
+                            Status = "Blocked",
+                            DirectiveKinds = ["Observe"]
+                        }
+                    ]
+                }
+            }
+        };
+        var aggregator = new DefaultDecisionPlanAggregator(options);
+
+        var plan = aggregator.Aggregate(
+            sessionId,
+            DateTimeOffset.Parse("2026-04-15T12:00:00Z"),
+            [
+                Result("ThreatResponsePolicy", Directive("ThreatResponsePolicy", DecisionDirectiveKind.Observe, 300)),
+                Result("ResourceUsagePolicy", Directive("ResourceUsagePolicy", DecisionDirectiveKind.UseResource, 250))
+            ]);
+
+        Assert.Single(plan.Directives);
+        Assert.Equal(DecisionDirectiveKind.Observe, plan.Directives[0].DirectiveKind);
+        Assert.Equal(DecisionPlanStatus.Blocked, plan.PlanStatus);
+        Assert.Equal(1, plan.Summary.SuppressedDirectiveCounts["custom-observe-suppresses-use"]);
     }
 
     [Fact]
