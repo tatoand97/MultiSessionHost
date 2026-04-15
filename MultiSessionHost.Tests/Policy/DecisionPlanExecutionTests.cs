@@ -4,6 +4,7 @@ using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Policy;
+using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Infrastructure.State;
 using MultiSessionHost.Tests.Common;
@@ -140,6 +141,26 @@ public sealed class DecisionPlanExecutionTests
     }
 
     [Fact]
+    public async Task ExecuteLatestAsync_PausedPolicy_ReturnsSkippedExecution()
+    {
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-04-15T12:00:00Z"));
+        var fixture = CreateFixture(clock, [new ObserveDirectiveHandler()]);
+        var sessionId = new SessionId("exec-paused");
+        var plan = CreatePlan(sessionId.Value, Directive("observe-1", DecisionDirectiveKind.Observe));
+        await fixture.PlanStore.UpdateAsync(sessionId, plan, CancellationToken.None);
+        await fixture.PolicyControlService.PauseAsync(
+            sessionId,
+            new PolicyControlActionRequest("policy:test-paused", "paused for test", "tester", new Dictionary<string, string>()),
+            CancellationToken.None);
+
+        var result = await fixture.Executor.ExecuteLatestAsync(sessionId, wasAutoExecuted: false, CancellationToken.None);
+
+        Assert.Equal(DecisionPlanExecutionStatus.Skipped, result.ExecutionStatus);
+        Assert.Contains(result.Warnings, warning => warning.Contains("paused", StringComparison.OrdinalIgnoreCase));
+        Assert.Empty(result.DirectiveResults);
+    }
+
+    [Fact]
     public async Task PauseActivityHandler_UsesSessionControlGateway()
     {
         var sessionId = new SessionId("exec-pause");
@@ -167,7 +188,7 @@ public sealed class DecisionPlanExecutionTests
         Assert.Equal(DateTimeOffset.Parse("2026-04-15T12:00:00.025Z"), result.CompletedAtUtc);
     }
 
-    private static (DefaultDecisionPlanExecutor Executor, InMemorySessionDecisionPlanExecutionStore Store) CreateFixture(
+    private static (DefaultDecisionPlanExecutor Executor, InMemorySessionDecisionPlanExecutionStore Store, InMemorySessionDecisionPlanStore PlanStore, DefaultSessionPolicyControlService PolicyControlService) CreateFixture(
         FakeClock clock,
         IReadOnlyList<IDecisionDirectiveHandler> handlers)
     {
@@ -185,20 +206,24 @@ public sealed class DecisionPlanExecutionTests
             Sessions = [TestOptionsFactory.Session("exec-session", startupDelayMs: 0)]
         };
 
+        var planStore = new InMemorySessionDecisionPlanStore(options);
         var executionStore = new InMemorySessionDecisionPlanExecutionStore(options);
+        var policyControlStore = new InMemorySessionPolicyControlStore(options, clock);
+        var policyControlService = new DefaultSessionPolicyControlService(policyControlStore);
         var executor = new DefaultDecisionPlanExecutor(
             options,
-            new InMemorySessionDecisionPlanStore(options),
+            planStore,
             new InMemorySessionDomainStateStore(),
             new InMemorySessionRiskAssessmentStore(),
             new InMemorySessionActivityStateStore(),
             executionStore,
+            policyControlService,
             new MultiSessionHost.Desktop.Persistence.NoOpRuntimePersistenceCoordinator(),
             handlers,
             clock,
             NullLogger<DefaultDecisionPlanExecutor>.Instance);
 
-        return (executor, executionStore);
+        return (executor, executionStore, planStore, policyControlService);
     }
 
     private static DecisionPlanExecutionContext CreateContext(DecisionPlan plan)

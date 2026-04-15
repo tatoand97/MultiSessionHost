@@ -6,6 +6,7 @@ using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Policy;
+using MultiSessionHost.Desktop.PolicyControl;
 
 namespace MultiSessionHost.Desktop.Persistence;
 
@@ -30,6 +31,8 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
         public int DecisionPlanHistoryCount { get; set; }
 
         public int DecisionExecutionHistoryCount { get; set; }
+
+        public int PolicyControlHistoryCount { get; set; }
     }
 
     private readonly object _gate = new();
@@ -41,6 +44,7 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
     private readonly ISessionOperationalMemoryStore _operationalMemoryStore;
     private readonly ISessionDecisionPlanStore _decisionPlanStore;
     private readonly ISessionDecisionPlanExecutionStore _executionStore;
+    private readonly ISessionPolicyControlStore _policyControlStore;
     private readonly ILogger<RuntimePersistenceCoordinator> _logger;
     private readonly Dictionary<SessionId, SessionStatusState> _statuses = [];
 
@@ -53,6 +57,7 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
         ISessionOperationalMemoryStore operationalMemoryStore,
         ISessionDecisionPlanStore decisionPlanStore,
         ISessionDecisionPlanExecutionStore executionStore,
+        ISessionPolicyControlStore policyControlStore,
         ILogger<RuntimePersistenceCoordinator> logger)
     {
         _options = options;
@@ -63,6 +68,7 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
         _operationalMemoryStore = operationalMemoryStore;
         _decisionPlanStore = decisionPlanStore;
         _executionStore = executionStore;
+        _policyControlStore = policyControlStore;
         _logger = logger;
     }
 
@@ -166,7 +172,8 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
                             status.ActivityHistoryCount,
                             status.OperationalMemoryHistoryCount,
                             status.DecisionPlanHistoryCount,
-                            status.DecisionExecutionHistoryCount);
+                            status.DecisionExecutionHistoryCount,
+                            status.PolicyControlHistoryCount);
                     })
                 .ToArray();
 
@@ -217,6 +224,15 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
                 envelope.DecisionExecutionHistory,
                 cancellationToken).ConfigureAwait(false);
         }
+
+        if (_options.PolicyControl.PersistPolicyControlState)
+        {
+            await _policyControlStore.RestoreAsync(
+                envelope.SessionId,
+                envelope.PolicyControlState,
+                envelope.PolicyControlHistory,
+                cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async Task<SessionRuntimePersistenceEnvelope> BuildEnvelopeAsync(SessionId sessionId, CancellationToken cancellationToken)
@@ -242,6 +258,12 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
         var executionHistory = _options.RuntimePersistence.PersistDecisionExecution
             ? await _executionStore.GetHistoryAsync(sessionId, cancellationToken).ConfigureAwait(false)
             : [];
+        var policyControlState = _options.PolicyControl.PersistPolicyControlState
+            ? await _policyControlStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false)
+            : null;
+        var policyControlHistory = _options.PolicyControl.PersistPolicyControlState
+            ? await _policyControlStore.GetHistoryAsync(sessionId, cancellationToken).ConfigureAwait(false)
+            : [];
 
         return new SessionRuntimePersistenceEnvelope(
             _options.RuntimePersistence.SchemaVersion,
@@ -254,6 +276,8 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
             decisionHistory,
             latestExecution,
             executionHistory,
+            policyControlState,
+            policyControlHistory,
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["source"] = "runtime-persistence",
@@ -275,6 +299,7 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
             status.OperationalMemoryHistoryCount = envelope.OperationalMemoryHistory.Count;
             status.DecisionPlanHistoryCount = envelope.DecisionPlanHistory.Count;
             status.DecisionExecutionHistoryCount = envelope.DecisionExecutionHistory.Count;
+            status.PolicyControlHistoryCount = envelope.PolicyControlHistory.Count;
         }
     }
 
@@ -291,6 +316,7 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
             status.OperationalMemoryHistoryCount = envelope.OperationalMemoryHistory.Count;
             status.DecisionPlanHistoryCount = envelope.DecisionPlanHistory.Count;
             status.DecisionExecutionHistoryCount = envelope.DecisionExecutionHistory.Count;
+            status.PolicyControlHistoryCount = envelope.PolicyControlHistory.Count;
         }
     }
 

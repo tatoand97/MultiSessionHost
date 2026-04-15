@@ -6,6 +6,7 @@ using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Risk;
+using MultiSessionHost.Desktop.PolicyControl;
 
 namespace MultiSessionHost.Desktop.Policy;
 
@@ -21,6 +22,7 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
     private readonly ISessionRiskAssessmentStore _riskAssessmentStore;
     private readonly ISessionOperationalMemoryReader _operationalMemoryStore;
     private readonly IPolicyMemoryContextBuilder _memoryContextBuilder;
+    private readonly ISessionPolicyControlService _policyControlService;
     private readonly IEnumerable<IPolicy> _policies;
     private readonly IDecisionPlanAggregator _aggregator;
     private readonly ISessionDecisionPlanStore _decisionPlanStore;
@@ -39,6 +41,7 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
         ISessionRiskAssessmentStore riskAssessmentStore,
         ISessionOperationalMemoryReader operationalMemoryStore,
         IPolicyMemoryContextBuilder memoryContextBuilder,
+        ISessionPolicyControlService policyControlService,
         IEnumerable<IPolicy> policies,
         IDecisionPlanAggregator aggregator,
         ISessionDecisionPlanStore decisionPlanStore,
@@ -56,6 +59,7 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
         _riskAssessmentStore = riskAssessmentStore;
         _operationalMemoryStore = operationalMemoryStore;
         _memoryContextBuilder = memoryContextBuilder;
+        _policyControlService = policyControlService;
         _policies = policies;
         _aggregator = aggregator;
         _decisionPlanStore = decisionPlanStore;
@@ -67,6 +71,18 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
     public async ValueTask<DecisionPlan> EvaluateAsync(SessionId sessionId, CancellationToken cancellationToken)
     {
         var now = _clock.UtcNow;
+
+        if (_options.PolicyControl.EnablePolicyControl)
+        {
+            var gate = await _policyControlService.GetEvaluationGateAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (gate.IsPolicyPaused)
+            {
+                var pausedPlan = CreatePausedPlan(sessionId, now, gate);
+                var storedPausedPlan = await _decisionPlanStore.UpdateAsync(sessionId, pausedPlan, cancellationToken).ConfigureAwait(false);
+                await FlushIfEnabledAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return storedPausedPlan;
+            }
+        }
 
         if (!_options.PolicyEngine.EnablePolicyEngine)
         {
@@ -101,6 +117,43 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
         var storedPlan = await _decisionPlanStore.UpdateAsync(sessionId, plan, cancellationToken).ConfigureAwait(false);
         await FlushIfEnabledAsync(sessionId, cancellationToken).ConfigureAwait(false);
         return storedPlan;
+    }
+
+    private static DecisionPlan CreatePausedPlan(SessionId sessionId, DateTimeOffset now, PolicyEvaluationGateResult gate)
+    {
+        var reasonCode = gate.ReasonCode ?? "policy:paused";
+        var reason = gate.Reason ?? "Policy evaluation is paused by operator.";
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["reasonCode"] = reasonCode,
+            ["isPolicyPaused"] = bool.TrueString
+        };
+
+        if (gate.State.PausedAtUtc is not null)
+        {
+            metadata["pausedAtUtc"] = gate.State.PausedAtUtc.Value.ToString("O");
+        }
+
+        if (!string.IsNullOrWhiteSpace(gate.State.ChangedBy))
+        {
+            metadata["changedBy"] = gate.State.ChangedBy!;
+        }
+
+        var decisionReason = new DecisionReason(
+            "PolicyControl",
+            reasonCode,
+            reason,
+            metadata);
+
+        return new DecisionPlan(
+            sessionId,
+            now,
+            DecisionPlanStatus.Blocked,
+            [],
+            [decisionReason],
+            new PolicyExecutionSummary([], [], [], [], 0, 0, new Dictionary<string, int>(StringComparer.Ordinal)),
+            [reason],
+            new DecisionPlanExplanation([], [], [], [reason], [reasonCode]));
     }
 
     private Task FlushIfEnabledAsync(SessionId sessionId, CancellationToken cancellationToken) =>

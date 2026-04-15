@@ -9,6 +9,7 @@ using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
+using MultiSessionHost.Desktop.PolicyControl;
 
 namespace MultiSessionHost.Desktop.Behavior;
 
@@ -20,6 +21,7 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
     private readonly ISessionRiskAssessmentStore _riskAssessmentStore;
     private readonly ISessionActivityStateStore _activityStateStore;
     private readonly ISessionDecisionPlanExecutionStore _executionStore;
+    private readonly ISessionPolicyControlService _policyControlService;
     private readonly IRuntimePersistenceCoordinator _runtimePersistenceCoordinator;
     private readonly IReadOnlyList<IDecisionDirectiveHandler> _directiveHandlers;
     private readonly IClock _clock;
@@ -32,6 +34,7 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
         ISessionRiskAssessmentStore riskAssessmentStore,
         ISessionActivityStateStore activityStateStore,
         ISessionDecisionPlanExecutionStore executionStore,
+        ISessionPolicyControlService policyControlService,
         IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
         IEnumerable<IDecisionDirectiveHandler> directiveHandlers,
         IClock clock,
@@ -43,6 +46,7 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
         _riskAssessmentStore = riskAssessmentStore;
         _activityStateStore = activityStateStore;
         _executionStore = executionStore;
+        _policyControlService = policyControlService;
         _runtimePersistenceCoordinator = runtimePersistenceCoordinator;
         _directiveHandlers = directiveHandlers.ToArray();
         _clock = clock;
@@ -53,6 +57,16 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
     {
         var plan = await _decisionPlanStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Decision plan for session '{sessionId}' was not found.");
+
+        if (_options.PolicyControl.EnablePolicyControl)
+        {
+            var gate = await _policyControlService.GetEvaluationGateAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (gate.IsPolicyPaused)
+            {
+                return CreatePausedExecutionResult(plan, gate, wasAutoExecuted, _clock.UtcNow);
+            }
+        }
+
         var domainState = await _sessionDomainStateStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
         var riskAssessment = await _riskAssessmentStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
         var activitySnapshot = await _activityStateStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
@@ -321,6 +335,36 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
             Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["skipReason"] = "duplicate-suppression"
+            });
+    }
+
+    private static DecisionPlanExecutionResult CreatePausedExecutionResult(
+        DecisionPlan plan,
+        PolicyEvaluationGateResult gate,
+        bool wasAutoExecuted,
+        DateTimeOffset now)
+    {
+        var planFingerprint = ComputePlanFingerprint(plan);
+        var reasonCode = gate.ReasonCode ?? "policy:paused";
+        var reason = gate.Reason ?? "Policy execution is paused by operator.";
+
+        return new DecisionPlanExecutionResult(
+            plan.SessionId,
+            planFingerprint,
+            now,
+            now,
+            now,
+            DecisionPlanExecutionStatus.Skipped,
+            wasAutoExecuted,
+            [],
+            new DecisionPlanExecutionSummary(0, 0, 0, 0, 0, 0, 0, 0, [], [], []),
+            DeferredUntilUtc: null,
+            FailureReason: null,
+            [reason],
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["skipReason"] = "policy-paused",
+                ["reasonCode"] = reasonCode
             });
     }
 

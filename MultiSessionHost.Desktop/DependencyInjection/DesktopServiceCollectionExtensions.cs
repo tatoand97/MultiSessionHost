@@ -13,6 +13,7 @@ using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
+using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Processes;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Snapshots;
@@ -112,6 +113,8 @@ public static class DesktopServiceCollectionExtensions
                 serviceProvider.GetRequiredService<IPolicyRuleMatcher>()));
         services.AddSingleton<IDecisionPlanAggregator, DefaultDecisionPlanAggregator>();
         services.AddSingleton<ISessionDecisionPlanStore, InMemorySessionDecisionPlanStore>();
+        services.AddSingleton<ISessionPolicyControlStore, InMemorySessionPolicyControlStore>();
+        services.AddSingleton<ISessionPolicyControlService, DefaultSessionPolicyControlService>();
         services.AddSingleton<IPolicyEngine, DefaultPolicyEngine>();
         services.AddSingleton<ISessionDecisionPlanExecutionStore, InMemorySessionDecisionPlanExecutionStore>();
         services.AddSingleton<ISessionControlGateway, DefaultSessionControlGateway>();

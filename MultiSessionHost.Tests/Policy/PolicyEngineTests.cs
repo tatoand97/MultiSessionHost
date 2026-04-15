@@ -6,6 +6,7 @@ using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Policy;
+using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Infrastructure.Queues;
 using MultiSessionHost.Infrastructure.Registry;
@@ -352,6 +353,8 @@ public sealed class PolicyEngineTests
         var queue = new ChannelBasedWorkQueue();
         var options = new SessionHostOptions();
         var planStore = new InMemorySessionDecisionPlanStore(options);
+        var policyControlStore = new InMemorySessionPolicyControlStore(options, clock);
+        var policyControlService = new DefaultSessionPolicyControlService(policyControlStore);
 
         foreach (var sessionId in new[] { alphaId, betaId })
         {
@@ -375,6 +378,7 @@ public sealed class PolicyEngineTests
             riskStore,
             new StubOperationalMemoryReader(),
             new StubPolicyMemoryContextBuilder(),
+            policyControlService,
             CreatePolicies(options),
             new DefaultDecisionPlanAggregator(options),
             planStore,
@@ -388,6 +392,60 @@ public sealed class PolicyEngineTests
         Assert.Contains(alphaPlan.Directives, static directive => directive.DirectiveKind == DecisionDirectiveKind.SelectSite);
         Assert.NotNull(await planStore.GetLatestAsync(alphaId, CancellationToken.None));
         Assert.Null(await planStore.GetLatestAsync(betaId, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task PolicyEngine_WhenPausedEmitsBlockedInspectablePlan()
+    {
+        var sessionId = new SessionId("engine-paused");
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-04-15T12:00:00Z"));
+        var registry = new InMemorySessionRegistry();
+        var stateStore = new InMemorySessionStateStore();
+        var uiStore = new InMemorySessionUiStateStore();
+        var domainStore = new InMemorySessionDomainStateStore();
+        var semanticStore = new InMemorySessionSemanticExtractionStore();
+        var riskStore = new InMemorySessionRiskAssessmentStore();
+        var queue = new ChannelBasedWorkQueue();
+        var options = new SessionHostOptions();
+        var planStore = new InMemorySessionDecisionPlanStore(options);
+        var policyControlStore = new InMemorySessionPolicyControlStore(options, clock);
+        var policyControlService = new DefaultSessionPolicyControlService(policyControlStore);
+
+        var definition = CreateDefinition(sessionId);
+        await registry.RegisterAsync(definition, CancellationToken.None);
+        await stateStore.InitializeAsync(SessionRuntimeState.Create(definition, clock.UtcNow) with { CurrentStatus = SessionStatus.Running }, CancellationToken.None);
+        await uiStore.InitializeAsync(SessionUiState.Create(sessionId), CancellationToken.None);
+        await domainStore.InitializeAsync(CreateDomain(sessionId), CancellationToken.None);
+        await policyControlService.PauseAsync(
+            sessionId,
+            new PolicyControlActionRequest("policy:paused", "paused for test", "tester", new Dictionary<string, string>()),
+            CancellationToken.None);
+
+        var engine = new DefaultPolicyEngine(
+            options,
+            registry,
+            stateStore,
+            queue,
+            uiStore,
+            domainStore,
+            semanticStore,
+            riskStore,
+            new StubOperationalMemoryReader(),
+            new StubPolicyMemoryContextBuilder(),
+            policyControlService,
+            CreatePolicies(options),
+            new DefaultDecisionPlanAggregator(options),
+            planStore,
+            new MultiSessionHost.Desktop.Persistence.NoOpRuntimePersistenceCoordinator(),
+            clock,
+            NullLogger<DefaultPolicyEngine>.Instance);
+
+        var plan = await engine.EvaluateAsync(sessionId, CancellationToken.None);
+
+        Assert.Equal(DecisionPlanStatus.Blocked, plan.PlanStatus);
+        Assert.Empty(plan.Directives);
+        Assert.Contains(plan.Warnings, warning => warning.Contains("paused", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(plan.Reasons, reason => reason.Code == "policy:paused");
     }
 
     [Fact]

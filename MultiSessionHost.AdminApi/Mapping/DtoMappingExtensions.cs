@@ -11,6 +11,7 @@ using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Models;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
+using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
 
 namespace MultiSessionHost.AdminApi.Mapping;
@@ -979,5 +980,37 @@ public static class DtoMappingExtensions
             status.ActivityHistoryCount,
             status.OperationalMemoryHistoryCount,
             status.DecisionPlanHistoryCount,
-            status.DecisionExecutionHistoryCount);
+            status.DecisionExecutionHistoryCount,
+            status.PolicyControlHistoryCount);
+
+    public static SessionPolicyControlStateDto ToDto(this SessionPolicyControlState state) =>
+        new(
+            state.SessionId.Value,
+            state.IsPolicyPaused,
+            state.PausedAtUtc,
+            state.ResumedAtUtc,
+            state.LastChangedAtUtc,
+            state.ReasonCode,
+            state.Reason,
+            state.ChangedBy,
+            state.Metadata);
+
+    public static SessionPolicyControlHistoryEntryDto ToDto(this SessionPolicyControlHistoryEntry entry) =>
+        new(
+            entry.SessionId.Value,
+            entry.Action.ToString(),
+            entry.OccurredAtUtc,
+            entry.ReasonCode,
+            entry.Reason,
+            entry.ChangedBy,
+            entry.Metadata);
+
+    public static PolicyControlActionResultDto ToDto(this PolicyControlActionResult result) =>
+        new(
+            result.State.SessionId.Value,
+            result.Action.ToString(),
+            result.WasChanged,
+            result.State.ToDto(),
+            result.History.Select(static entry => entry.ToDto()).ToArray(),
+            result.Message);
 }

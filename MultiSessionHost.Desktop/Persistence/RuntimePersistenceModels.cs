@@ -3,6 +3,7 @@ using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Policy;
+using MultiSessionHost.Desktop.PolicyControl;
 
 namespace MultiSessionHost.Desktop.Persistence;
 
@@ -17,6 +18,8 @@ public sealed record SessionRuntimePersistenceEnvelope(
     IReadOnlyList<DecisionPlanHistoryEntry> DecisionPlanHistory,
     DecisionPlanExecutionResult? LatestDecisionExecution,
     IReadOnlyList<DecisionPlanExecutionRecord> DecisionExecutionHistory,
+    SessionPolicyControlState? PolicyControlState,
+    IReadOnlyList<SessionPolicyControlHistoryEntry> PolicyControlHistory,
     IReadOnlyDictionary<string, string> Metadata);
 
 public sealed record RuntimePersistenceSessionStatus(
@@ -29,7 +32,8 @@ public sealed record RuntimePersistenceSessionStatus(
     int ActivityHistoryCount,
     int OperationalMemoryHistoryCount,
     int DecisionPlanHistoryCount,
-    int DecisionExecutionHistoryCount);
+    int DecisionExecutionHistoryCount,
+    int PolicyControlHistoryCount);
 
 public sealed record RuntimePersistenceStatusSnapshot(
     bool Enabled,

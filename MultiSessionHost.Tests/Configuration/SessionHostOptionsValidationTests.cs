@@ -277,6 +277,38 @@ public sealed class SessionHostOptionsValidationTests
     }
 
     [Fact]
+    public void TryValidate_AcceptsDefaultPolicyControlOptions()
+    {
+        var options = new SessionHostOptions
+        {
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.True(valid, error);
+        Assert.True(options.PolicyControl.EnablePolicyControl);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenPolicyControlHistoryLimitIsInvalid()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyControl = new PolicyControlOptions
+            {
+                MaxHistoryEntries = 0
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("PolicyControl.MaxHistoryEntries", error);
+    }
+
+    [Fact]
     public void TryValidate_FailsWhenDecisionExecutionSuppressionWindowIsNegative()
     {
         var options = new SessionHostOptions

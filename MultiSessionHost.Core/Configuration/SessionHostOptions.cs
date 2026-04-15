@@ -37,6 +37,8 @@ public sealed class SessionHostOptions
 
     public RuntimePersistenceOptions RuntimePersistence { get; init; } = new();
 
+    public PolicyControlOptions PolicyControl { get; init; } = new();
+
     public IReadOnlyList<DesktopTargetProfileOptions> DesktopTargets { get; init; } = [];
 
     public IReadOnlyList<SessionTargetBindingOptions> SessionTargetBindings { get; init; } = [];
@@ -103,6 +105,19 @@ public sealed class RuntimePersistenceOptions
     public bool AutoFlushAfterStateChanges { get; init; } = true;
 
     public bool FailOnPersistenceErrors { get; init; }
+}
+
+public sealed class PolicyControlOptions
+{
+    public bool EnablePolicyControl { get; init; } = true;
+
+    public bool PersistPolicyControlState { get; init; } = true;
+
+    public int MaxHistoryEntries { get; init; } = 100;
+
+    public bool BlockManualExecutionWhenPaused { get; init; } = true;
+
+    public bool EmitPausedDecisionPlan { get; init; } = true;
 }
 
 public sealed class SessionDefinitionOptions

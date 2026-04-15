@@ -18,7 +18,8 @@ public sealed record RuntimePersistenceSessionStatusDto(
     int ActivityHistoryCount,
     int OperationalMemoryHistoryCount,
     int DecisionPlanHistoryCount,
-    int DecisionExecutionHistoryCount);
+    int DecisionExecutionHistoryCount,
+    int PolicyControlHistoryCount);
 
 public sealed record DecisionPlanHistoryEntryDto(
     string SessionId,

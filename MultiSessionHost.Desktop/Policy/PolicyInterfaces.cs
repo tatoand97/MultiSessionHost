@@ -1,10 +1,16 @@
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.PolicyControl;
 
 namespace MultiSessionHost.Desktop.Policy;
 
 public interface IPolicyEngine
 {
     ValueTask<DecisionPlan> EvaluateAsync(SessionId sessionId, CancellationToken cancellationToken);
+}
+
+public interface IPolicyControlGate
+{
+    ValueTask<PolicyEvaluationGateResult> GetEvaluationGateAsync(SessionId sessionId, CancellationToken cancellationToken);
 }
 
 public interface IPolicy

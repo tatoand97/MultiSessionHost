@@ -411,7 +411,7 @@ Ejemplo abreviado:
 
 ## Runtime persistence (Fase 3.2)
 
-Fase 3.2 agrega la primera capa durable real para estado operacional runtime, adicional a la persistencia de bindings que ya existía. El worker sigue siendo Worker-first sobre Generic Host y la Admin API sigue en el mismo proceso/DI container. Los stores principales siguen siendo in-memory; la persistencia guarda envelopes resumidos para rehidratación segura después de reinicio.
+Fase 3.2 agrega la primera capa durable real para estado operacional runtime, adicional a la persistencia de bindings que ya existía. El worker sigue siendo Worker-first sobre Generic Host y la Admin API sigue en el mismo proceso/DI container. Los stores principales siguen siendo in-memory; la persistencia guarda envelopes resumidos para rehidratación segura después de reinicio. Desde Fase 4.1, el envelope también incluye el estado de policy control por sesión y su historial acotado.
 
 ### Qué se persiste
 
@@ -422,6 +422,8 @@ Fase 3.2 agrega la primera capa durable real para estado operacional runtime, ad
 - historial acotado de planes (`DecisionPlanHistoryEntry`).
 - último `DecisionPlanExecutionResult`.
 - historial acotado de `DecisionPlanExecutionRecord`.
+- `SessionPolicyControlState`.
+- historial acotado de `SessionPolicyControlHistoryEntry`.
 - metadata pequeña de persistencia, como `schemaVersion` y `savedAtUtc`.
 
 ### Qué no se persiste
@@ -490,10 +492,10 @@ Al arrancar, el worker:
 1. inicializa bindings con el mecanismo existente.
 2. inicializa sesiones/stores normales del coordinator.
 3. carga envelopes persistidos para sesiones configuradas.
-4. rehidrata actividad, memoria operacional, historial de planes y ejecución.
+4. rehidrata actividad, memoria operacional, historial de planes, ejecución y policy control.
 5. ignora sesiones persistidas ausentes de la configuración actual.
 
-Después de mutaciones relevantes, el coordinator hace flush del envelope actual cuando `AutoFlushAfterStateChanges=true`. Esto ocurre después de evaluación de políticas, ejecución de planes, updates de actividad y memoria operacional. Los errores se loguean y quedan visibles por Admin API; solo hacen fallar la operación si `FailOnPersistenceErrors=true`.
+Después de mutaciones relevantes, el coordinator hace flush del envelope actual cuando `AutoFlushAfterStateChanges=true`. Esto ocurre después de evaluación de políticas, ejecución de planes, updates de actividad, memoria operacional y cambios de policy control. Los errores se loguean y quedan visibles por Admin API; solo hacen fallar la operación si `FailOnPersistenceErrors=true`.
 
 ### Admin API de persistencia
 
@@ -683,7 +685,7 @@ Si la proyección UI falla, el mismo servicio registra el error en `SessionUiSta
 
 ## Policy engine
 
-El policy engine es la capa de comportamiento. Vive después de la proyección de dominio y consume `SessionDomainState`, `UiSemanticExtractionResult` y `RiskAssessmentResult` sin reemplazar esas capas. Las políticas ya no contienen constantes de comportamiento: selección, espera, retiro, pausa, umbrales, prioridades, allowlists y denylists salen de reglas configurables bajo `PolicyEngine:Rules`. Su salida es un `DecisionPlan` inmutable con:
+El policy engine es la capa de comportamiento. Vive después de la proyección de dominio y consume `SessionDomainState`, `UiSemanticExtractionResult` y `RiskAssessmentResult` sin reemplazar esas capas. Las políticas ya no contienen constantes de comportamiento: selección, espera, retiro, pausa, umbrales, prioridades, allowlists y denylists salen de reglas configurables bajo `PolicyEngine:Rules`. Cuando una sesión tiene la policy pausada, el engine no evalúa el conjunto normal de policies y devuelve un `DecisionPlan` bloqueado e inspeccionable con una razón explícita. Su salida normal es un `DecisionPlan` inmutable con:
 
 - `PlanStatus`
 - `DecisionDirective[]`
@@ -1496,6 +1498,11 @@ Endpoints existentes mantenidos:
 - `GET /sessions/{id}/persistence`
 - `POST /persistence/flush`
 - `POST /sessions/{id}/persistence/flush`
+- `GET /policy`
+- `GET /sessions/{id}/policy-state`
+- `GET /sessions/{id}/policy-state/history`
+- `POST /sessions/{id}/pause-policy`
+- `POST /sessions/{id}/resume-policy`
 - `GET /policy-rules`
 - `GET /policy-rules/site-selection`
 - `GET /policy-rules/threat-response`
@@ -1511,6 +1518,39 @@ Endpoints nuevos de inspección:
 - `GET /sessions/{id}/target`
 - `GET /bindings`
 - `GET /bindings/{sessionId}`
+
+### Control de policy por sesión (Fase 4.1)
+
+La policy control no detiene el runtime de la sesión. Solo bloquea la planificación y ejecución dirigidas por policy para una sesión concreta.
+
+- `POST /sessions/{id}/pause-policy` marca la policy como pausada para esa sesión.
+- `POST /sessions/{id}/resume-policy` vuelve a habilitar la policy para esa sesión.
+- `GET /sessions/{id}/policy-state` expone el estado actual.
+- `GET /sessions/{id}/policy-state/history` expone el historial acotado.
+- `GET /policy` devuelve el estado de policy de todas las sesiones configuradas.
+
+Mientras la policy está pausada, el runtime puede seguir haciendo refresh de UI, extracción semántica, clasificación de riesgo, proyección de dominio, actualización de memoria operacional y flush de persistencia. Lo que se bloquea de forma determinista es la evaluación normal de policies y la ejecución manual o automática de planes basados en esas policies. Si la persistencia runtime está habilitada, el estado pausado y su historial se rehidratan después del reinicio.
+
+Ejemplo de pausa:
+
+```json
+{
+  "reasonCode": "operator:maintenance",
+  "reason": "Temporarily freeze policy-driven decisions",
+  "changedBy": "ops",
+  "metadata": {
+    "ticket": "INC-1234"
+  }
+}
+```
+
+Ejemplo de conflicto al ejecutar mientras está pausada:
+
+```json
+{
+  "error": "Policy-driven execution is paused for session 'alpha'."
+}
+```
 
 Endpoints nuevos de comandos semánticos:
 

@@ -107,6 +107,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidatePolicyControl(options.PolicyControl, out error))
+        {
+            return false;
+        }
+
         if (options.Sessions.Count == 0)
         {
             error = "At least one session must be configured.";
@@ -277,6 +282,22 @@ public static class SessionHostOptionsExtensions
         if (options.MaxPersistedSessions < 0)
         {
             error = "RuntimePersistence.MaxPersistedSessions cannot be negative.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidatePolicyControl(
+        PolicyControlOptions options,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.MaxHistoryEntries <= 0)
+        {
+            error = "PolicyControl.MaxHistoryEntries must be greater than zero.";
             return false;
         }
 

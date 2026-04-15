@@ -15,6 +15,7 @@ using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
+using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.UiModel.Models;
 
@@ -373,6 +374,161 @@ public static class AdminApiEndpointRouteBuilderExtensions
 
                 await runtimePersistenceCoordinator.FlushAllAsync(cancellationToken).ConfigureAwait(false);
                 return Results.Accepted("/persistence", runtimePersistenceCoordinator.GetStatus().ToDto());
+            });
+
+        endpoints.MapGet(
+            "/policy",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionPolicyControlService policyControlService,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var states = new List<SessionPolicyControlState>();
+                foreach (var session in sessionCoordinator.GetSessions())
+                {
+                    states.Add(await policyControlService.GetStateAsync(session.SessionId, cancellationToken).ConfigureAwait(false));
+                }
+
+                return Results.Ok(states.Select(static state => state.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/policy-state",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionPolicyControlService policyControlService,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var state = await policyControlService.GetStateAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(state.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/policy-state/history",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionPolicyControlService policyControlService,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var history = await policyControlService.GetHistoryAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(history.Select(static entry => entry.ToDto()).ToArray());
+            });
+
+        endpoints.MapPost(
+            "/sessions/{id}/pause-policy",
+            async Task<IResult> (
+                string id,
+                PolicyControlActionRequestDto? request,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionPolicyControlService policyControlService,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var actionResult = await policyControlService.PauseAsync(
+                    sessionId,
+                    new PolicyControlActionRequest(
+                        request?.ReasonCode,
+                        request?.Reason,
+                        request?.ChangedBy,
+                        request?.Metadata ?? new Dictionary<string, string>(StringComparer.Ordinal)),
+                    cancellationToken).ConfigureAwait(false);
+                return Results.Ok(actionResult.ToDto());
+            });
+
+        endpoints.MapPost(
+            "/sessions/{id}/resume-policy",
+            async Task<IResult> (
+                string id,
+                PolicyControlActionRequestDto? request,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionPolicyControlService policyControlService,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var actionResult = await policyControlService.ResumeAsync(
+                    sessionId,
+                    new PolicyControlActionRequest(
+                        request?.ReasonCode,
+                        request?.Reason,
+                        request?.ChangedBy,
+                        request?.Metadata ?? new Dictionary<string, string>(StringComparer.Ordinal)),
+                    cancellationToken).ConfigureAwait(false);
+                return Results.Ok(actionResult.ToDto());
             });
 
         endpoints.MapGet(
@@ -932,6 +1088,7 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 HttpContext httpContext,
                 IAdminAuthorizationPolicy authorizationPolicy,
                 ISessionCoordinator sessionCoordinator,
+                ISessionPolicyControlService policyControlService,
                 ISessionDecisionPlanStore decisionPlanStore,
                 IDecisionPlanExecutor decisionPlanExecutor,
                 ISessionDomainStateStore domainStateStore,
@@ -958,6 +1115,20 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 if (sessionCoordinator.GetSession(sessionId) is null)
                 {
                     return Results.NotFound();
+                }
+
+                if (options.PolicyControl.EnablePolicyControl && options.PolicyControl.BlockManualExecutionWhenPaused)
+                {
+                    var policyState = await policyControlService.GetStateAsync(sessionId, cancellationToken).ConfigureAwait(false);
+
+                    if (policyState.IsPolicyPaused)
+                    {
+                        return Results.Conflict(new
+                        {
+                            Error = $"Policy-driven execution is paused for session '{sessionId.Value}'.",
+                            PolicyState = policyState.ToDto()
+                        });
+                    }
                 }
 
                 var plan = await decisionPlanStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);

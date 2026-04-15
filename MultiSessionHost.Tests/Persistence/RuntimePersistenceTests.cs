@@ -10,6 +10,7 @@ using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
+using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Infrastructure.Registry;
 using MultiSessionHost.Tests.Common;
 
@@ -87,6 +88,8 @@ public sealed class RuntimePersistenceTests
             [new DecisionPlanHistoryEntry(sessionId, plan.PlannedAtUtc, plan)],
             LatestDecisionExecution: null,
             DecisionExecutionHistory: [],
+            PolicyControlState: SessionPolicyControlState.Create(sessionId),
+            PolicyControlHistory: [],
             Metadata: new Dictionary<string, string>());
 
         await backend.SaveSessionAsync(envelope, CancellationToken.None);
@@ -146,6 +149,45 @@ public sealed class RuntimePersistenceTests
         Assert.Equal(2, alphaExecutionHistory.Count);
         Assert.NotNull(alphaActivity);
         Assert.Equal(4, alphaActivity.History.Count);
+    }
+
+    [Fact]
+    public async Task Coordinator_PersistsAndRehydratesPolicyControlState()
+    {
+        var root = CreateTempDirectory();
+        var options = CreatePersistenceOptions(
+            root,
+            "persist-policy",
+            runtimePersistence: new RuntimePersistenceOptions
+            {
+                EnableRuntimePersistence = true,
+                Mode = RuntimePersistenceMode.JsonFile,
+                BasePath = root,
+                MaxDecisionHistoryEntries = 2,
+                AutoFlushAfterStateChanges = true
+            });
+        var sessionId = new SessionId("persist-policy");
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-04-15T12:00:00Z"));
+        var first = CreateStores(options, clock);
+
+        await RegisterSessionsAsync(first.Registry, options, clock);
+        await new DefaultSessionPolicyControlService(first.PolicyControlStore).PauseAsync(
+            sessionId,
+            new PolicyControlActionRequest("policy:paused", "paused for persistence test", "tester", new Dictionary<string, string>()),
+            CancellationToken.None);
+        await first.Coordinator.FlushAllAsync(CancellationToken.None);
+
+        var second = CreateStores(options, clock);
+        await RegisterSessionsAsync(second.Registry, options, clock);
+        await second.Coordinator.RehydrateAsync(CancellationToken.None);
+
+        var state = await second.PolicyControlStore.GetAsync(sessionId, CancellationToken.None);
+        var history = await second.PolicyControlStore.GetHistoryAsync(sessionId, CancellationToken.None);
+
+        Assert.True(state.IsPolicyPaused);
+        Assert.NotNull(state.LastChangedAtUtc);
+        Assert.Single(history);
+        Assert.Equal(SessionPolicyControlAction.PausePolicy, history[0].Action);
     }
 
     [Fact]
@@ -237,6 +279,7 @@ public sealed class RuntimePersistenceTests
         var memoryStore = new InMemorySessionOperationalMemoryStore(options);
         var planStore = new InMemorySessionDecisionPlanStore(options);
         var executionStore = new InMemorySessionDecisionPlanExecutionStore(options);
+        var policyControlStore = new InMemorySessionPolicyControlStore(options, clock);
         var backend = CreateBackend(options);
         var coordinator = new RuntimePersistenceCoordinator(
             options,
@@ -247,9 +290,10 @@ public sealed class RuntimePersistenceTests
             memoryStore,
             planStore,
             executionStore,
+            policyControlStore,
             NullLogger<RuntimePersistenceCoordinator>.Instance);
 
-        return new TestStores(registry, activityStore, memoryStore, planStore, executionStore, coordinator);
+        return new TestStores(registry, activityStore, memoryStore, planStore, executionStore, policyControlStore, coordinator);
     }
 
     private static JsonFileRuntimePersistenceBackend CreateBackend(SessionHostOptions options) =>
@@ -306,6 +350,7 @@ public sealed class RuntimePersistenceTests
         InMemorySessionOperationalMemoryStore MemoryStore,
         InMemorySessionDecisionPlanStore DecisionPlanStore,
         InMemorySessionDecisionPlanExecutionStore ExecutionStore,
+        InMemorySessionPolicyControlStore PolicyControlStore,
         RuntimePersistenceCoordinator Coordinator);
 
     private sealed class TestHostEnvironment : IHostEnvironment
