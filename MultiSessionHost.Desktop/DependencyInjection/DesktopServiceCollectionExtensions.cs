@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using MultiSessionHost.Desktop.Adapters;
 using MultiSessionHost.Desktop.Attachments;
+using MultiSessionHost.Desktop.Commands;
 using MultiSessionHost.Desktop.Drivers;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Processes;
@@ -41,9 +42,12 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<IWorkItemPlannerResolver, DefaultWorkItemPlannerResolver>();
         services.AddSingleton<IUiNodeSelector, DefaultUiNodeSelector>();
         services.AddSingleton<IUiStateProjector, DefaultUiStateProjector>();
+        services.AddSingleton<IUiActionResolver, DefaultUiActionResolver>();
+        services.AddSingleton<MultiSessionHost.Core.Interfaces.IUiCommandExecutor, UiCommandExecutor>();
         services.AddSingleton<IDesktopTargetAdapter, SelfHostedHttpDesktopTargetAdapter>();
         services.AddSingleton<IDesktopTargetAdapter, DesktopTestAppTargetAdapter>();
         services.AddSingleton<IDesktopTargetAdapterRegistry, DesktopTargetAdapterRegistry>();
+        services.AddSingleton<IUiInteractionAdapter, TestDesktopAppUiInteractionAdapter>();
         services.AddSingleton<DesktopTargetSessionDriver>();
 
         return services;

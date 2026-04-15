@@ -159,6 +159,17 @@ public static class DtoMappingExtensions
             adapter.Kind.ToString(),
             adapter.GetType().Name);
 
+    public static UiCommandResultDto ToDto(this UiCommandResult result) =>
+        new(
+            result.Succeeded,
+            result.SessionId.Value,
+            result.NodeId?.Value,
+            result.Kind.ToString(),
+            result.Message,
+            result.ExecutedAtUtc,
+            result.UpdatedUiStateAvailable,
+            result.FailureCode);
+
     private static JsonElement? ParseRawSnapshot(string? rawSnapshotJson)
     {
         if (string.IsNullOrWhiteSpace(rawSnapshotJson))

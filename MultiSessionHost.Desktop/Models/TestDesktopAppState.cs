@@ -5,6 +5,7 @@ public sealed record TestDesktopAppState(
     string Status,
     string Notes,
     bool Enabled,
+    string? SelectedItem,
     IReadOnlyList<string> Items,
     int TickCount,
     int Port,

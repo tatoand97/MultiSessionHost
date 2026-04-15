@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using MultiSessionHost.Core.Constants;
+using MultiSessionHost.Desktop.Models;
 
 namespace MultiSessionHost.TestDesktopApp;
 
@@ -41,6 +43,23 @@ public static class Program
     {
         app.MapGet("/state", (MainForm form) => form.CaptureStateAsync());
         app.MapGet("/ui-snapshot", (MainForm form) => form.CaptureUiSnapshotAsync());
+        app.MapPost("/ui/nodes/{nodeId}/click", async Task<IResult> (string nodeId, MainForm form) => ToResult(await form.ClickNodeAsync(nodeId).ConfigureAwait(false)));
+        app.MapPost(
+            "/ui/nodes/{nodeId}/invoke",
+            async Task<IResult> (string nodeId, UiInvokeRequest? request, MainForm form) =>
+                ToResult(await form.InvokeNodeActionAsync(nodeId, request?.ActionName).ConfigureAwait(false)));
+        app.MapPost(
+            "/ui/nodes/{nodeId}/text",
+            async Task<IResult> (string nodeId, UiTextRequest? request, MainForm form) =>
+                ToResult(await form.SetNodeTextAsync(nodeId, request?.TextValue).ConfigureAwait(false)));
+        app.MapPost(
+            "/ui/nodes/{nodeId}/toggle",
+            async Task<IResult> (string nodeId, UiToggleRequest? request, MainForm form) =>
+                ToResult(await form.ToggleNodeAsync(nodeId, request?.BoolValue).ConfigureAwait(false)));
+        app.MapPost(
+            "/ui/nodes/{nodeId}/select",
+            async Task<IResult> (string nodeId, UiSelectRequest? request, MainForm form) =>
+                ToResult(await form.SelectItemAsync(nodeId, request?.SelectedValue).ConfigureAwait(false)));
         app.MapPost("/start", (MainForm form) => form.StartSessionAsync());
         app.MapPost("/pause", (MainForm form) => form.PauseSessionAsync());
         app.MapPost("/resume", (MainForm form) => form.ResumeSessionAsync());
@@ -49,4 +68,14 @@ public static class Program
 
         app.MapGet("/", () => Results.Ok(new { Status = "ok" }));
     }
+
+    private static IResult ToResult(UiInteractionResult result) =>
+        result.Succeeded
+            ? Results.Ok(result)
+            : result.FailureCode switch
+            {
+                UiCommandFailureCodes.NodeNotFound => Results.NotFound(result),
+                UiCommandFailureCodes.InvalidCommandPayload => Results.BadRequest(result),
+                _ => Results.Conflict(result)
+            };
 }

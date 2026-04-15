@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using MultiSessionHost.Core.Constants;
 using MultiSessionHost.Desktop.Models;
 
 namespace MultiSessionHost.TestDesktopApp;
@@ -87,11 +88,11 @@ public sealed class MainForm : Form
             Text = "Enabled"
         };
 
-        _startButton = CreateActionButton("startButton", "Start", async () => await StartSessionAsync().ConfigureAwait(false));
-        _pauseButton = CreateActionButton("pauseButton", "Pause", async () => await PauseSessionAsync().ConfigureAwait(false));
-        _resumeButton = CreateActionButton("resumeButton", "Resume", async () => await ResumeSessionAsync().ConfigureAwait(false));
-        _stopButton = CreateActionButton("stopButton", "Stop", async () => await StopSessionAsync().ConfigureAwait(false));
-        _tickButton = CreateActionButton("tickButton", "Tick", async () => await TickAsync().ConfigureAwait(false));
+        _startButton = CreateActionButton("startButton", "Start", StartSessionUnsafe);
+        _pauseButton = CreateActionButton("pauseButton", "Pause", PauseSessionUnsafe);
+        _resumeButton = CreateActionButton("resumeButton", "Resume", ResumeSessionUnsafe);
+        _stopButton = CreateActionButton("stopButton", "Stop", StopSessionUnsafe);
+        _tickButton = CreateActionButton("tickButton", "Tick", TickUnsafe);
 
         _tickCountLabel = new Label
         {
@@ -123,44 +124,126 @@ public sealed class MainForm : Form
         InvokeOnUiThreadAsync(CaptureUiSnapshotUnsafe);
 
     public Task<TestDesktopAppState> StartSessionAsync() =>
-        InvokeOnUiThreadAsync(
-            () =>
-            {
-                _statusLabel.Text = "Running";
-                return CaptureStateUnsafe();
-            });
+        InvokeOnUiThreadAsync(StartSessionUnsafe);
 
     public Task<TestDesktopAppState> PauseSessionAsync() =>
-        InvokeOnUiThreadAsync(
-            () =>
-            {
-                _statusLabel.Text = "Paused";
-                return CaptureStateUnsafe();
-            });
+        InvokeOnUiThreadAsync(PauseSessionUnsafe);
 
     public Task<TestDesktopAppState> ResumeSessionAsync() =>
-        InvokeOnUiThreadAsync(
-            () =>
-            {
-                _statusLabel.Text = "Running";
-                return CaptureStateUnsafe();
-            });
+        InvokeOnUiThreadAsync(ResumeSessionUnsafe);
 
     public Task<TestDesktopAppState> StopSessionAsync() =>
-        InvokeOnUiThreadAsync(
-            () =>
-            {
-                _statusLabel.Text = "Stopped";
-                return CaptureStateUnsafe();
-            });
+        InvokeOnUiThreadAsync(StopSessionUnsafe);
 
     public Task<TestDesktopAppState> TickAsync() =>
+        InvokeOnUiThreadAsync(TickUnsafe);
+
+    public Task<UiInteractionResult> ClickNodeAsync(string nodeId) =>
         InvokeOnUiThreadAsync(
             () =>
             {
-                _tickCount++;
-                _tickCountLabel.Text = _tickCount.ToString(CultureInfo.InvariantCulture);
-                return CaptureStateUnsafe();
+                if (!TryFindControl(nodeId, out var control))
+                {
+                    return Failure(UiCommandFailureCodes.NodeNotFound, $"Node '{nodeId}' was not found.");
+                }
+
+                return control switch
+                {
+                    Button button => ClickButton(button),
+                    CheckBox checkBox => ToggleCheckBox(checkBox, requestedValue: null, operationName: "click"),
+                    _ => Failure(UiCommandFailureCodes.UnsupportedCommand, $"Node '{nodeId}' does not support click.")
+                };
+            });
+
+    public Task<UiInteractionResult> InvokeNodeActionAsync(string nodeId, string? actionName) =>
+        InvokeOnUiThreadAsync(
+            () =>
+            {
+                if (!TryFindControl(nodeId, out var control))
+                {
+                    return Failure(UiCommandFailureCodes.NodeNotFound, $"Node '{nodeId}' was not found.");
+                }
+
+                if (control is not Button button)
+                {
+                    return Failure(UiCommandFailureCodes.UnsupportedCommand, $"Node '{nodeId}' does not support invoke.");
+                }
+
+                if (!string.IsNullOrWhiteSpace(actionName) &&
+                    !string.Equals(actionName, button.Text, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(actionName, button.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Failure(
+                        UiCommandFailureCodes.InvalidCommandPayload,
+                        $"Node '{nodeId}' does not expose action '{actionName}'.");
+                }
+
+                button.PerformClick();
+                return Success($"Invoked action '{actionName ?? button.Text}' on node '{nodeId}'.");
+            });
+
+    public Task<UiInteractionResult> SetNodeTextAsync(string nodeId, string? textValue) =>
+        InvokeOnUiThreadAsync(
+            () =>
+            {
+                if (!TryFindControl(nodeId, out var control))
+                {
+                    return Failure(UiCommandFailureCodes.NodeNotFound, $"Node '{nodeId}' was not found.");
+                }
+
+                if (control is not TextBox textBox)
+                {
+                    return Failure(UiCommandFailureCodes.UnsupportedCommand, $"Node '{nodeId}' does not support text input.");
+                }
+
+                textBox.Text = textValue ?? string.Empty;
+                return Success($"Updated text for node '{nodeId}'.");
+            });
+
+    public Task<UiInteractionResult> ToggleNodeAsync(string nodeId, bool? boolValue) =>
+        InvokeOnUiThreadAsync(
+            () =>
+            {
+                if (!TryFindControl(nodeId, out var control))
+                {
+                    return Failure(UiCommandFailureCodes.NodeNotFound, $"Node '{nodeId}' was not found.");
+                }
+
+                return control is CheckBox checkBox
+                    ? ToggleCheckBox(checkBox, boolValue, operationName: "toggle")
+                    : Failure(UiCommandFailureCodes.UnsupportedCommand, $"Node '{nodeId}' does not support toggle.");
+            });
+
+    public Task<UiInteractionResult> SelectItemAsync(string nodeId, string? selectedValue) =>
+        InvokeOnUiThreadAsync(
+            () =>
+            {
+                if (!TryFindControl(nodeId, out var control))
+                {
+                    return Failure(UiCommandFailureCodes.NodeNotFound, $"Node '{nodeId}' was not found.");
+                }
+
+                if (control is not ListBox listBox)
+                {
+                    return Failure(UiCommandFailureCodes.UnsupportedCommand, $"Node '{nodeId}' does not support select.");
+                }
+
+                if (string.IsNullOrWhiteSpace(selectedValue))
+                {
+                    return Failure(UiCommandFailureCodes.InvalidCommandPayload, "selectedValue is required.");
+                }
+
+                var match = listBox.Items.Cast<object>().FirstOrDefault(item => string.Equals(item?.ToString(), selectedValue, StringComparison.Ordinal));
+
+                if (match is null)
+                {
+                    return Failure(
+                        UiCommandFailureCodes.InvalidCommandPayload,
+                        $"Node '{nodeId}' does not contain item '{selectedValue}'.");
+                }
+
+                listBox.SelectedItem = match;
+                return Success($"Selected '{selectedValue}' on node '{nodeId}'.");
             });
 
     private Label CreateCaption(string text) =>
@@ -172,7 +255,7 @@ public sealed class MainForm : Form
             Margin = new Padding(0, 8, 8, 8)
         };
 
-    private Button CreateActionButton(string name, string text, Func<Task> callback)
+    private Button CreateActionButton(string name, string text, Func<TestDesktopAppState> callback)
     {
         var button = new Button
         {
@@ -181,7 +264,7 @@ public sealed class MainForm : Form
             AutoSize = true
         };
 
-        button.Click += async (_, _) => await callback().ConfigureAwait(false);
+        button.Click += (_, _) => callback();
         return button;
     }
 
@@ -216,6 +299,7 @@ public sealed class MainForm : Form
             _statusLabel.Text,
             _notesTextBox.Text,
             _enabledCheckBox.Checked,
+            _itemsListBox.SelectedItem?.ToString(),
             _itemsListBox.Items.Cast<object>().Select(static item => item.ToString() ?? string.Empty).ToArray(),
             _tickCount,
             _options.Port,
@@ -223,6 +307,37 @@ public sealed class MainForm : Form
             Handle.ToInt64(),
             Text,
             DateTimeOffset.UtcNow);
+
+    private TestDesktopAppState StartSessionUnsafe()
+    {
+        _statusLabel.Text = "Running";
+        return CaptureStateUnsafe();
+    }
+
+    private TestDesktopAppState PauseSessionUnsafe()
+    {
+        _statusLabel.Text = "Paused";
+        return CaptureStateUnsafe();
+    }
+
+    private TestDesktopAppState ResumeSessionUnsafe()
+    {
+        _statusLabel.Text = "Running";
+        return CaptureStateUnsafe();
+    }
+
+    private TestDesktopAppState StopSessionUnsafe()
+    {
+        _statusLabel.Text = "Stopped";
+        return CaptureStateUnsafe();
+    }
+
+    private TestDesktopAppState TickUnsafe()
+    {
+        _tickCount++;
+        _tickCountLabel.Text = _tickCount.ToString(CultureInfo.InvariantCulture);
+        return CaptureStateUnsafe();
+    }
 
     private UiSnapshotEnvelope CaptureUiSnapshotUnsafe()
     {
@@ -260,19 +375,29 @@ public sealed class MainForm : Form
             case TextBox textBox:
                 attributes["multiline"] = textBox.Multiline.ToString();
                 attributes["textLength"] = textBox.TextLength.ToString(CultureInfo.InvariantCulture);
+                attributes["acceptsText"] = bool.TrueString;
+                attributes["semanticActions"] = "setText";
                 break;
 
             case ListBox listBox:
                 attributes["itemCount"] = listBox.Items.Count.ToString(CultureInfo.InvariantCulture);
                 attributes["selectedItem"] = listBox.SelectedItem?.ToString();
+                attributes["items"] = JsonSerializer.Serialize(listBox.Items.Cast<object>().Select(static item => item.ToString() ?? string.Empty).ToArray(), SnapshotJsonOptions);
+                attributes["semanticActions"] = "select";
                 break;
 
             case CheckBox checkBox:
                 attributes["checked"] = checkBox.Checked.ToString();
+                attributes["clickable"] = bool.TrueString;
+                attributes["semanticActions"] = "click,toggle";
                 break;
 
-            case Button:
+            case Button button:
                 attributes["command"] = control.Text;
+                attributes["actionNames"] = string.Join(',', button.Text, button.Name);
+                attributes["clickable"] = bool.TrueString;
+                attributes["invokable"] = bool.TrueString;
+                attributes["semanticActions"] = "click,invoke";
                 break;
         }
 
@@ -283,7 +408,7 @@ public sealed class MainForm : Form
         }
 
         return new ControlSnapshotNode(
-            Id: string.IsNullOrWhiteSpace(control.Name) ? $"{control.GetType().Name}-{control.Handle}" : control.Name,
+            Id: GetControlNodeId(control),
             Role: control.GetType().Name.Replace("Control", string.Empty, StringComparison.Ordinal),
             Name: string.IsNullOrWhiteSpace(control.Name) ? null : control.Name,
             Text: control.Text,
@@ -302,6 +427,53 @@ public sealed class MainForm : Form
             ListBox listBox => listBox.SelectedIndex >= 0,
             _ => false
         };
+
+    private UiInteractionResult ClickButton(Button button)
+    {
+        button.PerformClick();
+        return Success($"Clicked node '{button.Name}'.");
+    }
+
+    private UiInteractionResult ToggleCheckBox(CheckBox checkBox, bool? requestedValue, string operationName)
+    {
+        checkBox.Checked = requestedValue ?? !checkBox.Checked;
+        return Success($"{operationName} completed for node '{checkBox.Name}'.");
+    }
+
+    private bool TryFindControl(string nodeId, out Control? control)
+    {
+        control = FindControlRecursive(this, nodeId);
+        return control is not null;
+    }
+
+    private static Control? FindControlRecursive(Control current, string nodeId)
+    {
+        if (string.Equals(GetControlNodeId(current), nodeId, StringComparison.Ordinal))
+        {
+            return current;
+        }
+
+        foreach (Control child in current.Controls)
+        {
+            var match = FindControlRecursive(child, nodeId);
+
+            if (match is not null)
+            {
+                return match;
+            }
+        }
+
+        return null;
+    }
+
+    private static string GetControlNodeId(Control control) =>
+        string.IsNullOrWhiteSpace(control.Name) ? $"{control.GetType().Name}-{control.Handle}" : control.Name;
+
+    private static UiInteractionResult Success(string message) =>
+        UiInteractionResult.Success(message, DateTimeOffset.UtcNow);
+
+    private static UiInteractionResult Failure(string failureCode, string message) =>
+        UiInteractionResult.Failure(message, failureCode, DateTimeOffset.UtcNow);
 
     private Task<T> InvokeOnUiThreadAsync<T>(Func<T> callback)
     {

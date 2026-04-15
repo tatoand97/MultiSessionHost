@@ -21,6 +21,13 @@ public static class UiTreeExtensions
         return tree.Flatten().FirstOrDefault(node => string.Equals(node.Role, role, StringComparison.OrdinalIgnoreCase));
     }
 
+    public static UiNode? FindById(this UiTree tree, UiNodeId nodeId)
+    {
+        ArgumentNullException.ThrowIfNull(tree);
+
+        return tree.Flatten().FirstOrDefault(node => node.Id.Equals(nodeId));
+    }
+
     public static UiNode? FindByExactText(this UiTree tree, string text)
     {
         ArgumentNullException.ThrowIfNull(tree);

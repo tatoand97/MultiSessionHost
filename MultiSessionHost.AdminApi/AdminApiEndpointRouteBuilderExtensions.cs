@@ -4,9 +4,11 @@ using Microsoft.AspNetCore.Routing;
 using MultiSessionHost.AdminApi.Mapping;
 using MultiSessionHost.AdminApi.Security;
 using MultiSessionHost.Contracts.Sessions;
+using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
+using MultiSessionHost.UiModel.Models;
 
 namespace MultiSessionHost.AdminApi;
 
@@ -182,6 +184,193 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 return Results.Ok(state.ToUiRefreshDto());
             });
 
+        endpoints.MapPost(
+            "/sessions/{id}/commands",
+            async Task<IResult> (
+                string id,
+                UiCommandRequest request,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IUiCommandExecutor commandExecutor,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (!TryCreateCommand(sessionId, request, routeNodeId: null, out var command, out error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                return await ExecuteCommandAsync(commandExecutor, command!, cancellationToken).ConfigureAwait(false);
+            });
+
+        endpoints.MapPost(
+            "/sessions/{id}/nodes/{nodeId}/click",
+            async Task<IResult> (
+                string id,
+                string nodeId,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IUiCommandExecutor commandExecutor,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (!TryCreateNodeId(nodeId, out var parsedNodeId, out error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                return await ExecuteCommandAsync(
+                    commandExecutor,
+                    UiCommand.ClickNode(sessionId, parsedNodeId!.Value),
+                    cancellationToken).ConfigureAwait(false);
+            });
+
+        endpoints.MapPost(
+            "/sessions/{id}/nodes/{nodeId}/invoke",
+            async Task<IResult> (
+                string id,
+                string nodeId,
+                NodeInvokeCommandRequest? request,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IUiCommandExecutor commandExecutor,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (!TryCreateNodeId(nodeId, out var parsedNodeId, out error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                return await ExecuteCommandAsync(
+                    commandExecutor,
+                    UiCommand.InvokeNodeAction(sessionId, parsedNodeId!.Value, request?.ActionName, request?.Metadata),
+                    cancellationToken).ConfigureAwait(false);
+            });
+
+        endpoints.MapPost(
+            "/sessions/{id}/nodes/{nodeId}/text",
+            async Task<IResult> (
+                string id,
+                string nodeId,
+                NodeTextCommandRequest? request,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IUiCommandExecutor commandExecutor,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (!TryCreateNodeId(nodeId, out var parsedNodeId, out error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                return await ExecuteCommandAsync(
+                    commandExecutor,
+                    UiCommand.SetText(sessionId, parsedNodeId!.Value, request?.TextValue, request?.Metadata),
+                    cancellationToken).ConfigureAwait(false);
+            });
+
+        endpoints.MapPost(
+            "/sessions/{id}/nodes/{nodeId}/toggle",
+            async Task<IResult> (
+                string id,
+                string nodeId,
+                NodeToggleCommandRequest? request,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IUiCommandExecutor commandExecutor,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (!TryCreateNodeId(nodeId, out var parsedNodeId, out error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                return await ExecuteCommandAsync(
+                    commandExecutor,
+                    UiCommand.ToggleNode(sessionId, parsedNodeId!.Value, request?.BoolValue, request?.Metadata),
+                    cancellationToken).ConfigureAwait(false);
+            });
+
+        endpoints.MapPost(
+            "/sessions/{id}/nodes/{nodeId}/select",
+            async Task<IResult> (
+                string id,
+                string nodeId,
+                NodeSelectCommandRequest? request,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                IUiCommandExecutor commandExecutor,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (!TryCreateNodeId(nodeId, out var parsedNodeId, out error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                return await ExecuteCommandAsync(
+                    commandExecutor,
+                    UiCommand.SelectItem(sessionId, parsedNodeId!.Value, request?.SelectedValue, request?.Metadata),
+                    cancellationToken).ConfigureAwait(false);
+            });
+
         endpoints.MapGet(
             "/targets",
             async Task<IResult> (
@@ -306,6 +495,16 @@ public static class AdminApiEndpointRouteBuilderExtensions
     private static Task<bool> IsAuthorizedAsync(HttpContext httpContext, IAdminAuthorizationPolicy authorizationPolicy, CancellationToken cancellationToken) =>
         authorizationPolicy.IsAuthorizedAsync(httpContext, cancellationToken);
 
+    private static async Task<IResult> ExecuteCommandAsync(
+        IUiCommandExecutor commandExecutor,
+        UiCommand command,
+        CancellationToken cancellationToken)
+    {
+        var result = await commandExecutor.ExecuteAsync(command, cancellationToken).ConfigureAwait(false);
+        var dto = result.ToDto();
+        return result.Succeeded ? Results.Ok(dto) : Results.Conflict(dto);
+    }
+
     private static bool TryParseSessionId(string value, out SessionId sessionId, out string? error)
     {
         try
@@ -317,6 +516,79 @@ public static class AdminApiEndpointRouteBuilderExtensions
         catch (ArgumentException exception)
         {
             sessionId = default;
+            error = exception.Message;
+            return false;
+        }
+    }
+
+    private static bool TryCreateCommand(
+        SessionId sessionId,
+        UiCommandRequest request,
+        UiNodeId? routeNodeId,
+        out UiCommand? command,
+        out string? error)
+    {
+        if (!Enum.TryParse<UiCommandKind>(request.Kind, ignoreCase: true, out var kind))
+        {
+            command = null;
+            error = $"Ui command kind '{request.Kind}' is not valid.";
+            return false;
+        }
+
+        UiNodeId? nodeId;
+
+        if (routeNodeId is not null)
+        {
+            nodeId = routeNodeId;
+        }
+        else if (!TryCreateNodeId(request.NodeId, out nodeId, out error, allowNull: kind == UiCommandKind.RefreshUi))
+        {
+            command = null;
+            return false;
+        }
+
+        command = new UiCommand(
+            sessionId,
+            nodeId,
+            kind,
+            request.ActionName,
+            request.TextValue,
+            request.BoolValue,
+            request.SelectedValue,
+            request.Metadata);
+        error = null;
+        return true;
+    }
+
+    private static bool TryCreateNodeId(
+        string? value,
+        out UiNodeId? nodeId,
+        out string? error,
+        bool allowNull = false)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            if (allowNull)
+            {
+                nodeId = null;
+                error = null;
+                return true;
+            }
+
+            nodeId = null;
+            error = "nodeId is required.";
+            return false;
+        }
+
+        try
+        {
+            nodeId = UiNodeId.Parse(value);
+            error = null;
+            return true;
+        }
+        catch (ArgumentException exception)
+        {
+            nodeId = null;
             error = exception.Message;
             return false;
         }

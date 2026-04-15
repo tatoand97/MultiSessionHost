@@ -10,6 +10,9 @@ La integración de escritorio ya no está acoplada a `MultiSessionHost.TestDeskt
 - `SessionTargetBinding`
 - `IDesktopTargetAdapter`
 - `IDesktopTargetAdapterRegistry`
+- `UiCommand`
+- `IUiActionResolver`
+- `IUiInteractionAdapter`
 
 `MultiSessionHost.TestDesktopApp` queda como una implementación de ejemplo sobre esta arquitectura.
 
@@ -59,6 +62,17 @@ No incluye ni pretende incluir:
   - delega attach/detach/work items/snapshots al adapter correcto
 - `IDesktopTargetAdapterRegistry`
   - resuelve un adapter por `DesktopTargetKind`
+- `IUiCommandExecutor`
+  - ejecuta comandos semánticos sobre una sesión activa
+  - valida sesión, attachment y estado UI
+  - auto-refresca la UI cuando todavía no existe `UiTree`
+  - refresca la UI después de un comando exitoso
+- `IUiActionResolver`
+  - interpreta `UiTree` + `UiCommand`
+  - valida `nodeId`, visibilidad, habilitación y compatibilidad semántica
+- `IUiInteractionAdapter`
+  - ejecuta acciones cooperativas por `nodeId`
+  - sin coordenadas ni input simulation
 - `IUiTreeNormalizerResolver` y `IWorkItemPlannerResolver`
   - permiten seleccionar pipeline UI por kind/profile
 
@@ -78,6 +92,42 @@ Worker session
   -> planned work items
 ```
 
+## Capa de comandos semánticos
+
+La vista `UiTree` no ejecuta nada directamente. El flujo nuevo queda así:
+
+```text
+Session
+  -> target resolved
+  -> ui state available
+  -> node selected by id
+  -> UiCommand
+  -> IUiActionResolver
+  -> IUiInteractionAdapter
+  -> cooperative target
+  -> UiCommandResult
+```
+
+### Reglas base del resolver por defecto
+
+- `ClickNode`
+  - button-like o nodos marcados como `clickable`
+- `InvokeNodeAction`
+  - nodos con acciones expuestas
+- `SetText`
+  - textbox/input-like
+- `ToggleNode`
+  - checkbox/toggle-like
+- `SelectItem`
+  - list/listbox/selector-like
+
+La especialización del test app no vive en el executor. Vive en:
+
+- metadata del nodo
+- `DefaultUiActionResolver`
+- `TestDesktopAppUiInteractionAdapter`
+- endpoints cooperativos del test app por `nodeId`
+
 ## Target kinds soportados
 
 - `DriverMode=NoOp`
@@ -89,6 +139,14 @@ Dentro de `DesktopTargetAdapter` hoy existen:
 - `DesktopTargetKind=DesktopTestApp`
 
 `DesktopTestApp` reutiliza la ruta self-hosted HTTP y agrega validación específica mínima.
+
+Además expone endpoints cooperativos por `nodeId`:
+
+- `POST /ui/nodes/{nodeId}/click`
+- `POST /ui/nodes/{nodeId}/invoke`
+- `POST /ui/nodes/{nodeId}/text`
+- `POST /ui/nodes/{nodeId}/toggle`
+- `POST /ui/nodes/{nodeId}/select`
 
 ## Configuración
 
@@ -197,6 +255,15 @@ Endpoints nuevos de inspección:
 - `GET /targets/{profileName}`
 - `GET /sessions/{id}/target`
 
+Endpoints nuevos de comandos semánticos:
+
+- `POST /sessions/{id}/commands`
+- `POST /sessions/{id}/nodes/{nodeId}/click`
+- `POST /sessions/{id}/nodes/{nodeId}/invoke`
+- `POST /sessions/{id}/nodes/{nodeId}/text`
+- `POST /sessions/{id}/nodes/{nodeId}/toggle`
+- `POST /sessions/{id}/nodes/{nodeId}/select`
+
 `/sessions/{id}/target` expone:
 
 - profile resuelto
@@ -204,6 +271,10 @@ Endpoints nuevos de inspección:
 - target renderizado
 - attachment actual si existe
 - adapter seleccionado
+
+### Decisión sobre UI state faltante
+
+Si una sesión todavía no tiene `UiTree` proyectado, el executor hace auto-refresh antes de resolver el comando. Después de un comando exitoso dispara un refresh posterior para dejar el árbol actualizado. Las fallas semánticas devuelven `409 Conflict` con `UiCommandResultDto`.
 
 ## Cómo agregar un nuevo target kind
 
@@ -264,6 +335,43 @@ Invoke-RestMethod http://localhost:5088/sessions/alpha/ui
 Invoke-RestMethod http://localhost:5088/sessions/alpha/ui/raw
 ```
 
+Ejemplos de comandos semánticos:
+
+```powershell
+Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/nodes/startButton/click
+
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:5088/sessions/alpha/nodes/notesTextBox/text `
+  -ContentType 'application/json' `
+  -Body '{"textValue":"Updated notes for alpha"}'
+
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:5088/sessions/alpha/nodes/enabledCheckBox/toggle `
+  -ContentType 'application/json' `
+  -Body '{"boolValue":false}'
+
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:5088/sessions/alpha/nodes/itemsListBox/select `
+  -ContentType 'application/json' `
+  -Body '{"selectedValue":"alpha-item-2"}'
+
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:5088/sessions/alpha/commands `
+  -ContentType 'application/json' `
+  -Body '{"nodeId":"tickButton","kind":"InvokeNodeAction","actionName":"Tick"}'
+```
+
+`UiCommandResultDto` devuelve:
+
+- `Succeeded`
+- `SessionId`
+- `NodeId`
+- `Kind`
+- `Message`
+- `ExecutedAtUtc`
+- `UpdatedUiStateAvailable`
+- `FailureCode`
+
 ## Cómo probar la solución
 
 ```powershell
@@ -286,3 +394,9 @@ La suite cubre ahora:
 - endpoints `/sessions/{id}/ui/refresh`
 - endpoints `/targets`
 - endpoint `/sessions/{id}/target`
+- unit tests de `DefaultUiActionResolver`
+- `POST /sessions/{id}/commands`
+- click semántico sobre botones cooperativos
+- `SetText`, `ToggleNode` y `SelectItem`
+- refresh UI posterior al comando
+- aislamiento de comandos entre `alpha` y `beta`
