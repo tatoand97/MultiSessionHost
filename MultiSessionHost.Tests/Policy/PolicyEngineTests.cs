@@ -383,6 +383,7 @@ public sealed class PolicyEngineTests
             new DefaultDecisionPlanAggregator(options),
             planStore,
             new MultiSessionHost.Desktop.Persistence.NoOpRuntimePersistenceCoordinator(),
+            new NoOpObservabilityRecorder(),
             clock,
             NullLogger<DefaultPolicyEngine>.Instance);
 
@@ -437,6 +438,7 @@ public sealed class PolicyEngineTests
             new DefaultDecisionPlanAggregator(options),
             planStore,
             new MultiSessionHost.Desktop.Persistence.NoOpRuntimePersistenceCoordinator(),
+            new NoOpObservabilityRecorder(),
             clock,
             NullLogger<DefaultPolicyEngine>.Instance);
 

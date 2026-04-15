@@ -1,6 +1,7 @@
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Activity;
+using MultiSessionHost.Tests.Common;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 
@@ -8,7 +9,7 @@ namespace MultiSessionHost.Tests.Activity;
 
 public class SessionActivityStateEvaluatorTests
 {
-    private readonly DefaultSessionActivityStateEvaluator _evaluator = new();
+    private readonly DefaultSessionActivityStateEvaluator _evaluator = new(new NoOpObservabilityRecorder());
     private readonly DateTimeOffset _testNow = DateTimeOffset.UtcNow;
 
     [Fact]

@@ -8,6 +8,7 @@ using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
+using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Models;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
@@ -40,6 +41,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly ISessionOperationalMemoryStore _operationalMemoryStore;
     private readonly ISessionOperationalMemoryUpdater _operationalMemoryUpdater;
     private readonly IRuntimePersistenceCoordinator _runtimePersistenceCoordinator;
+    private readonly IObservabilityRecorder _observabilityRecorder;
     private readonly IServiceProvider _serviceProvider;
     private readonly IClock _clock;
     private readonly ILogger<DefaultSessionUiRefreshService> _logger;
@@ -65,6 +67,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         ISessionOperationalMemoryStore operationalMemoryStore,
         ISessionOperationalMemoryUpdater operationalMemoryUpdater,
         IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
+        IObservabilityRecorder observabilityRecorder,
         IServiceProvider serviceProvider,
         IClock clock,
         ILogger<DefaultSessionUiRefreshService> logger)
@@ -89,6 +92,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _operationalMemoryStore = operationalMemoryStore;
         _operationalMemoryUpdater = operationalMemoryUpdater;
         _runtimePersistenceCoordinator = runtimePersistenceCoordinator;
+        _observabilityRecorder = observabilityRecorder;
         _serviceProvider = serviceProvider;
         _clock = clock;
         _logger = logger;
@@ -104,9 +108,25 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
 
         try
         {
+            var captureStart = System.Diagnostics.Stopwatch.StartNew();
             var adapter = _adapterRegistry.Resolve(context.Profile.Kind);
             var uiSnapshot = await adapter.CaptureUiSnapshotAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
             var rawJson = _uiSnapshotSerializer.Serialize(uiSnapshot);
+            captureStart.Stop();
+
+            await _observabilityRecorder.RecordActivityAsync(
+                snapshot.SessionId,
+                "ui.snapshot",
+                SessionObservabilityOutcome.Success.ToString(),
+                captureStart.Elapsed,
+                null,
+                null,
+                nameof(DefaultSessionUiRefreshService),
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["adapterKind"] = context.Profile.Kind.ToString()
+                },
+                cancellationToken).ConfigureAwait(false);
 
             return await _sessionUiStateStore.UpdateAsync(
                 snapshot.SessionId,
@@ -136,6 +156,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
 
         try
         {
+            var projectionStart = System.Diagnostics.Stopwatch.StartNew();
             var uiState = await _sessionUiStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"UI state for session '{snapshot.SessionId}' was not initialized.");
 
@@ -211,7 +232,33 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 now);
             var semanticExtraction = await _semanticExtractionPipeline.ExtractAsync(semanticContext, cancellationToken).ConfigureAwait(false);
             await _semanticExtractionStore.UpdateAsync(snapshot.SessionId, semanticExtraction, cancellationToken).ConfigureAwait(false);
+            await _observabilityRecorder.RecordActivityAsync(
+                snapshot.SessionId,
+                "semantic.extraction",
+                SessionObservabilityOutcome.Success.ToString(),
+                TimeSpan.Zero,
+                null,
+                null,
+                nameof(DefaultSessionUiRefreshService),
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["pipeline"] = nameof(IUiSemanticExtractionPipeline)
+                },
+                cancellationToken).ConfigureAwait(false);
             var riskAssessment = await _riskClassificationPipeline.AssessAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
+            await _observabilityRecorder.RecordActivityAsync(
+                snapshot.SessionId,
+                "risk.classification",
+                SessionObservabilityOutcome.Success.ToString(),
+                TimeSpan.Zero,
+                null,
+                null,
+                nameof(DefaultSessionUiRefreshService),
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["pipeline"] = nameof(IRiskClassificationPipeline)
+                },
+                cancellationToken).ConfigureAwait(false);
 
             await _sessionDomainStateStore.UpdateAsync(
                 snapshot.SessionId,
@@ -225,6 +272,17 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     riskAssessment,
                     _clock.UtcNow),
                 cancellationToken).ConfigureAwait(false);
+                projectionStart.Stop();
+                await _observabilityRecorder.RecordActivityAsync(
+                    snapshot.SessionId,
+                    "domain.projection",
+                    SessionObservabilityOutcome.Success.ToString(),
+                    projectionStart.Elapsed,
+                    null,
+                    null,
+                    nameof(DefaultSessionUiRefreshService),
+                    new Dictionary<string, string>(StringComparer.Ordinal),
+                    cancellationToken).ConfigureAwait(false);
 
             await _policyEngine.EvaluateAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
 
@@ -272,7 +330,21 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 activityEvaluationResult.NewSnapshot,
                 cancellationToken).ConfigureAwait(false);
 
+            var flushStart = System.Diagnostics.Stopwatch.StartNew();
             await FlushIfEnabledAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
+            flushStart.Stop();
+            await _observabilityRecorder.RecordPersistenceAsync(
+                snapshot.SessionId,
+                "flush",
+                SessionObservabilityOutcome.Success.ToString(),
+                flushStart.Elapsed,
+                null,
+                null,
+                null,
+                null,
+                nameof(DefaultSessionUiRefreshService),
+                new Dictionary<string, string>(StringComparer.Ordinal),
+                cancellationToken).ConfigureAwait(false);
 
             return await _sessionUiStateStore.UpdateAsync(
                 snapshot.SessionId,
@@ -288,6 +360,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         {
             await RecordUiRefreshErrorAsync(snapshot.SessionId, exception, cancellationToken).ConfigureAwait(false);
             await RecordDomainRefreshErrorAsync(snapshot.SessionId, exception, cancellationToken).ConfigureAwait(false);
+            await _observabilityRecorder.RecordAdapterErrorAsync(snapshot.SessionId, context.Profile.ProfileName, "ui-refresh", exception, "ui-refresh-failure", nameof(DefaultSessionUiRefreshService), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
@@ -348,6 +421,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         CancellationToken cancellationToken)
     {
         var previousMemory = await _operationalMemoryStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var memoryStart = System.Diagnostics.Stopwatch.StartNew();
         var memoryResult = await _operationalMemoryUpdater.UpdateAsync(
             new SessionOperationalMemoryUpdateContext(
                 sessionId,
@@ -360,6 +434,21 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 activitySnapshot,
                 _clock.UtcNow),
             cancellationToken).ConfigureAwait(false);
+            memoryStart.Stop();
+
+            await _observabilityRecorder.RecordActivityAsync(
+                sessionId,
+                "memory.update",
+                memoryResult.Snapshot is null ? SessionObservabilityOutcome.Skipped.ToString() : SessionObservabilityOutcome.Success.ToString(),
+                memoryStart.Elapsed,
+                memoryResult.Snapshot is null ? "memory-update-skipped" : null,
+                memoryResult.Snapshot is null ? "Operational memory update did not produce a snapshot." : null,
+                nameof(DefaultSessionUiRefreshService),
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["observationCount"] = memoryResult.AddedObservationRecords.Count.ToString()
+                },
+                cancellationToken).ConfigureAwait(false);
 
         if (memoryResult.Snapshot is not null)
         {

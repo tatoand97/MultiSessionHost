@@ -1,6 +1,7 @@
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
+using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Models;
 
 namespace MultiSessionHost.Desktop.Attachments;
@@ -13,6 +14,7 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
     private readonly IAttachedSessionStore _attachedSessionStore;
     private readonly IDesktopTargetProfileResolver _targetProfileResolver;
     private readonly IDesktopTargetAdapterRegistry _adapterRegistry;
+    private readonly IObservabilityRecorder _observabilityRecorder;
 
     public DefaultSessionAttachmentOperations(
         ISessionRegistry sessionRegistry,
@@ -20,7 +22,8 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
         ISessionAttachmentResolver attachmentResolver,
         IAttachedSessionStore attachedSessionStore,
         IDesktopTargetProfileResolver targetProfileResolver,
-        IDesktopTargetAdapterRegistry adapterRegistry)
+        IDesktopTargetAdapterRegistry adapterRegistry,
+        IObservabilityRecorder observabilityRecorder)
     {
         _sessionRegistry = sessionRegistry;
         _sessionStateStore = sessionStateStore;
@@ -28,6 +31,7 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
         _attachedSessionStore = attachedSessionStore;
         _targetProfileResolver = targetProfileResolver;
         _adapterRegistry = adapterRegistry;
+        _observabilityRecorder = observabilityRecorder;
     }
 
     public async Task<DesktopSessionAttachment> EnsureAttachedAsync(
@@ -37,10 +41,12 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
     {
         var adapter = _adapterRegistry.Resolve(context.Profile.Kind);
         var current = await _attachedSessionStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
+        var startedAt = DateTimeOffset.UtcNow;
 
         if (current is not null && AreEquivalent(current.Target, context.Target))
         {
             await adapter.ValidateAttachmentAsync(snapshot, context, current, cancellationToken).ConfigureAwait(false);
+            await _observabilityRecorder.RecordAttachmentAsync(snapshot.SessionId, "refresh", adapter.GetType().Name, SessionObservabilityOutcome.Success.ToString(), DateTimeOffset.UtcNow - startedAt, context.Profile.Kind.ToString(), null, null, nameof(DefaultSessionAttachmentOperations), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
             return current;
         }
 
@@ -54,6 +60,18 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
         await adapter.ValidateAttachmentAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
         await adapter.AttachAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
         await _attachedSessionStore.SetAsync(attachment, cancellationToken).ConfigureAwait(false);
+        await _observabilityRecorder.RecordAttachmentAsync(
+            snapshot.SessionId,
+            current is null ? "attach" : "reattach",
+            adapter.GetType().Name,
+            SessionObservabilityOutcome.Success.ToString(),
+            DateTimeOffset.UtcNow - startedAt,
+            context.Profile.Kind.ToString(),
+            null,
+            null,
+            nameof(DefaultSessionAttachmentOperations),
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            cancellationToken).ConfigureAwait(false);
 
         return attachment;
     }
@@ -89,6 +107,18 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
         }
 
         await _attachedSessionStore.RemoveAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        await _observabilityRecorder.RecordAttachmentAsync(
+            sessionId,
+            "invalidate",
+            currentAttachment.Target.GetType().Name,
+            SessionObservabilityOutcome.Success.ToString(),
+            TimeSpan.Zero,
+            currentAttachment.Target.Kind.ToString(),
+            null,
+            null,
+            nameof(DefaultSessionAttachmentOperations),
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            cancellationToken).ConfigureAwait(false);
         return true;
     }
 

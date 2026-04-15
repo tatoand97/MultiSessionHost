@@ -4,6 +4,7 @@ using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Behavior;
+using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
@@ -45,6 +46,7 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
     private readonly ISessionDecisionPlanStore _decisionPlanStore;
     private readonly ISessionDecisionPlanExecutionStore _executionStore;
     private readonly ISessionPolicyControlStore _policyControlStore;
+    private readonly IObservabilityRecorder _observabilityRecorder;
     private readonly ILogger<RuntimePersistenceCoordinator> _logger;
     private readonly Dictionary<SessionId, SessionStatusState> _statuses = [];
 
@@ -58,6 +60,7 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
         ISessionDecisionPlanStore decisionPlanStore,
         ISessionDecisionPlanExecutionStore executionStore,
         ISessionPolicyControlStore policyControlStore,
+        IObservabilityRecorder observabilityRecorder,
         ILogger<RuntimePersistenceCoordinator> logger)
     {
         _options = options;
@@ -69,6 +72,7 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
         _decisionPlanStore = decisionPlanStore;
         _executionStore = executionStore;
         _policyControlStore = policyControlStore;
+        _observabilityRecorder = observabilityRecorder;
         _logger = logger;
     }
 
@@ -79,6 +83,7 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
             return;
         }
 
+        var startedAt = _clock.UtcNow;
         var configuredSessionIds = _sessionRegistry.GetAll()
             .Select(static definition => definition.Id)
             .ToHashSet();
@@ -106,10 +111,12 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
             {
                 await RehydrateEnvelopeAsync(envelope, cancellationToken).ConfigureAwait(false);
                 await UpdateStatusAfterLoadAsync(envelope, cancellationToken).ConfigureAwait(false);
+                await _observabilityRecorder.RecordPersistenceAsync(envelope.SessionId, "rehydrate", "success", _clock.UtcNow - startedAt, await _backend.GetSessionPathAsync(envelope.SessionId, cancellationToken).ConfigureAwait(false), null, null, null, nameof(RuntimePersistenceCoordinator), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception)
             {
                 await HandlePersistenceErrorAsync(envelope.SessionId, "rehydrate", exception).ConfigureAwait(false);
+                await _observabilityRecorder.RecordPersistenceAsync(envelope.SessionId, "rehydrate", "failure", _clock.UtcNow - startedAt, await _backend.GetSessionPathAsync(envelope.SessionId, cancellationToken).ConfigureAwait(false), null, "rehydrate-failure", exception.Message, nameof(RuntimePersistenceCoordinator), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -123,13 +130,16 @@ public sealed class RuntimePersistenceCoordinator : IRuntimePersistenceCoordinat
 
         try
         {
+            var startedAt = _clock.UtcNow;
             var envelope = await BuildEnvelopeAsync(sessionId, cancellationToken).ConfigureAwait(false);
             await _backend.SaveSessionAsync(envelope, cancellationToken).ConfigureAwait(false);
             await UpdateStatusAfterSaveAsync(envelope, cancellationToken).ConfigureAwait(false);
+            await _observabilityRecorder.RecordPersistenceAsync(sessionId, "flush", "success", _clock.UtcNow - startedAt, await _backend.GetSessionPathAsync(sessionId, cancellationToken).ConfigureAwait(false), envelope.DecisionExecutionHistory.Count, null, null, nameof(RuntimePersistenceCoordinator), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
             await HandlePersistenceErrorAsync(sessionId, "flush", exception).ConfigureAwait(false);
+            await _observabilityRecorder.RecordPersistenceAsync(sessionId, "flush", "failure", TimeSpan.Zero, null, null, "flush-failure", exception.Message, nameof(RuntimePersistenceCoordinator), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
         }
     }
 

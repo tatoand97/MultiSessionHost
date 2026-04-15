@@ -4,6 +4,7 @@ using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
+using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Models;
 
 namespace MultiSessionHost.Desktop.Commands;
@@ -18,6 +19,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
     private readonly ISessionUiRefreshService _uiRefreshService;
     private readonly IUiActionResolver _actionResolver;
     private readonly IReadOnlyDictionary<DesktopTargetKind, IUiInteractionAdapter> _interactionAdapters;
+    private readonly IObservabilityRecorder _observabilityRecorder;
     private readonly IClock _clock;
     private readonly ILogger<UiCommandExecutor> _logger;
 
@@ -30,6 +32,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
         ISessionUiRefreshService uiRefreshService,
         IUiActionResolver actionResolver,
         IEnumerable<IUiInteractionAdapter> interactionAdapters,
+        IObservabilityRecorder observabilityRecorder,
         IClock clock,
         ILogger<UiCommandExecutor> logger)
     {
@@ -40,6 +43,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
         _executionResourceResolver = executionResourceResolver;
         _uiRefreshService = uiRefreshService;
         _actionResolver = actionResolver;
+        _observabilityRecorder = observabilityRecorder;
         _clock = clock;
         _logger = logger;
         _interactionAdapters = interactionAdapters.ToDictionary(static adapter => adapter.Kind);
@@ -48,6 +52,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
     public async Task<UiCommandResult> ExecuteAsync(UiCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        var startedAt = _clock.UtcNow;
 
         try
         {
@@ -74,7 +79,9 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
 
             if (command.Kind == UiCommandKind.RefreshUi)
             {
-                return await RefreshUiAsync(command, session, context, attachment, cancellationToken).ConfigureAwait(false);
+                var refreshResult = await RefreshUiAsync(command, session, context, attachment, cancellationToken).ConfigureAwait(false);
+                await _observabilityRecorder.RecordCommandExecutionAsync(command, refreshResult, _clock.UtcNow - startedAt, context.Profile.ProfileName, nameof(UiCommandExecutor), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+                return refreshResult;
             }
 
             var uiState = _sessionCoordinator.GetSessionUiState(command.SessionId);
@@ -87,7 +94,9 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
                 }
                 catch (Exception exception)
                 {
-                    return Fail(command, exception.Message, UiCommandFailureCodes.UiRefreshFailed);
+                    var failure = Fail(command, exception.Message, UiCommandFailureCodes.UiRefreshFailed);
+                    await _observabilityRecorder.RecordCommandExecutionAsync(command, failure, _clock.UtcNow - startedAt, context.Profile.ProfileName, nameof(UiCommandExecutor), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+                    return failure;
                 }
             }
 
@@ -105,25 +114,34 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
 
             if (!interactionResult.Succeeded)
             {
-                return UiCommandResult.Failure(
+                var failure = UiCommandResult.Failure(
                     command.SessionId,
                     command.NodeId,
                     command.Kind,
                     interactionResult.Message,
                     interactionResult.ExecutedAtUtc,
                     interactionResult.FailureCode ?? UiCommandFailureCodes.InteractionFailed);
+
+                await _observabilityRecorder.RecordCommandExecutionAsync(command, failure, _clock.UtcNow - startedAt, context.Profile.ProfileName, nameof(UiCommandExecutor), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+                return failure;
             }
 
-            return await RefreshUiAfterSuccessAsync(command, session, context, attachment, interactionResult, cancellationToken).ConfigureAwait(false);
+            var success = await RefreshUiAfterSuccessAsync(command, session, context, attachment, interactionResult, cancellationToken).ConfigureAwait(false);
+            await _observabilityRecorder.RecordCommandExecutionAsync(command, success, _clock.UtcNow - startedAt, context.Profile.ProfileName, nameof(UiCommandExecutor), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+            return success;
         }
         catch (UiCommandFailureException exception)
         {
-            return Fail(command, exception.Message, exception.FailureCode);
+            var failure = Fail(command, exception.Message, exception.FailureCode);
+            await _observabilityRecorder.RecordCommandExecutionAsync(command, failure, _clock.UtcNow - startedAt, null, nameof(UiCommandExecutor), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+            return failure;
         }
         catch (Exception exception)
         {
             _logger.LogError(exception, "UI command '{Kind}' failed for session '{SessionId}'.", command.Kind, command.SessionId);
-            return Fail(command, exception.Message, UiCommandFailureCodes.InteractionFailed);
+            var failure = Fail(command, exception.Message, UiCommandFailureCodes.InteractionFailed);
+            await _observabilityRecorder.RecordCommandExecutionAsync(command, failure, _clock.UtcNow - startedAt, null, nameof(UiCommandExecutor), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+            return failure;
         }
     }
 

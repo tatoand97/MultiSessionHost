@@ -67,6 +67,21 @@ public sealed class AdminApiClient : IAdminApiClient
     public Task<SessionUiRawDto?> GetSessionUiRawAsync(string sessionId, CancellationToken cancellationToken = default) =>
         GetJsonOrNullAsync<SessionUiRawDto>($"/sessions/{Escape(sessionId)}/ui/raw", cancellationToken);
 
+    public Task<GlobalObservabilitySnapshotDto> GetObservabilityAsync(CancellationToken cancellationToken = default) =>
+        GetJsonAsync<GlobalObservabilitySnapshotDto>("/observability", cancellationToken);
+
+    public Task<SessionObservabilityDto?> GetSessionObservabilityAsync(string sessionId, CancellationToken cancellationToken = default) =>
+        GetJsonOrNullAsync<SessionObservabilityDto>($"/sessions/{Escape(sessionId)}/observability", cancellationToken);
+
+    public Task<IReadOnlyList<SessionObservabilityEventDto>> GetSessionObservabilityEventsAsync(string sessionId, CancellationToken cancellationToken = default) =>
+        GetJsonListAsync<SessionObservabilityEventDto>($"/sessions/{Escape(sessionId)}/observability/events", cancellationToken);
+
+    public Task<SessionObservabilityMetricsDto?> GetSessionObservabilityMetricsAsync(string sessionId, CancellationToken cancellationToken = default) =>
+        GetJsonOrNullAsync<SessionObservabilityMetricsDto>($"/sessions/{Escape(sessionId)}/observability/metrics", cancellationToken);
+
+    public Task<IReadOnlyList<AdapterErrorRecordDto>> GetSessionObservabilityErrorsAsync(string sessionId, CancellationToken cancellationToken = default) =>
+        GetJsonListAsync<AdapterErrorRecordDto>($"/sessions/{Escape(sessionId)}/observability/errors", cancellationToken);
+
     public Task<SessionUiRefreshDto> RefreshSessionUiAsync(string sessionId, CancellationToken cancellationToken = default) =>
         SendAsync<SessionUiRefreshDto>(HttpMethod.Post, $"/sessions/{Escape(sessionId)}/ui/refresh", content: null, cancellationToken);
 

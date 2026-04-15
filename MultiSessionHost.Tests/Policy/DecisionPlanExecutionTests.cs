@@ -219,6 +219,7 @@ public sealed class DecisionPlanExecutionTests
             executionStore,
             policyControlService,
             new MultiSessionHost.Desktop.Persistence.NoOpRuntimePersistenceCoordinator(),
+            new NoOpObservabilityRecorder(),
             handlers,
             clock,
             NullLogger<DefaultDecisionPlanExecutor>.Instance);

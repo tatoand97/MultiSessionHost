@@ -34,6 +34,16 @@ public interface IAdminApiClient
 
     Task<SessionUiRawDto?> GetSessionUiRawAsync(string sessionId, CancellationToken cancellationToken = default);
 
+    Task<GlobalObservabilitySnapshotDto> GetObservabilityAsync(CancellationToken cancellationToken = default);
+
+    Task<SessionObservabilityDto?> GetSessionObservabilityAsync(string sessionId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<SessionObservabilityEventDto>> GetSessionObservabilityEventsAsync(string sessionId, CancellationToken cancellationToken = default);
+
+    Task<SessionObservabilityMetricsDto?> GetSessionObservabilityMetricsAsync(string sessionId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<AdapterErrorRecordDto>> GetSessionObservabilityErrorsAsync(string sessionId, CancellationToken cancellationToken = default);
+
     Task<SessionUiRefreshDto> RefreshSessionUiAsync(string sessionId, CancellationToken cancellationToken = default);
 
     Task<UiSemanticExtractionResultDto?> GetSemanticAsync(string sessionId, CancellationToken cancellationToken = default);

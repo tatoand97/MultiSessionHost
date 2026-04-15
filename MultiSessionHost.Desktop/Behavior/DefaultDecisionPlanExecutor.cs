@@ -6,6 +6,7 @@ using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Activity;
+using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
@@ -23,6 +24,7 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
     private readonly ISessionDecisionPlanExecutionStore _executionStore;
     private readonly ISessionPolicyControlService _policyControlService;
     private readonly IRuntimePersistenceCoordinator _runtimePersistenceCoordinator;
+    private readonly IObservabilityRecorder _observabilityRecorder;
     private readonly IReadOnlyList<IDecisionDirectiveHandler> _directiveHandlers;
     private readonly IClock _clock;
     private readonly ILogger<DefaultDecisionPlanExecutor> _logger;
@@ -36,6 +38,7 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
         ISessionDecisionPlanExecutionStore executionStore,
         ISessionPolicyControlService policyControlService,
         IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
+        IObservabilityRecorder observabilityRecorder,
         IEnumerable<IDecisionDirectiveHandler> directiveHandlers,
         IClock clock,
         ILogger<DefaultDecisionPlanExecutor> logger)
@@ -48,6 +51,7 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
         _executionStore = executionStore;
         _policyControlService = policyControlService;
         _runtimePersistenceCoordinator = runtimePersistenceCoordinator;
+        _observabilityRecorder = observabilityRecorder;
         _directiveHandlers = directiveHandlers.ToArray();
         _clock = clock;
         _logger = logger;
@@ -90,7 +94,7 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
         if (!options.EnableDecisionExecution)
         {
             var now = _clock.UtcNow;
-            return new DecisionPlanExecutionResult(
+            var disabledResult = new DecisionPlanExecutionResult(
                 context.SessionId,
                 ComputePlanFingerprint(context.DecisionPlan),
                 now,
@@ -107,6 +111,9 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
                 {
                     ["skipReason"] = "execution-disabled"
                 });
+
+            await _observabilityRecorder.RecordDecisionExecutionAsync(disabledResult, TimeSpan.Zero, nameof(DefaultDecisionPlanExecutor), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+            return disabledResult;
         }
 
         await _executionStore.InitializeIfMissingAsync(context.SessionId, cancellationToken).ConfigureAwait(false);
@@ -121,6 +128,8 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
             {
                 await PersistAsync(context.SessionId, suppressedResult, cancellationToken).ConfigureAwait(false);
             }
+
+            await _observabilityRecorder.RecordDecisionExecutionAsync(suppressedResult, TimeSpan.Zero, nameof(DefaultDecisionPlanExecutor), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
 
             return suppressedResult;
         }
@@ -238,6 +247,12 @@ public sealed class DefaultDecisionPlanExecutor : IDecisionPlanExecutor
         {
             await PersistAsync(context.SessionId, executionResult, cancellationToken).ConfigureAwait(false);
         }
+
+        await _observabilityRecorder.RecordDecisionExecutionAsync(executionResult, completedAt - startedAt, nameof(DefaultDecisionPlanExecutor), new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["directiveCount"] = context.DecisionPlan.Directives.Count.ToString(CultureInfo.InvariantCulture),
+            ["evaluatedDirectiveCount"] = directiveResults.Count.ToString(CultureInfo.InvariantCulture)
+        }, cancellationToken).ConfigureAwait(false);
 
         _logger.LogDebug(
             "Decision plan execution completed for session '{SessionId}' with status '{Status}' and fingerprint '{Fingerprint}'.",

@@ -208,6 +208,43 @@ public sealed class SessionHostOptionsValidationTests
     }
 
     [Fact]
+    public void TryValidate_FailsWhenObservabilityEventLimitIsInvalid()
+    {
+        var options = new SessionHostOptions
+        {
+            Observability = new ObservabilityOptions
+            {
+                MaxEventsPerSession = 0
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("MaxEventsPerSession", error);
+    }
+
+    [Fact]
+    public void TryValidate_AcceptsCustomObservabilityBounds()
+    {
+        var options = new SessionHostOptions
+        {
+            Observability = new ObservabilityOptions
+            {
+                MaxEventsPerSession = 10,
+                MaxErrorsPerSession = 10,
+                MaxReasonMetricsPerSession = 10
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.True(valid, error);
+    }
+
+    [Fact]
     public void TryValidate_AcceptsConfiguredRiskRules()
     {
         var options = new SessionHostOptions

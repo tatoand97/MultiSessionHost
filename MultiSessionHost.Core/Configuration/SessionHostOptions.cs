@@ -15,6 +15,8 @@ public sealed class SessionHostOptions
 
     public bool EnableAdminApi { get; init; }
 
+    public ObservabilityOptions Observability { get; init; } = new();
+
     public string AdminApiUrl { get; init; } = "http://localhost:5088";
 
     public DriverMode DriverMode { get; init; } = DriverMode.NoOp;
@@ -118,6 +120,29 @@ public sealed class PolicyControlOptions
     public bool BlockManualExecutionWhenPaused { get; init; } = true;
 
     public bool EmitPausedDecisionPlan { get; init; } = true;
+}
+
+public sealed class ObservabilityOptions
+{
+    public bool EnableObservability { get; init; } = true;
+
+    public bool EnableTracing { get; init; } = true;
+
+    public bool EnableMetrics { get; init; } = true;
+
+    public bool EnableStructuredSessionEvents { get; init; } = true;
+
+    public int MaxEventsPerSession { get; init; } = 500;
+
+    public int MaxErrorsPerSession { get; init; } = 100;
+
+    public int MaxReasonMetricsPerSession { get; init; } = 200;
+
+    public bool IncludeVerboseCommandEvents { get; init; } = true;
+
+    public bool IncludePersistenceEvents { get; init; } = true;
+
+    public bool IncludeAttachmentEvents { get; init; } = true;
 }
 
 public sealed class SessionDefinitionOptions

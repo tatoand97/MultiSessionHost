@@ -1,0 +1,160 @@
+namespace MultiSessionHost.Contracts.Sessions;
+
+public sealed record SessionObservabilityEventDto(
+    string SessionId,
+    string EventId,
+    string EventType,
+    string Category,
+    DateTimeOffset OccurredAtUtc,
+    double? DurationMs,
+    string Outcome,
+    string Severity,
+    string? ReasonCode,
+    string? Reason,
+    string? SourceComponent,
+    string? CorrelationId,
+    string? TraceId,
+    IReadOnlyDictionary<string, string> Metadata);
+
+public sealed record SessionLatencyMeasurementDto(
+    string SessionId,
+    string EventId,
+    string Stage,
+    string Category,
+    DateTimeOffset OccurredAtUtc,
+    double DurationMs,
+    string Outcome,
+    string? ReasonCode,
+    string? Reason,
+    string? SourceComponent,
+    string? CorrelationId,
+    string? TraceId,
+    IReadOnlyDictionary<string, string> Metadata);
+
+public sealed record SessionReasonMetricDto(
+    string SessionId,
+    string Category,
+    string ReasonCode,
+    string? Reason,
+    long Count,
+    DateTimeOffset LastOccurredAtUtc,
+    string? SourceComponent);
+
+public sealed record AdapterErrorRecordDto(
+    string SessionId,
+    string EventId,
+    DateTimeOffset OccurredAtUtc,
+    string AdapterName,
+    string Operation,
+    string ExceptionType,
+    string Message,
+    string? ReasonCode,
+    string? SourceComponent,
+    string? CorrelationId,
+    string? TraceId,
+    IReadOnlyDictionary<string, string> Metadata);
+
+public sealed record AttachmentLifecycleEventDto(
+    string SessionId,
+    string EventId,
+    DateTimeOffset OccurredAtUtc,
+    string Operation,
+    string AdapterName,
+    string? TargetKind,
+    string Outcome,
+    double? DurationMs,
+    string? ReasonCode,
+    string? Reason,
+    string? SourceComponent,
+    string? CorrelationId,
+    string? TraceId,
+    IReadOnlyDictionary<string, string> Metadata);
+
+public sealed record PersistenceLifecycleEventDto(
+    string SessionId,
+    string EventId,
+    DateTimeOffset OccurredAtUtc,
+    string Operation,
+    string Outcome,
+    double? DurationMs,
+    string? Path,
+    int? ItemCount,
+    string? ReasonCode,
+    string? Reason,
+    string? SourceComponent,
+    string? CorrelationId,
+    string? TraceId,
+    IReadOnlyDictionary<string, string> Metadata);
+
+public sealed record SessionObservabilitySummaryDto(
+    string SessionId,
+    DateTimeOffset LastUpdatedAtUtc,
+    string Status,
+    long SnapshotCount,
+    long ExtractionCount,
+    long DomainProjectionCount,
+    long PolicyEvaluationCount,
+    long DecisionExecutionCount,
+    long CommandExecutionCount,
+    long PersistenceFlushCount,
+    long PersistenceRehydrateCount,
+    long AttachCount,
+    long ReattachCount,
+    long AdapterErrorCount,
+    long WithdrawCount,
+    long AbortCount,
+    long HideCount,
+    long WaitCount,
+    long SkippedExecutionCount,
+    long CommandFailureCount,
+    long PersistenceFailureCount,
+    long RecentWarningCount,
+    long RecentErrorCount,
+    double? LastSnapshotDurationMs,
+    double? LastExtractionDurationMs,
+    double? LastPolicyEvaluationDurationMs,
+    double? LastDecisionExecutionDurationMs,
+    double? LastCommandDurationMs,
+    double? LastPersistenceFlushDurationMs,
+    double? LastPersistenceRehydrateDurationMs,
+    double? LastAttachDurationMs,
+    double? LastReattachDurationMs,
+    string? LastSnapshotOutcome,
+    string? LastExtractionOutcome,
+    string? LastPolicyOutcome,
+    string? LastDecisionOutcome,
+    string? LastCommandOutcome,
+    string? LastPersistenceOutcome,
+    string? LastRehydrateOutcome,
+    string? LastAttachOutcome,
+    string? LastReattachOutcome,
+    string? LastAdapterError,
+    string? LastPersistenceError,
+    string? LastReasonCode,
+    string? LastReason,
+    IReadOnlyDictionary<string, long> ReasonCounts);
+
+public sealed record SessionObservabilityMetricsDto(
+    string SessionId,
+    DateTimeOffset CapturedAtUtc,
+    SessionObservabilitySummaryDto Summary,
+    IReadOnlyCollection<SessionLatencyMeasurementDto> RecentLatencies,
+    IReadOnlyCollection<SessionReasonMetricDto> ReasonMetrics,
+    IReadOnlyCollection<AdapterErrorRecordDto> RecentErrors);
+
+public sealed record SessionObservabilityDto(
+    SessionObservabilitySummaryDto Summary,
+    IReadOnlyCollection<SessionObservabilityEventDto> RecentEvents,
+    SessionObservabilityMetricsDto Metrics,
+    IReadOnlyCollection<AdapterErrorRecordDto> RecentErrors);
+
+public sealed record GlobalObservabilitySnapshotDto(
+    DateTimeOffset CapturedAtUtc,
+    string Status,
+    int ActiveSessions,
+    int FaultedSessions,
+    int PausedSessions,
+    long TotalEvents,
+    long TotalErrors,
+    IReadOnlyCollection<SessionObservabilitySummaryDto> Sessions,
+    IReadOnlyCollection<AdapterErrorRecordDto> RecentErrors);

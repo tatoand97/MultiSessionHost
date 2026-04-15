@@ -17,6 +17,7 @@ using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
+using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.UiModel.Models;
 
 namespace MultiSessionHost.AdminApi;
@@ -272,6 +273,139 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 }
 
                 return Results.Ok((sessionCoordinator.GetSessionUiState(sessionId) ?? SessionUiState.Create(sessionId)).ToUiRawDto());
+            });
+
+        endpoints.MapGet(
+            "/observability",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionObservabilityStore observabilityStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var snapshot = await observabilityStore.GetGlobalSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(snapshot.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/observability",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionObservabilityStore observabilityStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var snapshot = await observabilityStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return snapshot is null ? Results.NotFound() : Results.Ok(snapshot.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/observability/events",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionObservabilityStore observabilityStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var events = await observabilityStore.GetEventsAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(events.Select(static evt => evt.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/observability/metrics",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionObservabilityStore observabilityStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var metrics = await observabilityStore.GetMetricsAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return metrics is null ? Results.NotFound() : Results.Ok(metrics.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/observability/errors",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionObservabilityStore observabilityStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var errors = await observabilityStore.GetErrorsAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(errors.Select(static errorRecord => errorRecord.ToDto()).ToArray());
             });
 
         endpoints.MapGet(

@@ -1,5 +1,6 @@
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 
@@ -11,11 +12,20 @@ namespace MultiSessionHost.Desktop.Activity;
 /// </summary>
 public sealed class DefaultSessionActivityStateEvaluator : ISessionActivityStateEvaluator
 {
+    private readonly IObservabilityRecorder _observabilityRecorder;
+
+    public DefaultSessionActivityStateEvaluator(IObservabilityRecorder observabilityRecorder)
+    {
+        _observabilityRecorder = observabilityRecorder;
+    }
+
     public ValueTask<SessionActivityEvaluationResult> EvaluateAsync(
         SessionActivityEvaluationContext context,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
+
+        var startedAt = DateTimeOffset.UtcNow;
 
         var previousSnapshot = context.PreviousSnapshot ?? SessionActivitySnapshot.CreateBootstrap(context.SessionId, context.EvaluatedAtUtc);
         var newState = EvaluateState(context, previousSnapshot.CurrentState);
@@ -40,11 +50,28 @@ public sealed class DefaultSessionActivityStateEvaluator : ISessionActivityState
 
         var updatedSnapshot = InMemorySessionActivityStateStore.AppendTransition(previousSnapshot, transition);
 
-        return ValueTask.FromResult(new SessionActivityEvaluationResult(
+        var result = new SessionActivityEvaluationResult(
             updatedSnapshot,
             transition,
             EvaluationReasonCode: GetReasonCode(context, newState),
-            EvaluationReason: GetReason(context, newState)));
+            EvaluationReason: GetReason(context, newState));
+
+        _ = _observabilityRecorder.RecordActivityAsync(
+            context.SessionId,
+            "activity.state",
+            MapOutcome(newState),
+            DateTimeOffset.UtcNow - startedAt,
+            result.EvaluationReasonCode,
+            result.EvaluationReason,
+            nameof(DefaultSessionActivityStateEvaluator),
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["state"] = newState.ToString(),
+                ["previousState"] = previousSnapshot.CurrentState.ToString()
+            },
+            cancellationToken);
+
+        return ValueTask.FromResult(result);
     }
 
     /// <summary>
@@ -281,4 +308,14 @@ public sealed class DefaultSessionActivityStateEvaluator : ISessionActivityState
 
         return metadata;
     }
+
+    private static string MapOutcome(SessionActivityStateKind state) =>
+        state switch
+        {
+            SessionActivityStateKind.Withdrawing => SessionObservabilityOutcome.Withdrawn.ToString(),
+            SessionActivityStateKind.Hiding => SessionObservabilityOutcome.Hidden.ToString(),
+            SessionActivityStateKind.WaitingForSpawn => SessionObservabilityOutcome.Waiting.ToString(),
+            SessionActivityStateKind.Faulted => SessionObservabilityOutcome.Aborted.ToString(),
+            _ => SessionObservabilityOutcome.Success.ToString()
+        };
 }

@@ -112,6 +112,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidateObservability(options.Observability, out error))
+        {
+            return false;
+        }
+
         if (options.Sessions.Count == 0)
         {
             error = "At least one session must be configured.";
@@ -298,6 +303,34 @@ public static class SessionHostOptionsExtensions
         if (options.MaxHistoryEntries <= 0)
         {
             error = "PolicyControl.MaxHistoryEntries must be greater than zero.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateObservability(
+        ObservabilityOptions options,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.MaxEventsPerSession <= 0)
+        {
+            error = "Observability.MaxEventsPerSession must be greater than zero.";
+            return false;
+        }
+
+        if (options.MaxErrorsPerSession <= 0)
+        {
+            error = "Observability.MaxErrorsPerSession must be greater than zero.";
+            return false;
+        }
+
+        if (options.MaxReasonMetricsPerSession <= 0)
+        {
+            error = "Observability.MaxReasonMetricsPerSession must be greater than zero.";
             return false;
         }
 

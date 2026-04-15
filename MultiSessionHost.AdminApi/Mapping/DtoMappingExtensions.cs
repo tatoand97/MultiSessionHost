@@ -10,6 +10,7 @@ using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Models;
 using MultiSessionHost.Desktop.Persistence;
+using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
@@ -1013,4 +1014,173 @@ public static class DtoMappingExtensions
             result.State.ToDto(),
             result.History.Select(static entry => entry.ToDto()).ToArray(),
             result.Message);
+
+    public static SessionObservabilityEventDto ToDto(this SessionObservabilityEvent sessionEvent) =>
+        new(
+            sessionEvent.SessionId.Value,
+            sessionEvent.EventId.ToString(),
+            sessionEvent.EventType,
+            sessionEvent.Category,
+            sessionEvent.OccurredAtUtc,
+            sessionEvent.DurationMs,
+            sessionEvent.Outcome,
+            sessionEvent.Severity.ToString(),
+            sessionEvent.ReasonCode,
+            sessionEvent.Reason,
+            sessionEvent.SourceComponent,
+            sessionEvent.CorrelationId,
+            sessionEvent.TraceId,
+            sessionEvent.Metadata);
+
+    public static SessionLatencyMeasurementDto ToDto(this SessionLatencyMeasurement measurement) =>
+        new(
+            measurement.SessionId.Value,
+            measurement.EventId.ToString(),
+            measurement.Stage,
+            measurement.Category,
+            measurement.OccurredAtUtc,
+            measurement.DurationMs ?? 0,
+            measurement.Outcome,
+            measurement.ReasonCode,
+            measurement.Reason,
+            measurement.SourceComponent,
+            measurement.CorrelationId,
+            measurement.TraceId,
+            measurement.Metadata);
+
+    public static SessionReasonMetricDto ToDto(this SessionReasonMetric metric) =>
+        new(
+            metric.SessionId.Value,
+            metric.Category,
+            metric.ReasonCode,
+            metric.Reason,
+            metric.Count,
+            metric.LastOccurredAtUtc,
+            metric.SourceComponent);
+
+    public static AdapterErrorRecordDto ToDto(this AdapterErrorRecord record) =>
+        new(
+            record.SessionId.Value,
+            record.EventId.ToString(),
+            record.OccurredAtUtc,
+            record.AdapterName,
+            record.Operation,
+            record.ExceptionType,
+            record.Message,
+            record.ReasonCode,
+            record.SourceComponent,
+            record.CorrelationId,
+            record.TraceId,
+            record.Metadata);
+
+    public static AttachmentLifecycleEventDto ToDto(this AttachmentLifecycleEvent record) =>
+        new(
+            record.SessionId.Value,
+            record.EventId.ToString(),
+            record.OccurredAtUtc,
+            record.Operation,
+            record.AdapterName,
+            record.TargetKind,
+            record.Outcome,
+            record.DurationMs,
+            record.ReasonCode,
+            record.Reason,
+            record.SourceComponent,
+            record.CorrelationId,
+            record.TraceId,
+            record.Metadata);
+
+    public static PersistenceLifecycleEventDto ToDto(this PersistenceLifecycleEvent record) =>
+        new(
+            record.SessionId.Value,
+            record.EventId.ToString(),
+            record.OccurredAtUtc,
+            record.Operation,
+            record.Outcome,
+            record.DurationMs,
+            record.Path,
+            record.ItemCount,
+            record.ReasonCode,
+            record.Reason,
+            record.SourceComponent,
+            record.CorrelationId,
+            record.TraceId,
+            record.Metadata);
+
+    public static SessionObservabilitySummaryDto ToDto(this SessionObservabilitySummary summary) =>
+        new(
+            summary.SessionId.Value,
+            summary.LastUpdatedAtUtc,
+            summary.Status.ToString(),
+            summary.SnapshotCount,
+            summary.ExtractionCount,
+            summary.DomainProjectionCount,
+            summary.PolicyEvaluationCount,
+            summary.DecisionExecutionCount,
+            summary.CommandExecutionCount,
+            summary.PersistenceFlushCount,
+            summary.PersistenceRehydrateCount,
+            summary.AttachCount,
+            summary.ReattachCount,
+            summary.AdapterErrorCount,
+            summary.WithdrawCount,
+            summary.AbortCount,
+            summary.HideCount,
+            summary.WaitCount,
+            summary.SkippedExecutionCount,
+            summary.CommandFailureCount,
+            summary.PersistenceFailureCount,
+            summary.RecentWarningCount,
+            summary.RecentErrorCount,
+            summary.LastSnapshotDurationMs,
+            summary.LastExtractionDurationMs,
+            summary.LastPolicyEvaluationDurationMs,
+            summary.LastDecisionExecutionDurationMs,
+            summary.LastCommandDurationMs,
+            summary.LastPersistenceFlushDurationMs,
+            summary.LastPersistenceRehydrateDurationMs,
+            summary.LastAttachDurationMs,
+            summary.LastReattachDurationMs,
+            summary.LastSnapshotOutcome,
+            summary.LastExtractionOutcome,
+            summary.LastPolicyOutcome,
+            summary.LastDecisionOutcome,
+            summary.LastCommandOutcome,
+            summary.LastPersistenceOutcome,
+            summary.LastRehydrateOutcome,
+            summary.LastAttachOutcome,
+            summary.LastReattachOutcome,
+            summary.LastAdapterError,
+            summary.LastPersistenceError,
+            summary.LastReasonCode,
+            summary.LastReason,
+            summary.ReasonCounts);
+
+    public static SessionObservabilityMetricsDto ToDto(this SessionObservabilityMetricsSnapshot snapshot) =>
+        new(
+            snapshot.SessionId.Value,
+            snapshot.CapturedAtUtc,
+            snapshot.Summary.ToDto(),
+            snapshot.RecentLatencies.Select(static latency => latency.ToDto()).ToArray(),
+            snapshot.ReasonMetrics.Select(static metric => metric.ToDto()).ToArray(),
+            snapshot.RecentErrors.Select(static error => error.ToDto()).ToArray());
+
+    public static SessionObservabilityDto ToDto(this SessionObservabilitySnapshot snapshot) =>
+        new(
+            snapshot.Summary.ToDto(),
+            snapshot.RecentEvents.Select(static sessionEvent => sessionEvent.ToDto()).ToArray(),
+            snapshot.Metrics.ToDto(),
+            snapshot.RecentErrors.Select(static error => error.ToDto()).ToArray());
+
+    public static GlobalObservabilitySnapshotDto ToDto(this GlobalObservabilitySnapshot snapshot) =>
+        new(
+            snapshot.CapturedAtUtc,
+            snapshot.Status.ToString(),
+            snapshot.ActiveSessions,
+            snapshot.FaultedSessions,
+            snapshot.PausedSessions,
+            snapshot.TotalEvents,
+            snapshot.TotalErrors,
+            snapshot.Sessions.Select(static session => session.ToDto()).ToArray(),
+            snapshot.RecentErrors.Select(static error => error.ToDto()).ToArray());
 }

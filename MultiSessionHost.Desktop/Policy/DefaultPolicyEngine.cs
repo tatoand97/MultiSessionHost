@@ -4,6 +4,7 @@ using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Memory;
+using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.PolicyControl;
@@ -27,6 +28,7 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
     private readonly IDecisionPlanAggregator _aggregator;
     private readonly ISessionDecisionPlanStore _decisionPlanStore;
     private readonly IRuntimePersistenceCoordinator _runtimePersistenceCoordinator;
+    private readonly IObservabilityRecorder _observabilityRecorder;
     private readonly IClock _clock;
     private readonly ILogger<DefaultPolicyEngine> _logger;
 
@@ -46,6 +48,7 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
         IDecisionPlanAggregator aggregator,
         ISessionDecisionPlanStore decisionPlanStore,
         IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
+        IObservabilityRecorder observabilityRecorder,
         IClock clock,
         ILogger<DefaultPolicyEngine> logger)
     {
@@ -64,6 +67,7 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
         _aggregator = aggregator;
         _decisionPlanStore = decisionPlanStore;
         _runtimePersistenceCoordinator = runtimePersistenceCoordinator;
+        _observabilityRecorder = observabilityRecorder;
         _clock = clock;
         _logger = logger;
     }
@@ -79,6 +83,18 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
             {
                 var pausedPlan = CreatePausedPlan(sessionId, now, gate);
                 var storedPausedPlan = await _decisionPlanStore.UpdateAsync(sessionId, pausedPlan, cancellationToken).ConfigureAwait(false);
+                await _observabilityRecorder.RecordDecisionPlanAsync(
+                    storedPausedPlan,
+                    TimeSpan.Zero,
+                    SessionObservabilityOutcome.Paused.ToString(),
+                    gate.ReasonCode,
+                    gate.Reason,
+                    nameof(DefaultPolicyEngine),
+                    new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["policyPaused"] = bool.TrueString
+                    },
+                    cancellationToken).ConfigureAwait(false);
                 await FlushIfEnabledAsync(sessionId, cancellationToken).ConfigureAwait(false);
                 return storedPausedPlan;
             }
@@ -91,6 +107,18 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
                 Warnings = ["Policy engine is disabled."]
             };
             var storedDisabledPlan = await _decisionPlanStore.UpdateAsync(sessionId, disabledPlan, cancellationToken).ConfigureAwait(false);
+            await _observabilityRecorder.RecordDecisionPlanAsync(
+                storedDisabledPlan,
+                TimeSpan.Zero,
+                SessionObservabilityOutcome.Skipped.ToString(),
+                "policy-engine-disabled",
+                "Policy engine is disabled.",
+                nameof(DefaultPolicyEngine),
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["policyEngineEnabled"] = bool.FalseString
+                },
+                cancellationToken).ConfigureAwait(false);
             await FlushIfEnabledAsync(sessionId, cancellationToken).ConfigureAwait(false);
             return storedDisabledPlan;
         }
@@ -111,10 +139,42 @@ public sealed class DefaultPolicyEngine : IPolicyEngine
                 _logger.LogInformation("Policy '{PolicyName}' aborted evaluation for session '{SessionId}'.", policy.Name, sessionId);
                 break;
             }
+
+            await _observabilityRecorder.RecordPolicyEvaluationAsync(
+                sessionId,
+                policy.Name,
+                [result],
+                isPolicyPaused: false,
+                TimeSpan.Zero,
+                result.DidAbort ? SessionObservabilityOutcome.Aborted.ToString() : result.DidBlock ? SessionObservabilityOutcome.Blocked.ToString() : result.DidMatch ? SessionObservabilityOutcome.Success.ToString() : SessionObservabilityOutcome.Skipped.ToString(),
+                result.Reasons.FirstOrDefault()?.Code,
+                result.Reasons.FirstOrDefault()?.Message,
+                nameof(DefaultPolicyEngine),
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["policyName"] = policy.Name,
+                    ["didMatch"] = result.DidMatch.ToString(),
+                    ["didBlock"] = result.DidBlock.ToString(),
+                    ["didAbort"] = result.DidAbort.ToString()
+                },
+                cancellationToken).ConfigureAwait(false);
         }
 
         var plan = _aggregator.Aggregate(sessionId, now, results);
         var storedPlan = await _decisionPlanStore.UpdateAsync(sessionId, plan, cancellationToken).ConfigureAwait(false);
+        await _observabilityRecorder.RecordDecisionPlanAsync(
+            storedPlan,
+            TimeSpan.Zero,
+            storedPlan.PlanStatus.ToString(),
+            storedPlan.Reasons.FirstOrDefault()?.Code,
+            storedPlan.Reasons.FirstOrDefault()?.Message,
+            nameof(DefaultPolicyEngine),
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["directiveCount"] = storedPlan.Directives.Count.ToString(),
+                ["policyCount"] = results.Count.ToString()
+            },
+            cancellationToken).ConfigureAwait(false);
         await FlushIfEnabledAsync(sessionId, cancellationToken).ConfigureAwait(false);
         return storedPlan;
     }

@@ -291,6 +291,7 @@ public sealed class RuntimePersistenceTests
             planStore,
             executionStore,
             policyControlStore,
+            new NoOpObservabilityRecorder(),
             NullLogger<RuntimePersistenceCoordinator>.Instance);
 
         return new TestStores(registry, activityStore, memoryStore, planStore, executionStore, policyControlStore, coordinator);
