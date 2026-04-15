@@ -12,6 +12,8 @@ public sealed class DefaultSessionCoordinator : ISessionCoordinator
     private readonly ISessionRegistry _sessionRegistry;
     private readonly ISessionStateStore _sessionStateStore;
     private readonly ISessionUiStateStore _sessionUiStateStore;
+    private readonly ISessionDomainStateBootstrapper _sessionDomainStateBootstrapper;
+    private readonly ISessionDomainStateStore _sessionDomainStateStore;
     private readonly ISessionScheduler _sessionScheduler;
     private readonly ISessionLifecycleManager _sessionLifecycleManager;
     private readonly IWorkQueue _workQueue;
@@ -26,6 +28,8 @@ public sealed class DefaultSessionCoordinator : ISessionCoordinator
         ISessionRegistry sessionRegistry,
         ISessionStateStore sessionStateStore,
         ISessionUiStateStore sessionUiStateStore,
+        ISessionDomainStateBootstrapper sessionDomainStateBootstrapper,
+        ISessionDomainStateStore sessionDomainStateStore,
         ISessionScheduler sessionScheduler,
         ISessionLifecycleManager sessionLifecycleManager,
         IWorkQueue workQueue,
@@ -37,6 +41,8 @@ public sealed class DefaultSessionCoordinator : ISessionCoordinator
         _sessionRegistry = sessionRegistry;
         _sessionStateStore = sessionStateStore;
         _sessionUiStateStore = sessionUiStateStore;
+        _sessionDomainStateBootstrapper = sessionDomainStateBootstrapper;
+        _sessionDomainStateStore = sessionDomainStateStore;
         _sessionScheduler = sessionScheduler;
         _sessionLifecycleManager = sessionLifecycleManager;
         _workQueue = workQueue;
@@ -61,6 +67,8 @@ public sealed class DefaultSessionCoordinator : ISessionCoordinator
             await _sessionUiStateStore.InitializeAsync(SessionUiState.Create(definition.Id), cancellationToken).ConfigureAwait(false);
             _healthReporter.RecordRegistration(definition);
         }
+
+        await _sessionDomainStateBootstrapper.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         _logger.LogInformation("Registered {SessionCount} session definitions.", _sessionRegistry.GetAll().Count);
     }
@@ -129,6 +137,12 @@ public sealed class DefaultSessionCoordinator : ISessionCoordinator
 
     public SessionUiState? GetSessionUiState(SessionId sessionId) =>
         _sessionUiStateStore.GetAll().FirstOrDefault(state => state.SessionId == sessionId);
+
+    public SessionDomainState? GetSessionDomainState(SessionId sessionId) =>
+        _sessionDomainStateStore.GetAsync(sessionId, CancellationToken.None).AsTask().GetAwaiter().GetResult();
+
+    public IReadOnlyCollection<SessionDomainState> GetSessionDomainStates() =>
+        _sessionDomainStateStore.GetAllAsync(CancellationToken.None).AsTask().GetAwaiter().GetResult();
 
     public async Task<SessionUiState> RefreshSessionUiAsync(SessionId sessionId, CancellationToken cancellationToken)
     {

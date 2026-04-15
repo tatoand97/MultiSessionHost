@@ -101,24 +101,60 @@ No incluye ni pretende incluir:
   - aplica exclusión por sesión, target y límite global opcional
   - aplica cooldown por target cuando está configurado
   - expone snapshot operativo de ejecuciones activas/en espera
+- `SessionDomainState`
+  - snapshot genérico, activity-oriented, por sesión
+  - complementa `SessionUiState` sin reemplazarlo
+  - se inicializa al arrancar y se actualiza después de proyectar UI
+- `ISessionDomainStateStore`
+  - mantiene un snapshot de dominio por `SessionId`
+  - thread-safe, en memoria y estrictamente aislado por sesión
+- `ISessionDomainStateProjectionService`
+  - deriva estado de dominio desde señales runtime disponibles
+  - todavía no implementa extracción semántica profunda
 
 ## Flujo runtime
 
 ```text
 Worker session
-  -> DesktopTargetSessionDriver
-  -> ISessionTargetBindingStore
-  -> SessionTargetBinding
-  -> IDesktopTargetProfileCatalog
-  -> DesktopTargetProfile
-  -> IDesktopTargetAdapterRegistry
-  -> IDesktopTargetAdapter
-  -> attachment
-  -> optional raw snapshot
-  -> normalize
-  -> project
+  -> target resolution
+  -> attachment ensure
+  -> UI capture/project
   -> planned work items
+  -> domain projection
+  -> SessionDomainStateStore
+  -> Admin API inspection
 ```
+
+## Modelo de dominio por sesión
+
+`SessionDomainState` es un snapshot inmutable, genérico y orientado a actividad. Existe para que las capas futuras puedan tomar decisiones sobre la sesión sin acoplarse al shape técnico de la UI proyectada. El estado se crea durante el bootstrap de cada sesión con `Source=Bootstrap`, valores seguros (`Unknown`, `Idle`, `None`, `null`) y timestamps iniciales.
+
+Sub-estados incluidos:
+
+- `NavigationState`: estado alto nivel de movimiento/transición, destino/ruta/progreso si se conoce.
+- `CombatState`: actividad idle/engaged/recovering y postura ofensiva/defensiva genérica.
+- `ThreatState`: severidad, conteos genéricos, seguridad y señales.
+- `TargetState`: target activo, target primario y conteos de tracked/locked/selected.
+- `CompanionState`: disponibilidad/salud y conteos de assets de soporte.
+- `ResourceState`: porcentajes/capacidades/cargas genéricas y flags degraded/critical.
+- `LocationState`: contexto/lugar/sub-lugar, base/home/safe si se conoce y confianza.
+
+### Diferencia con SessionUiState
+
+`SessionUiState` conserva el mundo observado de UI: raw snapshot JSON, `UiTree`, diff y work items planificados. `SessionDomainState` conserva una vista estable de dominio: qué parece estar haciendo la sesión, qué tan saludable/degradada está y qué señales faltan o fallaron. Hoy la proyección solo usa señales ya existentes: runtime status, attachment, raw snapshot, árbol proyectado, work items, errores de refresh y metadata de target/profile. La extracción semántica específica queda fuera de este alcance.
+
+### Integración en refresh
+
+La actualización ocurre en `DefaultSessionUiRefreshService.ProjectAsync`, después de:
+
+1. leer o capturar el raw snapshot
+2. normalizar a `UiTree`
+3. calcular diff
+4. planificar work items
+5. persistir `SessionUiState`
+6. proyectar y persistir `SessionDomainState`
+
+Si la proyección UI falla, el mismo servicio registra el error en `SessionUiState` y degrada el snapshot de dominio con `Source=UiRefreshFailure` y warnings.
 
 ### Coordinación de ejecución real
 
@@ -393,6 +429,8 @@ Endpoints existentes mantenidos:
 - `GET /sessions/{id}/ui`
 - `GET /sessions/{id}/ui/raw`
 - `POST /sessions/{id}/ui/refresh`
+- `GET /domain`
+- `GET /sessions/{id}/domain`
 
 Endpoints nuevos de inspección:
 
@@ -439,6 +477,8 @@ Ejemplos:
 ```powershell
 Invoke-RestMethod http://localhost:5088/coordination
 Invoke-RestMethod http://localhost:5088/coordination/sessions/alpha
+Invoke-RestMethod http://localhost:5088/domain
+Invoke-RestMethod http://localhost:5088/sessions/alpha/domain
 ```
 
 Escenarios esperados:
@@ -646,3 +686,11 @@ La suite cubre ahora:
 - snapshot de coordinación activo/en espera
 - endpoints `/coordination`
 - rebind runtime actualizando la key de target y reattach
+- defaults de `SessionDomainState`
+- aislamiento y updates de `ISessionDomainStateStore`
+- proyección de dominio con UI disponible, ausente y degradada
+- endpoints `GET /domain`
+- endpoint `GET /sessions/{id}/domain`
+- actualización de dominio después de `ui/refresh`
+- aislamiento de snapshots de dominio entre sesiones
+- lectura de dominio después de cambios runtime de binding

@@ -57,6 +57,7 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionAttachmentRuntime, DefaultSessionAttachmentRuntime>();
         services.AddSingleton<IUiSnapshotSerializer, JsonUiSnapshotSerializer>();
         services.AddSingleton<IUiSnapshotProvider, SelfHostedHttpUiSnapshotProvider>();
+        services.AddSingleton<ISessionDomainStateProjectionService, DefaultSessionDomainStateProjectionService>();
         services.AddSingleton<ISessionUiRefreshService, DefaultSessionUiRefreshService>();
         services.AddSingleton<SelfHostedHttpUiTreeNormalizer>();
         services.AddSingleton<TestAppUiTreeNormalizer>();

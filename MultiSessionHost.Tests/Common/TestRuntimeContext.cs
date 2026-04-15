@@ -21,6 +21,8 @@ public sealed class TestRuntimeContext
         Registry = new InMemorySessionRegistry();
         StateStore = new InMemorySessionStateStore();
         UiStateStore = new InMemorySessionUiStateStore();
+        DomainStateStore = new InMemorySessionDomainStateStore();
+        DomainStateBootstrapper = new SessionDomainStateBootstrapper(Options, DomainStateStore, Clock);
         WorkQueue = new ChannelBasedWorkQueue();
         HealthReporter = new DefaultHealthReporter();
         Scheduler = new RoundRobinSessionScheduler();
@@ -37,6 +39,8 @@ public sealed class TestRuntimeContext
             Registry,
             StateStore,
             UiStateStore,
+            DomainStateBootstrapper,
+            DomainStateStore,
             Scheduler,
             LifecycleManager,
             WorkQueue,
@@ -56,6 +60,10 @@ public sealed class TestRuntimeContext
     public InMemorySessionStateStore StateStore { get; }
 
     public InMemorySessionUiStateStore UiStateStore { get; }
+
+    public InMemorySessionDomainStateStore DomainStateStore { get; }
+
+    public SessionDomainStateBootstrapper DomainStateBootstrapper { get; }
 
     public ChannelBasedWorkQueue WorkQueue { get; }
 

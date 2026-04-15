@@ -19,6 +19,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly IUiStateProjector _uiStateProjector;
     private readonly IWorkItemPlannerResolver _workItemPlannerResolver;
     private readonly ISessionUiStateStore _sessionUiStateStore;
+    private readonly ISessionDomainStateStore _sessionDomainStateStore;
+    private readonly ISessionDomainStateProjectionService _domainStateProjectionService;
     private readonly IClock _clock;
     private readonly ILogger<DefaultSessionUiRefreshService> _logger;
 
@@ -30,6 +32,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         IUiStateProjector uiStateProjector,
         IWorkItemPlannerResolver workItemPlannerResolver,
         ISessionUiStateStore sessionUiStateStore,
+        ISessionDomainStateStore sessionDomainStateStore,
+        ISessionDomainStateProjectionService domainStateProjectionService,
         IClock clock,
         ILogger<DefaultSessionUiRefreshService> logger)
     {
@@ -40,6 +44,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _uiStateProjector = uiStateProjector;
         _workItemPlannerResolver = workItemPlannerResolver;
         _sessionUiStateStore = sessionUiStateStore;
+        _sessionDomainStateStore = sessionDomainStateStore;
+        _domainStateProjectionService = domainStateProjectionService;
         _clock = clock;
         _logger = logger;
     }
@@ -133,7 +139,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
             var diff = _uiStateProjector.Project(uiState.ProjectedTree, tree);
             var plannedWorkItems = planner.Plan(tree);
 
-            return await _sessionUiStateStore.UpdateAsync(
+            var projectedUiState = await _sessionUiStateStore.UpdateAsync(
                 snapshot.SessionId,
                 current => current with
                 {
@@ -147,10 +153,24 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     LastRefreshErrorAtUtc = null
                 },
                 cancellationToken).ConfigureAwait(false);
+
+            await _sessionDomainStateStore.UpdateAsync(
+                snapshot.SessionId,
+                current => _domainStateProjectionService.Project(
+                    current,
+                    snapshot,
+                    context,
+                    projectedUiState,
+                    attachment,
+                    _clock.UtcNow),
+                cancellationToken).ConfigureAwait(false);
+
+            return projectedUiState;
         }
         catch (Exception exception)
         {
             await RecordUiRefreshErrorAsync(snapshot.SessionId, exception, cancellationToken).ConfigureAwait(false);
+            await RecordDomainRefreshErrorAsync(snapshot.SessionId, exception, cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
@@ -176,6 +196,14 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 LastRefreshError = exception.Message,
                 LastRefreshErrorAtUtc = _clock.UtcNow
             },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task RecordDomainRefreshErrorAsync(SessionId sessionId, Exception exception, CancellationToken cancellationToken)
+    {
+        await _sessionDomainStateStore.UpdateAsync(
+            sessionId,
+            current => _domainStateProjectionService.ProjectRefreshFailure(current, exception, _clock.UtcNow),
             cancellationToken).ConfigureAwait(false);
     }
 

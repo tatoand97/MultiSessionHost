@@ -267,6 +267,41 @@ public static class AdminApiEndpointRouteBuilderExtensions
             });
 
         endpoints.MapGet(
+            "/domain",
+            async Task<IResult> (HttpContext httpContext, IAdminAuthorizationPolicy authorizationPolicy, ISessionCoordinator sessionCoordinator, CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                return Results.Ok(sessionCoordinator.GetSessionDomainStates().Select(static state => state.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/domain",
+            async Task<IResult> (string id, HttpContext httpContext, IAdminAuthorizationPolicy authorizationPolicy, ISessionCoordinator sessionCoordinator, CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var state = sessionCoordinator.GetSessionDomainState(sessionId);
+                return state is null ? Results.NotFound() : Results.Ok(state.ToDto());
+            });
+
+        endpoints.MapGet(
             "/sessions/{id}/target",
             async Task<IResult> (
                 string id,

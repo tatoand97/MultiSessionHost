@@ -22,6 +22,10 @@ public interface ISessionCoordinator
 
     SessionUiState? GetSessionUiState(SessionId sessionId);
 
+    SessionDomainState? GetSessionDomainState(SessionId sessionId);
+
+    IReadOnlyCollection<SessionDomainState> GetSessionDomainStates();
+
     Task<SessionUiState> RefreshSessionUiAsync(SessionId sessionId, CancellationToken cancellationToken);
 
     ProcessHealthSnapshot GetProcessHealth();

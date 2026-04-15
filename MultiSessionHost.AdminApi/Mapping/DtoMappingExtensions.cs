@@ -94,6 +94,95 @@ public static class DtoMappingExtensions
             state.LastDiff,
             state.PlannedWorkItems);
 
+    public static SessionDomainStateDto ToDto(this SessionDomainState state) =>
+        new(
+            state.SessionId.Value,
+            state.CapturedAtUtc,
+            state.UpdatedAtUtc,
+            state.Version,
+            state.Source.ToString(),
+            state.Navigation.ToDto(),
+            state.Combat.ToDto(),
+            state.Threat.ToDto(),
+            state.Target.ToDto(),
+            state.Companions.ToDto(),
+            state.Resources.ToDto(),
+            state.Location.ToDto(),
+            state.Warnings);
+
+    public static NavigationStateDto ToDto(this NavigationState state) =>
+        new(
+            state.Status.ToString(),
+            state.IsTransitioning,
+            state.DestinationLabel,
+            state.RouteLabel,
+            state.ProgressPercent,
+            state.StartedAtUtc,
+            state.UpdatedAtUtc);
+
+    public static CombatStateDto ToDto(this CombatState state) =>
+        new(
+            state.Status.ToString(),
+            state.ActivityPhase,
+            state.OffensiveActionsActive,
+            state.DefensivePostureActive,
+            state.EngagedAtUtc,
+            state.UpdatedAtUtc);
+
+    public static ThreatStateDto ToDto(this ThreatState state) =>
+        new(
+            state.Severity.ToString(),
+            state.UnknownCount,
+            state.NeutralCount,
+            state.HostileCount,
+            state.IsSafe,
+            state.LastThreatChangedAtUtc,
+            state.Signals);
+
+    public static TargetStateDto ToDto(this TargetState state) =>
+        new(
+            state.HasActiveTarget,
+            state.PrimaryTargetId,
+            state.PrimaryTargetLabel,
+            state.TrackedTargetCount,
+            state.LockedTargetCount,
+            state.SelectedTargetCount,
+            state.Status.ToString(),
+            state.LastTargetChangedAtUtc,
+            state.UpdatedAtUtc);
+
+    public static CompanionStateDto ToDto(this CompanionState state) =>
+        new(
+            state.Status.ToString(),
+            state.AreAvailable,
+            state.AreHealthy,
+            state.ActiveCount,
+            state.DeployedCount,
+            state.DockedCount,
+            state.IdleCount,
+            state.UpdatedAtUtc);
+
+    public static ResourceStateDto ToDto(this ResourceState state) =>
+        new(
+            state.HealthPercent,
+            state.CapacityPercent,
+            state.EnergyPercent,
+            state.AvailableChargeCount,
+            state.CapacityCount,
+            state.IsDegraded,
+            state.IsCritical,
+            state.UpdatedAtUtc);
+
+    public static LocationStateDto ToDto(this LocationState state) =>
+        new(
+            state.ContextLabel,
+            state.SubLocationLabel,
+            state.IsBaseOrHome,
+            state.IsUnknown,
+            state.Confidence.ToString(),
+            state.ArrivedAtUtc,
+            state.UpdatedAtUtc);
+
     public static DesktopTargetProfileDto ToDto(this DesktopTargetProfile profile) =>
         new(
             profile.ProfileName,

@@ -24,6 +24,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISessionRegistry, InMemorySessionRegistry>();
         services.AddSingleton<ISessionStateStore, InMemorySessionStateStore>();
         services.AddSingleton<ISessionUiStateStore, InMemorySessionUiStateStore>();
+        services.AddSingleton<ISessionDomainStateStore, InMemorySessionDomainStateStore>();
+        services.AddSingleton<ISessionDomainStateBootstrapper, SessionDomainStateBootstrapper>();
         services.AddSingleton<IWorkQueue, ChannelBasedWorkQueue>();
         services.AddSingleton<IHealthReporter, DefaultHealthReporter>();
         services.AddSingleton<ISessionScheduler, RoundRobinSessionScheduler>();
