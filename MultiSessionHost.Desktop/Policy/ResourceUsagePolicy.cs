@@ -26,26 +26,12 @@ public sealed class ResourceUsagePolicy : IPolicy
     {
         var builder = new PolicyResultBuilder(Name);
         var candidate = PolicyCandidateFactory.CreateResourceUsage(context);
+        var candidates = new PolicyRuleCandidate[] { candidate };
+        builder.SetCandidateSummary(PolicyRuleEvaluation.CandidateSummary(candidates));
+        var rules = _ruleProvider.GetRules();
 
-        foreach (var rule in _ruleProvider.GetRules().ResourceUsageRules)
-        {
-            if (!_matcher.IsMatch(rule, candidate, out var matchedCriteria))
-            {
-                continue;
-            }
-
-            builder.AddReason(rule.RuleName, rule.Reason);
-            builder.AddDirective(
-                rule.DirectiveKind,
-                rule.Priority,
-                targetId: null,
-                PolicyHelpers.ResolveTargetLabel(rule, candidate),
-                rule.SuggestedPolicy,
-                PolicyHelpers.RuleMetadata(rule, candidate, matchedCriteria, context.Now),
-                rule.Blocks,
-                rule.Aborts);
-            break;
-        }
+        _ = PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.ResourceUsageRules, candidates, context.Now, static _ => null) ||
+            PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.ResourceUsageFallbackRules, candidates, context.Now, static _ => null);
 
         return ValueTask.FromResult(builder.Build());
     }

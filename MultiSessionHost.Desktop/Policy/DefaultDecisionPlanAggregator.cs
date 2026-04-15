@@ -29,8 +29,9 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
 
         var directives = RemoveDuplicates(producedDirectives);
         var suppressedCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var aggregationTraces = new List<AggregationRuleApplicationTrace>();
 
-        directives = ApplySuppressionRules(directives, options.AggregationRules.SuppressionRules, suppressedCounts);
+        directives = ApplySuppressionRules(directives, options.AggregationRules.SuppressionRules, suppressedCounts, aggregationTraces);
 
         directives = directives
             .OrderByDescending(static directive => directive.Priority)
@@ -55,14 +56,27 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
             directives.Length,
             suppressedCounts);
 
+        var status = ResolveStatus(directives, policyResults, options.AggregationRules.StatusRules, aggregationTraces);
+        var explanation = new DecisionPlanExplanation(
+            policyResults
+                .Select(static result => result.Explanation)
+                .Where(static explanation => explanation is not null)
+                .Select(static explanation => explanation!)
+                .ToArray(),
+            aggregationTraces.Where(static trace => trace.Applied).ToArray(),
+            directives.Select(static directive => directive.DirectiveKind.ToString()).ToArray(),
+            warnings,
+            reasons.Select(static reason => reason.Code).Distinct(StringComparer.Ordinal).ToArray());
+
         return new DecisionPlan(
             sessionId,
             plannedAtUtc,
-            ResolveStatus(directives, policyResults, options.AggregationRules.StatusRules),
+            status,
             directives,
             reasons,
             summary,
-            warnings);
+            warnings,
+            explanation);
     }
 
     private static DecisionDirective[] RemoveDuplicates(IReadOnlyList<DecisionDirective> directives) =>
@@ -80,9 +94,11 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
         IReadOnlyList<DecisionDirective> directives,
         Func<DecisionDirective, bool> shouldSuppress,
         string reason,
-        IDictionary<string, int> suppressedCounts)
+        IDictionary<string, int> suppressedCounts,
+        out IReadOnlyList<string> suppressedDirectiveIds)
     {
         var retained = new List<DecisionDirective>(directives.Count);
+        var ids = new List<string>();
         var suppressed = 0;
 
         foreach (var directive in directives)
@@ -90,6 +106,7 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
             if (shouldSuppress(directive))
             {
                 suppressed++;
+                ids.Add(directive.DirectiveId);
                 continue;
             }
 
@@ -103,13 +120,15 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
                 : suppressed;
         }
 
+        suppressedDirectiveIds = ids;
         return retained.ToArray();
     }
 
     private static DecisionDirective[] ApplySuppressionRules(
         IReadOnlyList<DecisionDirective> directives,
         IReadOnlyList<DirectiveSuppressionRuleOptions> rules,
-        IDictionary<string, int> suppressedCounts)
+        IDictionary<string, int> suppressedCounts,
+        ICollection<AggregationRuleApplicationTrace> traces)
     {
         var current = directives.ToArray();
 
@@ -126,6 +145,15 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
 
             if (triggers.Length == 0)
             {
+                traces.Add(
+                    new AggregationRuleApplicationTrace(
+                        rule.RuleName,
+                        "Suppression",
+                        Applied: false,
+                        "No trigger directive matched.",
+                        rule.TriggerDirectiveKinds,
+                        [],
+                        ResultStatus: null));
                 continue;
             }
 
@@ -140,6 +168,15 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
 
                 if (strongestBlockingPriority > strongestTriggerPriority)
                 {
+                    traces.Add(
+                        new AggregationRuleApplicationTrace(
+                            rule.RuleName,
+                            "Suppression",
+                            Applied: false,
+                            "Blocked by a higher-priority directive.",
+                            rule.TriggerDirectiveKinds,
+                            [],
+                            ResultStatus: null));
                     continue;
                 }
             }
@@ -148,7 +185,17 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
                 current,
                 directive => ShouldSuppressDirective(rule, triggers, wildcardSuppression, suppressedKinds, preserveKinds, directive),
                 rule.RuleName,
-                suppressedCounts);
+                suppressedCounts,
+                out var suppressedDirectiveIds);
+            traces.Add(
+                new AggregationRuleApplicationTrace(
+                    rule.RuleName,
+                    "Suppression",
+                    suppressedDirectiveIds.Count > 0,
+                    suppressedDirectiveIds.Count > 0 ? null : "Rule matched triggers but suppressed no directives.",
+                    rule.TriggerDirectiveKinds,
+                    suppressedDirectiveIds,
+                    ResultStatus: null));
         }
 
         return current;
@@ -183,7 +230,8 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
     private static DecisionPlanStatus ResolveStatus(
         IReadOnlyList<DecisionDirective> directives,
         IReadOnlyList<PolicyEvaluationResult> policyResults,
-        IReadOnlyList<DecisionPlanStatusRuleOptions> rules)
+        IReadOnlyList<DecisionPlanStatusRuleOptions> rules,
+        ICollection<AggregationRuleApplicationTrace> traces)
     {
         foreach (var rule in rules.Where(static rule => rule.Enabled))
         {
@@ -195,8 +243,28 @@ public sealed class DefaultDecisionPlanAggregator : IDecisionPlanAggregator
 
             if (matchedDirective || matchedPolicyAbort)
             {
-                return ParsePlanStatus(rule.Status);
+                var status = ParsePlanStatus(rule.Status);
+                traces.Add(
+                    new AggregationRuleApplicationTrace(
+                        rule.RuleName,
+                        "Status",
+                        Applied: true,
+                        null,
+                        rule.DirectiveKinds,
+                        [],
+                        status.ToString()));
+                return status;
             }
+
+            traces.Add(
+                new AggregationRuleApplicationTrace(
+                    rule.RuleName,
+                    "Status",
+                    Applied: false,
+                    "No status trigger matched.",
+                    rule.DirectiveKinds,
+                    [],
+                    ResultStatus: null));
         }
 
         return directives.Count == 0 ? DecisionPlanStatus.Idle : DecisionPlanStatus.Ready;

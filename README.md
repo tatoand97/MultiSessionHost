@@ -18,21 +18,6 @@ La integración de escritorio ya no está acoplada a `MultiSessionHost.TestDeskt
 
 `MultiSessionHost.TestDesktopApp` queda como una implementación de ejemplo sobre esta arquitectura.
 
-## Alcance y restricciones
-
-Diseñado solo para apps de escritorio locales controladas por nosotros.
-
-No incluye ni pretende incluir:
-
-- OCR
-- computer vision
-- lectura de memoria
-- input simulation
-- hooks
-- DLL injection
-- bypass de anticheat
-- integración con juegos
-- integración con clientes de terceros
 
 ## Arquitectura actual
 
@@ -350,9 +335,10 @@ El policy engine es la capa de comportamiento. Vive después de la proyección d
 - `DecisionDirective[]`
 - `DecisionReason[]`
 - `PolicyExecutionSummary`
+- `DecisionPlanExplanation`
 - `Warnings`
 
-Las directivas son instrucciones planificadas como `Observe`, `SelectSite`, `PrioritizeTarget`, `AvoidTarget`, `ConserveResource`, `Wait`, `Withdraw`, `PauseActivity` o `Abort`. Esta fase solo planifica: no invoca `UiCommandExecutor`, no encola work items y no interactúa con targets. Cada directiva conserva metadata explicable como `matchedRuleName`, `reasonRuleName`, `matchedCriteria`, `minimumWaitMs`, `notBeforeUtc`, `thresholdName` y `policyMode`.
+Las directivas son instrucciones planificadas como `Observe`, `SelectSite`, `PrioritizeTarget`, `AvoidTarget`, `ConserveResource`, `Wait`, `Withdraw`, `PauseActivity` o `Abort`. Esta fase solo planifica: no invoca `UiCommandExecutor`, no encola work items y no interactúa con targets. Cada directiva conserva metadata explicable y consistente: `matchedRuleName`, `reasonRuleName`, `matchedCriteria`, `policyRuleFamily`, `policyName`, `ruleIntent`, `sourceScope`, `isFallback`, `minimumWaitMs`, `notBeforeUtc`, `thresholdName` y `policyMode`.
 
 Orden default:
 
@@ -423,14 +409,33 @@ El orden y límites se configuran bajo `MultiSessionHost:PolicyEngine`:
 
 ### Reglas configurables de comportamiento
 
-`IPolicyRuleProvider` normaliza la configuración en reglas inmutables y `IPolicyRuleMatcher` aplica matching determinístico por orden configurado. Las políticas construyen candidatos normalizados desde el estado existente y no leen config raw directamente:
+`IPolicyRuleProvider` normaliza la configuración en reglas inmutables y `IPolicyRuleMatcher` aplica matching determinístico por orden configurado. Las políticas construyen candidatos normalizados desde el estado existente y no leen config raw directamente.
 
-- `SelectNextSitePolicy`: usa `SiteSelection` para allowlists por label/type/tags, severidad permitida, estado idle requerido y fallback configurable.
-- `ThreatResponsePolicy`: usa `ThreatResponse` para denylists y reglas de retiro/pausa/observación/priorización.
-- `TargetPrioritizationPolicy`: usa `TargetPrioritization` para excluir denylisted targets, aplicar prioridades y filtrar por confianza/severidad.
-- `ResourceUsagePolicy`: usa `ResourceUsage` para umbrales de recursos, conteos y decisión entre conservar, usar recurso, pausar o retirar.
-- `TransitPolicy`: usa `Transit` para esperas mínimas, progreso, tránsito bloqueado y navegación.
-- `AbortPolicy`: usa `Abort` para decidir abortar, pausar o retirar según reglas explícitas.
+Las familias efectivas se preservan durante la normalización. Una familia top-level reemplaza solo a su familia nested equivalente; si falta esa familia top-level, se usa la familia nested. No hay override mayorista por política.
+
+- `SiteSelection.AllowRules`
+- `SiteSelection.Fallback`
+- `ThreatResponse.RetreatRules`
+- `ThreatResponse.DenyRules`
+- `ThreatResponse.Fallback`
+- `TargetPrioritization.PriorityRules`
+- `TargetPrioritization.DenyRules`
+- `TargetPrioritization.Fallback`
+- `ResourceUsage.Rules`
+- `ResourceUsage.Fallback`
+- `Transit.Rules`
+- `Transit.Fallback`
+- `Abort.Rules`
+- `Abort.Fallback`
+
+Cada regla normalizada incluye `PolicyName`, `RuleFamily`, `RuleIntent`, `SourceScope` e `IsFallback`. Los fallbacks son reglas configurables con `IsFallback=true`; se evalúan solo cuando las reglas explícitas de la política no producen directiva. Un fallback habilitado debe tener `RuleName`, `DirectiveKind`, `Priority` y `Reason`, no debe declarar matchers y su directive kind debe estar permitido para la familia.
+
+- `SelectNextSitePolicy`: usa `SiteSelection.AllowRules` y `SiteSelection.Fallback`.
+- `ThreatResponsePolicy`: usa `ThreatResponse.RetreatRules`, `ThreatResponse.DenyRules` y `ThreatResponse.Fallback`.
+- `TargetPrioritizationPolicy`: usa `TargetPrioritization.PriorityRules`, `TargetPrioritization.DenyRules` y `TargetPrioritization.Fallback`.
+- `ResourceUsagePolicy`: usa `ResourceUsage.Rules` y `ResourceUsage.Fallback`.
+- `TransitPolicy`: usa `Transit.Rules` y `Transit.Fallback`.
+- `AbortPolicy`: usa `Abort.Rules` y `Abort.Fallback`.
 
 Ejemplo genérico:
 
@@ -457,7 +462,15 @@ Ejemplo genérico:
             "SuggestedPolicy": "SelectSite",
             "TargetLabelTemplate": "{siteLabel}"
           }
-        ]
+        ],
+        "Fallback": {
+          "RuleName": "observe-when-no-site-matches",
+          "Enabled": true,
+          "DirectiveKind": "Observe",
+          "Priority": 150,
+          "SuggestedPolicy": "Observe",
+          "Reason": "No site-selection rule matched."
+        }
       },
       "ThreatResponse": {
         "DenyRules": [
@@ -539,7 +552,15 @@ Ejemplo genérico:
             "Blocks": true,
             "MinimumWaitMs": 5000
           }
-        ]
+        ],
+        "Fallback": {
+          "RuleName": "observe-transit-no-match",
+          "Enabled": false,
+          "DirectiveKind": "Observe",
+          "Priority": 150,
+          "SuggestedPolicy": "Observe",
+          "Reason": "No transit rule matched."
+        }
       },
       "Abort": {
         "Rules": [
@@ -861,10 +882,12 @@ La sección sigue siendo `MultiSessionHost`.
 - las prioridades de políticas deben estar entre 0 y 1000.
 - los thresholds de recursos deben estar entre 0 y 100 y critical no puede ser mayor que degraded.
 - cada regla de política activa debe tener `RuleName` único dentro de su familia.
+- cada familia solo acepta directive kinds compatibles con su política.
 - prioridades de reglas de política deben estar entre 0 y 1000.
 - duraciones `MinimumWaitMs` no pueden ser negativas.
 - rangos de progreso, recurso y confianza deben ser coherentes.
 - reglas no-site deben declarar al menos un matcher o threshold.
+- fallbacks habilitados deben tener `RuleName`, `DirectiveKind`, `Priority` y `Reason`, no pueden declarar matchers y deben usar directive kinds permitidos para su familia.
 - reglas de agregación deben tener nombres únicos, directive kinds válidos y status válidos.
 
 ## Admin API
@@ -898,6 +921,7 @@ Endpoints existentes mantenidos:
 - `GET /sessions/{id}/risk/threats`
 - `GET /decision-plans`
 - `GET /sessions/{id}/decision-plan`
+- `GET /sessions/{id}/decision-plan/explanation`
 - `GET /sessions/{id}/decision-plan/summary`
 - `GET /sessions/{id}/decision-plan/directives`
 - `POST /sessions/{id}/decision-plan/evaluate`
@@ -949,6 +973,56 @@ Endpoints nuevos de mutación de bindings:
 - cooldown activo por target
 - contención por scope
 
+`/sessions/{id}/decision-plan/explanation` expone:
+
+- reglas efectivas normalizadas por familia
+- trazas por política con reglas consideradas, rechazadas y matched
+- `RejectedReason`, `MatchedCriteria`, `FallbackUsed` y directivas producidas
+- reglas de agregación aplicadas, incluyendo suppression/status
+- directivas finales con metadata estándar
+
+Forma abreviada:
+
+```json
+{
+  "sessionId": "alpha",
+  "effectiveRules": {
+    "threatResponseRetreatRules": [
+      { "ruleName": "default-critical-threat", "ruleFamily": "ThreatResponse.RetreatRules", "isFallback": false }
+    ]
+  },
+  "policyEvaluations": [
+    {
+      "policyName": "ThreatResponsePolicy",
+      "matchedRuleName": "default-critical-threat",
+      "fallbackUsed": false,
+      "ruleTraces": [
+        {
+          "ruleFamily": "ThreatResponse.RetreatRules",
+          "ruleName": "default-critical-threat",
+          "outcome": "Matched",
+          "matchedCriteria": [ "minThreatSeverity" ],
+          "producedDirectiveKinds": [ "Withdraw" ]
+        }
+      ]
+    }
+  ],
+  "aggregationRulesApplied": [
+    { "ruleName": "blocking-response-over-selection", "ruleType": "Suppression", "applied": true }
+  ],
+  "finalDirectives": [
+    {
+      "directiveKind": "Withdraw",
+      "metadata": {
+        "matchedRuleName": "default-critical-threat",
+        "policyRuleFamily": "ThreatResponse.RetreatRules",
+        "isFallback": "False"
+      }
+    }
+  ]
+}
+```
+
 Ejemplos:
 
 ```powershell
@@ -968,6 +1042,7 @@ Invoke-RestMethod http://localhost:5088/sessions/alpha/risk/entities
 Invoke-RestMethod http://localhost:5088/sessions/alpha/risk/threats
 Invoke-RestMethod http://localhost:5088/decision-plans
 Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan
+Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan/explanation
 Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan/summary
 Invoke-RestMethod http://localhost:5088/sessions/alpha/decision-plan/directives
 Invoke-RestMethod -Method Post http://localhost:5088/sessions/alpha/decision-plan/evaluate
@@ -1217,6 +1292,7 @@ La suite cubre ahora:
 - store de `DecisionPlan` aislado por sesión
 - endpoints `GET /decision-plans`
 - endpoints `GET /sessions/{id}/decision-plan`
+- endpoints `GET /sessions/{id}/decision-plan/explanation`
 - endpoints `GET /sessions/{id}/decision-plan/summary`
 - endpoints `GET /sessions/{id}/decision-plan/directives`
 - endpoint `POST /sessions/{id}/decision-plan/evaluate`

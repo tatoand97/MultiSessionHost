@@ -378,6 +378,102 @@ public sealed class SessionHostOptionsValidationTests
     }
 
     [Fact]
+    public void TryValidate_FailsWhenFallbackHasMatchers()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                Rules = new BehaviorRulesOptions
+                {
+                    Transit = new TransitRulesOptions
+                    {
+                        Fallback = new FallbackRuleOptions
+                        {
+                            RuleName = "bad-fallback",
+                            Enabled = true,
+                            MatchLabels = ["not-a-no-match-fallback"],
+                            DirectiveKind = "Observe",
+                            Priority = 100,
+                            Reason = "Fallback should not have matchers."
+                        }
+                    }
+                }
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("fallback", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("matchers", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenFallbackDirectiveIsNotAllowedForFamily()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                Rules = new BehaviorRulesOptions
+                {
+                    Transit = new TransitRulesOptions
+                    {
+                        Fallback = new FallbackRuleOptions
+                        {
+                            RuleName = "bad-transit-fallback",
+                            Enabled = true,
+                            DirectiveKind = "Abort",
+                            Priority = 100,
+                            Reason = "Transit cannot abort."
+                        }
+                    }
+                }
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("not allowed", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenPolicyRuleDirectiveIsNotAllowedForFamily()
+    {
+        var options = new SessionHostOptions
+        {
+            PolicyEngine = new PolicyEngineOptions
+            {
+                Rules = new BehaviorRulesOptions
+                {
+                    ResourceUsage = new ResourceUsageRulesOptions
+                    {
+                        Rules =
+                        [
+                            new AllowRuleOptions
+                            {
+                                RuleName = "bad-resource-rule",
+                                MaxResourcePercent = 10,
+                                DirectiveKind = "SelectSite"
+                            }
+                        ]
+                    }
+                }
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("not allowed", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void TryValidate_FailsWhenAggregationSuppressionRuleUsesInvalidDirective()
     {
         var options = new SessionHostOptions

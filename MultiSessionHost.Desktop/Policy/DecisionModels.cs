@@ -28,6 +28,14 @@ public enum DecisionPlanStatus
     Aborting = 4
 }
 
+public enum PolicyRuleEvaluationOutcome
+{
+    Considered = 0,
+    Matched = 1,
+    Rejected = 2,
+    Skipped = 3
+}
+
 public sealed record DecisionReason(
     string SourcePolicy,
     string Code,
@@ -52,11 +60,51 @@ public sealed record PolicyEvaluationResult(
     IReadOnlyList<string> Warnings,
     bool DidMatch,
     bool DidBlock,
-    bool DidAbort)
+    bool DidAbort,
+    PolicyEvaluationExplanation? Explanation = null)
 {
     public static PolicyEvaluationResult NoMatch(string policyName) =>
         new(policyName, [], [], [], DidMatch: false, DidBlock: false, DidAbort: false);
 }
+
+public sealed record PolicyRuleEvaluationTrace(
+    string PolicyName,
+    string RuleFamily,
+    string RuleName,
+    string RuleIntent,
+    bool IsFallback,
+    string CandidateId,
+    string? CandidateLabel,
+    PolicyRuleEvaluationOutcome Outcome,
+    IReadOnlyList<string> MatchedCriteria,
+    string? RejectedReason,
+    IReadOnlyList<string> ProducedDirectiveKinds,
+    bool Blocks,
+    bool Aborts);
+
+public sealed record PolicyEvaluationExplanation(
+    string PolicyName,
+    string? CandidateSummary,
+    IReadOnlyList<PolicyRuleEvaluationTrace> RuleTraces,
+    string? MatchedRuleName,
+    bool FallbackUsed,
+    IReadOnlyList<string> ProducedDirectiveKinds);
+
+public sealed record AggregationRuleApplicationTrace(
+    string RuleName,
+    string RuleType,
+    bool Applied,
+    string? Reason,
+    IReadOnlyList<string> TriggerDirectiveKinds,
+    IReadOnlyList<string> SuppressedDirectiveIds,
+    string? ResultStatus);
+
+public sealed record DecisionPlanExplanation(
+    IReadOnlyList<PolicyEvaluationExplanation> PolicyEvaluations,
+    IReadOnlyList<AggregationRuleApplicationTrace> AggregationRulesApplied,
+    IReadOnlyList<string> FinalDirectiveKinds,
+    IReadOnlyList<string> FinalWarnings,
+    IReadOnlyList<string> FinalReasonCodes);
 
 public sealed record PolicyExecutionSummary(
     IReadOnlyList<string> EvaluatedPolicies,
@@ -74,7 +122,8 @@ public sealed record DecisionPlan(
     IReadOnlyList<DecisionDirective> Directives,
     IReadOnlyList<DecisionReason> Reasons,
     PolicyExecutionSummary Summary,
-    IReadOnlyList<string> Warnings)
+    IReadOnlyList<string> Warnings,
+    DecisionPlanExplanation? Explanation = null)
 {
     public static DecisionPlan Empty(SessionId sessionId, DateTimeOffset now) =>
         new(

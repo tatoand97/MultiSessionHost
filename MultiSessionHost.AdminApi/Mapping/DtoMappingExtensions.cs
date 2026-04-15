@@ -387,17 +387,30 @@ public static class DtoMappingExtensions
 
     public static PolicyRuleSetDto ToDto(this PolicyRuleSet rules) =>
         new(
-            rules.SiteSelectionRules.Select(static rule => rule.ToDto()).ToArray(),
-            rules.ThreatResponseRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.SiteSelectionAllowRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.SiteSelectionFallbackRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.ThreatResponseRetreatRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.ThreatResponseDenyRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.ThreatResponseFallbackRules.Select(static rule => rule.ToDto()).ToArray(),
             rules.TargetPriorityRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.TargetDenyRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.TargetFallbackRules.Select(static rule => rule.ToDto()).ToArray(),
             rules.ResourceUsageRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.ResourceUsageFallbackRules.Select(static rule => rule.ToDto()).ToArray(),
             rules.TransitRules.Select(static rule => rule.ToDto()).ToArray(),
-            rules.AbortRules.Select(static rule => rule.ToDto()).ToArray());
+            rules.TransitFallbackRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.AbortRules.Select(static rule => rule.ToDto()).ToArray(),
+            rules.AbortFallbackRules.Select(static rule => rule.ToDto()).ToArray());
 
     public static PolicyRuleDto ToDto(this PolicyRule rule) =>
         new(
+            rule.PolicyName,
             rule.RuleName,
             rule.Family.ToString(),
+            rule.RuleFamily,
+            rule.RuleIntent,
+            rule.SourceScope,
+            rule.IsFallback,
             rule.MatchLabels,
             rule.LabelMatchMode.ToString(),
             rule.MatchTypes,
@@ -444,6 +457,53 @@ public static class DtoMappingExtensions
             rule.PolicyMode,
             rule.TargetLabelTemplate,
             rule.Reason);
+
+    public static DecisionPlanExplanationDto ToExplanationDto(this DecisionPlan plan, PolicyRuleSet effectiveRules) =>
+        new(
+            plan.SessionId.Value,
+            plan.PlannedAtUtc,
+            effectiveRules.ToDto(),
+            (plan.Explanation?.PolicyEvaluations ?? []).Select(static explanation => explanation.ToDto()).ToArray(),
+            (plan.Explanation?.AggregationRulesApplied ?? []).Select(static trace => trace.ToDto()).ToArray(),
+            plan.Directives.Select(static directive => directive.ToDto()).ToArray(),
+            plan.Reasons.Select(static reason => reason.ToDto()).ToArray(),
+            plan.Warnings,
+            plan.Explanation?.FinalReasonCodes ?? []);
+
+    public static PolicyEvaluationExplanationDto ToDto(this PolicyEvaluationExplanation explanation) =>
+        new(
+            explanation.PolicyName,
+            explanation.CandidateSummary,
+            explanation.RuleTraces.Select(static trace => trace.ToDto()).ToArray(),
+            explanation.MatchedRuleName,
+            explanation.FallbackUsed,
+            explanation.ProducedDirectiveKinds);
+
+    public static PolicyRuleEvaluationTraceDto ToDto(this PolicyRuleEvaluationTrace trace) =>
+        new(
+            trace.PolicyName,
+            trace.RuleFamily,
+            trace.RuleName,
+            trace.RuleIntent,
+            trace.IsFallback,
+            trace.CandidateId,
+            trace.CandidateLabel,
+            trace.Outcome.ToString(),
+            trace.MatchedCriteria,
+            trace.RejectedReason,
+            trace.ProducedDirectiveKinds,
+            trace.Blocks,
+            trace.Aborts);
+
+    public static AggregationRuleApplicationTraceDto ToDto(this AggregationRuleApplicationTrace trace) =>
+        new(
+            trace.RuleName,
+            trace.RuleType,
+            trace.Applied,
+            trace.Reason,
+            trace.TriggerDirectiveKinds,
+            trace.SuppressedDirectiveIds,
+            trace.ResultStatus);
 
     public static DetectedListDto ToDto(this DetectedList item) =>
         new(

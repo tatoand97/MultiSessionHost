@@ -1,16 +1,29 @@
 namespace MultiSessionHost.Contracts.Sessions;
 
 public sealed record PolicyRuleSetDto(
-    IReadOnlyList<PolicyRuleDto> SiteSelection,
-    IReadOnlyList<PolicyRuleDto> ThreatResponse,
-    IReadOnlyList<PolicyRuleDto> TargetPrioritization,
-    IReadOnlyList<PolicyRuleDto> ResourceUsage,
-    IReadOnlyList<PolicyRuleDto> Transit,
-    IReadOnlyList<PolicyRuleDto> Abort);
+    IReadOnlyList<PolicyRuleDto> SiteSelectionAllowRules,
+    IReadOnlyList<PolicyRuleDto> SiteSelectionFallbackRules,
+    IReadOnlyList<PolicyRuleDto> ThreatResponseRetreatRules,
+    IReadOnlyList<PolicyRuleDto> ThreatResponseDenyRules,
+    IReadOnlyList<PolicyRuleDto> ThreatResponseFallbackRules,
+    IReadOnlyList<PolicyRuleDto> TargetPrioritizationPriorityRules,
+    IReadOnlyList<PolicyRuleDto> TargetPrioritizationDenyRules,
+    IReadOnlyList<PolicyRuleDto> TargetPrioritizationFallbackRules,
+    IReadOnlyList<PolicyRuleDto> ResourceUsageRules,
+    IReadOnlyList<PolicyRuleDto> ResourceUsageFallbackRules,
+    IReadOnlyList<PolicyRuleDto> TransitRules,
+    IReadOnlyList<PolicyRuleDto> TransitFallbackRules,
+    IReadOnlyList<PolicyRuleDto> AbortRules,
+    IReadOnlyList<PolicyRuleDto> AbortFallbackRules);
 
 public sealed record PolicyRuleDto(
+    string PolicyName,
     string RuleName,
     string Family,
+    string RuleFamily,
+    string RuleIntent,
+    string SourceScope,
+    bool IsFallback,
     IReadOnlyList<string> MatchLabels,
     string LabelMatchMode,
     IReadOnlyList<string> MatchTypes,

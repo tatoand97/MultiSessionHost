@@ -13,12 +13,39 @@ public enum PolicyRuleFamily
 }
 
 public sealed record PolicyRuleSet(
-    IReadOnlyList<SiteSelectionRule> SiteSelectionRules,
-    IReadOnlyList<ThreatResponseRule> ThreatResponseRules,
+    IReadOnlyList<SiteSelectionRule> SiteSelectionAllowRules,
+    IReadOnlyList<SiteSelectionRule> SiteSelectionFallbackRules,
+    IReadOnlyList<ThreatResponseRule> ThreatResponseRetreatRules,
+    IReadOnlyList<ThreatResponseRule> ThreatResponseDenyRules,
+    IReadOnlyList<ThreatResponseRule> ThreatResponseFallbackRules,
     IReadOnlyList<TargetPriorityRule> TargetPriorityRules,
+    IReadOnlyList<TargetPriorityRule> TargetDenyRules,
+    IReadOnlyList<TargetPriorityRule> TargetFallbackRules,
     IReadOnlyList<ResourceUsageRule> ResourceUsageRules,
+    IReadOnlyList<ResourceUsageRule> ResourceUsageFallbackRules,
     IReadOnlyList<TransitRule> TransitRules,
-    IReadOnlyList<AbortRule> AbortRules);
+    IReadOnlyList<TransitRule> TransitFallbackRules,
+    IReadOnlyList<AbortRule> AbortRules,
+    IReadOnlyList<AbortRule> AbortFallbackRules)
+{
+    public IReadOnlyList<SiteSelectionRule> SiteSelectionRules =>
+        SiteSelectionAllowRules.Concat(SiteSelectionFallbackRules).ToArray();
+
+    public IReadOnlyList<ThreatResponseRule> ThreatResponseRules =>
+        ThreatResponseRetreatRules.Concat(ThreatResponseDenyRules).Concat(ThreatResponseFallbackRules).ToArray();
+
+    public IReadOnlyList<TargetPriorityRule> TargetPrioritizationRules =>
+        TargetPriorityRules.Concat(TargetDenyRules).Concat(TargetFallbackRules).ToArray();
+
+    public IReadOnlyList<ResourceUsageRule> AllResourceUsageRules =>
+        ResourceUsageRules.Concat(ResourceUsageFallbackRules).ToArray();
+
+    public IReadOnlyList<TransitRule> AllTransitRules =>
+        TransitRules.Concat(TransitFallbackRules).ToArray();
+
+    public IReadOnlyList<AbortRule> AllAbortRules =>
+        AbortRules.Concat(AbortFallbackRules).ToArray();
+}
 
 public abstract record PolicyRule(
     string RuleName,
@@ -68,7 +95,18 @@ public abstract record PolicyRule(
     string? ThresholdName,
     string? PolicyMode,
     string? TargetLabelTemplate,
-    string Reason);
+    string Reason)
+{
+    public string PolicyName { get; init; } = string.Empty;
+
+    public string RuleFamily { get; init; } = Family.ToString();
+
+    public string RuleIntent { get; init; } = string.Empty;
+
+    public string SourceScope { get; init; } = string.Empty;
+
+    public bool IsFallback { get; init; }
+}
 
 public sealed record SiteSelectionRule(
     string RuleName,

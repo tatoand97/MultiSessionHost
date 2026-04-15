@@ -34,15 +34,20 @@ public sealed class WorkerAdminApiDecisionPlanIntegrationTests
         var plan = await client.GetFromJsonAsync<DecisionPlanDto>($"/sessions/{sessionId}/decision-plan");
         var summary = await client.GetFromJsonAsync<DecisionPlanSummaryDto>($"/sessions/{sessionId}/decision-plan/summary");
         var directives = await client.GetFromJsonAsync<DecisionDirectiveDto[]>($"/sessions/{sessionId}/decision-plan/directives");
+        var explanation = await client.GetFromJsonAsync<DecisionPlanExplanationDto>($"/sessions/{sessionId}/decision-plan/explanation");
 
         Assert.NotNull(plan);
         Assert.NotNull(summary);
         Assert.NotNull(directives);
+        Assert.NotNull(explanation);
         Assert.Equal(sessionId, plan!.SessionId);
         Assert.Contains("AbortPolicy", plan.Summary.EvaluatedPolicies);
         Assert.Contains(plan.Directives, directive => directive.DirectiveKind is "SelectSite" or "Observe" or "Wait");
         Assert.Equal(plan.Directives.Count, summary!.DirectiveCount);
         Assert.Equal(plan.Directives.Count, directives!.Length);
+        Assert.NotEmpty(explanation!.PolicyEvaluations);
+        Assert.Contains(explanation.PolicyEvaluations, policy => policy.RuleTraces.Count > 0);
+        Assert.Equal(plan.Directives.Count, explanation.FinalDirectives.Count);
     }
 
     [Fact]

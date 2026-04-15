@@ -367,6 +367,248 @@ public sealed class PolicyEngineTests
     }
 
     [Fact]
+    public void PolicyRuleProvider_PreservesEffectiveRuleFamilyIdentity()
+    {
+        var options = OptionsWithRules(
+            threatRules:
+            [
+                new RetreatRuleOptions
+                {
+                    RuleName = "retreat-only",
+                    MatchSuggestedPolicies = [RiskPolicySuggestion.Withdraw],
+                    DirectiveKind = "Withdraw",
+                    Priority = 700,
+                    SuggestedPolicy = "Withdraw"
+                }
+            ],
+            threatDenyRules:
+            [
+                new DenyRuleOptions
+                {
+                    RuleName = "deny-only",
+                    MatchLabels = ["avoid-me"],
+                    DirectiveKind = "AvoidTarget",
+                    Priority = 701,
+                    SuggestedPolicy = "Avoid"
+                }
+            ]);
+
+        var rules = new ConfiguredPolicyRuleProvider(options).GetRules();
+
+        Assert.Single(rules.ThreatResponseRetreatRules);
+        Assert.Single(rules.ThreatResponseDenyRules);
+        Assert.Equal("ThreatResponse.RetreatRules", rules.ThreatResponseRetreatRules[0].RuleFamily);
+        Assert.Equal("ThreatResponse.DenyRules", rules.ThreatResponseDenyRules[0].RuleFamily);
+    }
+
+    [Fact]
+    public async Task ThreatRetreatRules_ChangeRetreatWithoutChangingDenyFamily()
+    {
+        var sessionId = new SessionId("policy-threat-family");
+        var options = OptionsWithRules(
+            threatRules:
+            [
+                new RetreatRuleOptions
+                {
+                    RuleName = "custom-retreat",
+                    MatchSuggestedPolicies = [RiskPolicySuggestion.Withdraw],
+                    DirectiveKind = "PauseActivity",
+                    Priority = 710,
+                    SuggestedPolicy = "PauseActivity",
+                    Blocks = true
+                }
+            ],
+            threatDenyRules:
+            [
+                new DenyRuleOptions
+                {
+                    RuleName = "custom-deny",
+                    MatchLabels = ["never-this-label"],
+                    DirectiveKind = "AvoidTarget",
+                    Priority = 720,
+                    SuggestedPolicy = "Avoid"
+                }
+            ]);
+        var context = CreateContext(
+            sessionId,
+            riskAssessment: CreateRisk(sessionId, RiskPolicySuggestion.Withdraw, RiskSeverity.High, priority: 800));
+
+        var result = await new ThreatResponsePolicy(options).EvaluateAsync(context, CancellationToken.None);
+
+        var directive = Assert.Single(result.Directives);
+        Assert.Equal(DecisionDirectiveKind.PauseActivity, directive.DirectiveKind);
+        Assert.Equal("ThreatResponse.RetreatRules", directive.Metadata["policyRuleFamily"]);
+        Assert.DoesNotContain(result.Explanation!.RuleTraces, trace => trace.RuleName == "custom-deny" && trace.Outcome == PolicyRuleEvaluationOutcome.Matched);
+    }
+
+    [Fact]
+    public async Task TargetDenyRules_ChangeAvoidWithoutChangingPriorityFamily()
+    {
+        var sessionId = new SessionId("policy-target-deny-family");
+        var options = OptionsWithRules(
+            targetRules:
+            [
+                new AllowRuleOptions
+                {
+                    RuleName = "priority-only",
+                    MatchSuggestedPolicies = [RiskPolicySuggestion.Prioritize],
+                    DirectiveKind = "PrioritizeTarget",
+                    Priority = 650,
+                    SuggestedPolicy = "Prioritize"
+                }
+            ],
+            targetDenyRules:
+            [
+                new DenyRuleOptions
+                {
+                    RuleName = "deny-avoid-label",
+                    MatchLabels = ["candidate-label"],
+                    DirectiveKind = "AvoidTarget",
+                    Priority = 640,
+                    SuggestedPolicy = "Avoid"
+                }
+            ]);
+        var context = CreateContext(
+            sessionId,
+            riskAssessment: CreateRisk(sessionId, RiskPolicySuggestion.Observe, RiskSeverity.Low, priority: 100));
+
+        var result = await new TargetPrioritizationPolicy(options).EvaluateAsync(context, CancellationToken.None);
+
+        var directive = Assert.Single(result.Directives);
+        Assert.Equal(DecisionDirectiveKind.AvoidTarget, directive.DirectiveKind);
+        Assert.Equal("TargetPrioritization.DenyRules", directive.Metadata["policyRuleFamily"]);
+        Assert.Contains(result.Explanation!.RuleTraces, trace => trace.RuleName == "priority-only" && trace.Outcome == PolicyRuleEvaluationOutcome.Rejected);
+    }
+
+    [Fact]
+    public async Task FallbackRule_ActivatesWhenExplicitRulesDoNotMatch()
+    {
+        var sessionId = new SessionId("policy-fallback");
+        var options = OptionsWithRules(
+            siteRules:
+            [
+                new AllowRuleOptions
+                {
+                    RuleName = "only-beta",
+                    MatchLabels = ["beta-site"],
+                    DirectiveKind = "SelectSite",
+                    Priority = 400,
+                    SuggestedPolicy = "SelectSite"
+                }
+            ],
+            siteFallback: new FallbackRuleOptions
+            {
+                RuleName = "site-fallback",
+                Enabled = true,
+                DirectiveKind = "Observe",
+                Priority = 199,
+                SuggestedPolicy = "Observe",
+                Reason = "Fallback site observation."
+            });
+        var context = CreateContext(
+            sessionId,
+            domain: CreateDomain(sessionId) with
+            {
+                Location = LocationState.CreateDefault() with { ContextLabel = "alpha-site", IsUnknown = false }
+            });
+
+        var result = await new SelectNextSitePolicy(options).EvaluateAsync(context, CancellationToken.None);
+
+        var directive = Assert.Single(result.Directives);
+        Assert.Equal(DecisionDirectiveKind.Observe, directive.DirectiveKind);
+        Assert.Equal("True", directive.Metadata["isFallback"]);
+        Assert.True(result.Explanation!.FallbackUsed);
+    }
+
+    [Fact]
+    public async Task PolicyExplanation_CapturesConsideredMatchedAndRejectedRules()
+    {
+        var sessionId = new SessionId("policy-explanation");
+        var options = OptionsWithRules(resourceRules:
+        [
+            new AllowRuleOptions
+            {
+                RuleName = "reject-low-threshold",
+                MaxResourcePercent = 10,
+                DirectiveKind = "ConserveResource",
+                Priority = 500,
+                SuggestedPolicy = "ConserveResource"
+            },
+            new AllowRuleOptions
+            {
+                RuleName = "match-high-threshold",
+                MaxResourcePercent = 50,
+                DirectiveKind = "ConserveResource",
+                Priority = 501,
+                SuggestedPolicy = "ConserveResource"
+            }
+        ]);
+        var context = CreateContext(
+            sessionId,
+            domain: CreateDomain(sessionId) with
+            {
+                Resources = ResourceState.CreateDefault() with { EnergyPercent = 25 }
+            });
+
+        var result = await new ResourceUsagePolicy(options).EvaluateAsync(context, CancellationToken.None);
+
+        Assert.NotNull(result.Explanation);
+        Assert.Contains(result.Explanation!.RuleTraces, trace => trace.RuleName == "reject-low-threshold" && trace.Outcome == PolicyRuleEvaluationOutcome.Rejected && trace.RejectedReason is not null);
+        Assert.Contains(result.Explanation.RuleTraces, trace => trace.RuleName == "match-high-threshold" && trace.Outcome == PolicyRuleEvaluationOutcome.Matched);
+        Assert.Equal("match-high-threshold", result.Explanation.MatchedRuleName);
+    }
+
+    [Fact]
+    public void Aggregator_ExplanationIncludesSuppressionAndStatusRules()
+    {
+        var sessionId = new SessionId("aggregate-explanation");
+        var aggregator = new DefaultDecisionPlanAggregator(new SessionHostOptions());
+        var plan = aggregator.Aggregate(
+            sessionId,
+            DateTimeOffset.Parse("2026-04-15T12:00:00Z"),
+            [
+                Result("TransitPolicy", Directive("TransitPolicy", DecisionDirectiveKind.Wait, 650), didBlock: true),
+                Result("SelectNextSitePolicy", Directive("SelectNextSitePolicy", DecisionDirectiveKind.SelectSite, 250))
+            ]);
+
+        Assert.NotNull(plan.Explanation);
+        Assert.Contains(plan.Explanation!.AggregationRulesApplied, trace => trace.RuleName == "transit-wait-stability" && trace.RuleType == "Suppression");
+        Assert.Contains(plan.Explanation.AggregationRulesApplied, trace => trace.RuleName == "blocked-directives" && trace.RuleType == "Status" && trace.ResultStatus == "Blocked");
+    }
+
+    [Fact]
+    public async Task DirectiveMetadata_IsConsistentAcrossPolicies()
+    {
+        var sessionId = new SessionId("policy-metadata");
+        var context = CreateContext(
+            sessionId,
+            domain: CreateDomain(sessionId) with
+            {
+                Resources = ResourceState.CreateDefault() with { IsDegraded = true, EnergyPercent = 25 },
+                Navigation = NavigationState.CreateDefault() with { Status = NavigationStatus.InProgress, IsTransitioning = true }
+            },
+            riskAssessment: CreateRisk(sessionId, RiskPolicySuggestion.Prioritize, RiskSeverity.High, priority: 700));
+        var results = new[]
+        {
+            await new TargetPrioritizationPolicy(new SessionHostOptions()).EvaluateAsync(context, CancellationToken.None),
+            await new ResourceUsagePolicy(new SessionHostOptions()).EvaluateAsync(context, CancellationToken.None),
+            await new TransitPolicy(new SessionHostOptions()).EvaluateAsync(context, CancellationToken.None)
+        };
+
+        foreach (var directive in results.SelectMany(static result => result.Directives))
+        {
+            Assert.True(directive.Metadata.ContainsKey("matchedRuleName"));
+            Assert.True(directive.Metadata.ContainsKey("reasonRuleName"));
+            Assert.True(directive.Metadata.ContainsKey("matchedCriteria"));
+            Assert.True(directive.Metadata.ContainsKey("policyRuleFamily"));
+            Assert.True(directive.Metadata.ContainsKey("policyName"));
+            Assert.True(directive.Metadata.ContainsKey("ruleIntent"));
+            Assert.True(directive.Metadata.ContainsKey("sourceScope"));
+            Assert.True(directive.Metadata.ContainsKey("isFallback"));
+        }
+    }
+
+    [Fact]
     public async Task ResourceRules_ChangeBehaviorWhenThresholdChanges()
     {
         var sessionId = new SessionId("policy-resource-rules");
@@ -494,10 +736,19 @@ public sealed class PolicyEngineTests
 
     private static SessionHostOptions OptionsWithRules(
         IReadOnlyList<AllowRuleOptions>? siteRules = null,
+        FallbackRuleOptions? siteFallback = null,
         IReadOnlyList<RetreatRuleOptions>? threatRules = null,
+        IReadOnlyList<DenyRuleOptions>? threatDenyRules = null,
+        FallbackRuleOptions? threatFallback = null,
+        IReadOnlyList<AllowRuleOptions>? targetRules = null,
+        IReadOnlyList<DenyRuleOptions>? targetDenyRules = null,
+        FallbackRuleOptions? targetFallback = null,
         IReadOnlyList<AllowRuleOptions>? resourceRules = null,
+        FallbackRuleOptions? resourceFallback = null,
         IReadOnlyList<WaitRuleOptions>? transitRules = null,
-        IReadOnlyList<RetreatRuleOptions>? abortRules = null) =>
+        FallbackRuleOptions? transitFallback = null,
+        IReadOnlyList<RetreatRuleOptions>? abortRules = null,
+        FallbackRuleOptions? abortFallback = null) =>
         new()
         {
             PolicyEngine = new PolicyEngineOptions
@@ -507,23 +758,35 @@ public sealed class PolicyEngineTests
                     SiteSelection = new SiteSelectionRulesOptions
                     {
                         AllowRules = siteRules ?? [],
-                        IgnoreNonAllowlistedSites = true
+                        IgnoreNonAllowlistedSites = true,
+                        Fallback = siteFallback ?? new FallbackRuleOptions { RuleName = "disabled-site-fallback", Enabled = false }
                     },
                     ThreatResponse = new ThreatResponseRulesOptions
                     {
-                        RetreatRules = threatRules ?? []
+                        RetreatRules = threatRules ?? [],
+                        DenyRules = threatDenyRules ?? [],
+                        Fallback = threatFallback ?? new FallbackRuleOptions { RuleName = "disabled-threat-fallback", Enabled = false }
+                    },
+                    TargetPrioritization = new TargetPrioritizationRulesOptions
+                    {
+                        PriorityRules = targetRules ?? [],
+                        DenyRules = targetDenyRules ?? [],
+                        Fallback = targetFallback ?? new FallbackRuleOptions { RuleName = "disabled-target-fallback", Enabled = false }
                     },
                     ResourceUsage = new ResourceUsageRulesOptions
                     {
-                        Rules = resourceRules ?? []
+                        Rules = resourceRules ?? [],
+                        Fallback = resourceFallback ?? new FallbackRuleOptions { RuleName = "disabled-resource-fallback", Enabled = false }
                     },
                     Transit = new TransitRulesOptions
                     {
-                        Rules = transitRules ?? []
+                        Rules = transitRules ?? [],
+                        Fallback = transitFallback ?? new FallbackRuleOptions { RuleName = "disabled-transit-fallback", Enabled = false }
                     },
                     Abort = new AbortRulesOptions
                     {
-                        Rules = abortRules ?? []
+                        Rules = abortRules ?? [],
+                        Fallback = abortFallback ?? new FallbackRuleOptions { RuleName = "disabled-abort-fallback", Enabled = false }
                     }
                 }
             }

@@ -26,26 +26,12 @@ public sealed class TransitPolicy : IPolicy
     {
         var builder = new PolicyResultBuilder(Name);
         var candidate = PolicyCandidateFactory.CreateTransit(context);
+        var candidates = new PolicyRuleCandidate[] { candidate };
+        builder.SetCandidateSummary(PolicyRuleEvaluation.CandidateSummary(candidates));
+        var rules = _ruleProvider.GetRules();
 
-        foreach (var rule in _ruleProvider.GetRules().TransitRules)
-        {
-            if (!_matcher.IsMatch(rule, candidate, out var matchedCriteria))
-            {
-                continue;
-            }
-
-            builder.AddReason(rule.RuleName, rule.Reason);
-            builder.AddDirective(
-                rule.DirectiveKind,
-                rule.Priority,
-                targetId: null,
-                PolicyHelpers.ResolveTargetLabel(rule, candidate),
-                rule.SuggestedPolicy,
-                PolicyHelpers.RuleMetadata(rule, candidate, matchedCriteria, context.Now),
-                rule.Blocks,
-                rule.Aborts);
-            break;
-        }
+        _ = PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.TransitRules, candidates, context.Now, static _ => null) ||
+            PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.TransitFallbackRules, candidates, context.Now, static _ => null);
 
         return ValueTask.FromResult(builder.Build());
     }

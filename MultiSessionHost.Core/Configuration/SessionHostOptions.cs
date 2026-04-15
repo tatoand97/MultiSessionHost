@@ -387,6 +387,16 @@ public sealed class SiteSelectionRulesOptions
 
     public int NoAllowedCandidatePriority { get; init; } = 150;
 
+    public FallbackRuleOptions Fallback { get; init; } = new()
+    {
+        RuleName = "default-site-selection-fallback",
+        Enabled = false,
+        DirectiveKind = "Observe",
+        Priority = 150,
+        SuggestedPolicy = "Observe",
+        Reason = "Configured site-selection fallback matched."
+    };
+
     public int MinimumWaitMs { get; init; }
 
     public string UnknownSiteLabel { get; init; } = "unknown-worksite";
@@ -397,6 +407,16 @@ public sealed class SiteSelectionRulesOptions
 public sealed class ThreatResponseRulesOptions
 {
     public IReadOnlyList<DenyRuleOptions> DenyRules { get; init; } = [];
+
+    public FallbackRuleOptions Fallback { get; init; } = new()
+    {
+        RuleName = "default-threat-response-fallback",
+        Enabled = false,
+        DirectiveKind = "Observe",
+        Priority = 300,
+        SuggestedPolicy = "Observe",
+        Reason = "Configured threat-response fallback matched."
+    };
 
     public IReadOnlyList<RetreatRuleOptions> RetreatRules { get; init; } =
     [
@@ -464,6 +484,16 @@ public sealed class TargetPrioritizationRulesOptions
 {
     public IReadOnlyList<DenyRuleOptions> DenyRules { get; init; } = [];
 
+    public FallbackRuleOptions Fallback { get; init; } = new()
+    {
+        RuleName = "default-target-prioritization-fallback",
+        Enabled = false,
+        DirectiveKind = "Observe",
+        Priority = 150,
+        SuggestedPolicy = "Observe",
+        Reason = "Configured target-prioritization fallback matched."
+    };
+
     public IReadOnlyList<AllowRuleOptions> PriorityRules { get; init; } =
     [
         new()
@@ -511,6 +541,16 @@ public sealed class TargetPrioritizationRulesOptions
 
 public sealed class ResourceUsageRulesOptions
 {
+    public FallbackRuleOptions Fallback { get; init; } = new()
+    {
+        RuleName = "default-resource-usage-fallback",
+        Enabled = false,
+        DirectiveKind = "Observe",
+        Priority = 150,
+        SuggestedPolicy = "Observe",
+        Reason = "Configured resource-usage fallback matched."
+    };
+
     public IReadOnlyList<AllowRuleOptions> Rules { get; init; } =
     [
         new()
@@ -551,6 +591,16 @@ public sealed class ResourceUsageRulesOptions
 
 public sealed class TransitRulesOptions
 {
+    public FallbackRuleOptions Fallback { get; init; } = new()
+    {
+        RuleName = "default-transit-fallback",
+        Enabled = false,
+        DirectiveKind = "Observe",
+        Priority = 150,
+        SuggestedPolicy = "Observe",
+        Reason = "Configured transit fallback matched."
+    };
+
     public IReadOnlyList<WaitRuleOptions> Rules { get; init; } =
     [
         new()
@@ -589,6 +639,16 @@ public sealed class TransitRulesOptions
 
 public sealed class AbortRulesOptions
 {
+    public FallbackRuleOptions Fallback { get; init; } = new()
+    {
+        RuleName = "default-abort-fallback",
+        Enabled = false,
+        DirectiveKind = "Observe",
+        Priority = 150,
+        SuggestedPolicy = "Observe",
+        Reason = "Configured abort fallback matched."
+    };
+
     public IReadOnlyList<RetreatRuleOptions> Rules { get; init; } =
     [
         new()
@@ -746,3 +806,5 @@ public sealed class DenyRuleOptions : PolicyRuleOptions;
 public sealed class RetreatRuleOptions : PolicyRuleOptions;
 
 public sealed class WaitRuleOptions : PolicyRuleOptions;
+
+public sealed class FallbackRuleOptions : PolicyRuleOptions;

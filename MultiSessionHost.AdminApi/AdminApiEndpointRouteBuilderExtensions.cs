@@ -382,7 +382,7 @@ public static class AdminApiEndpointRouteBuilderExtensions
                     return Results.Unauthorized();
                 }
 
-                return Results.Ok(policyRuleProvider.GetRules().TargetPriorityRules.Select(static rule => rule.ToDto()).ToArray());
+                return Results.Ok(policyRuleProvider.GetRules().TargetPrioritizationRules.Select(static rule => rule.ToDto()).ToArray());
             });
 
         endpoints.MapGet(
@@ -398,7 +398,7 @@ public static class AdminApiEndpointRouteBuilderExtensions
                     return Results.Unauthorized();
                 }
 
-                return Results.Ok(policyRuleProvider.GetRules().ResourceUsageRules.Select(static rule => rule.ToDto()).ToArray());
+                return Results.Ok(policyRuleProvider.GetRules().AllResourceUsageRules.Select(static rule => rule.ToDto()).ToArray());
             });
 
         endpoints.MapGet(
@@ -414,7 +414,7 @@ public static class AdminApiEndpointRouteBuilderExtensions
                     return Results.Unauthorized();
                 }
 
-                return Results.Ok(policyRuleProvider.GetRules().TransitRules.Select(static rule => rule.ToDto()).ToArray());
+                return Results.Ok(policyRuleProvider.GetRules().AllTransitRules.Select(static rule => rule.ToDto()).ToArray());
             });
 
         endpoints.MapGet(
@@ -430,7 +430,7 @@ public static class AdminApiEndpointRouteBuilderExtensions
                     return Results.Unauthorized();
                 }
 
-                return Results.Ok(policyRuleProvider.GetRules().AbortRules.Select(static rule => rule.ToDto()).ToArray());
+                return Results.Ok(policyRuleProvider.GetRules().AllAbortRules.Select(static rule => rule.ToDto()).ToArray());
             });
 
         endpoints.MapGet(
@@ -460,6 +460,36 @@ public static class AdminApiEndpointRouteBuilderExtensions
 
                 var plan = await decisionPlanStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
                 return plan is null ? Results.NotFound() : Results.Ok(plan.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/decision-plan/explanation",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionDecisionPlanStore decisionPlanStore,
+                IPolicyRuleProvider policyRuleProvider,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var plan = await decisionPlanStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return plan is null ? Results.NotFound() : Results.Ok(plan.ToExplanationDto(policyRuleProvider.GetRules()));
             });
 
         endpoints.MapGet(

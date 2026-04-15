@@ -26,28 +26,13 @@ public sealed class TargetPrioritizationPolicy : IPolicy
     {
         var builder = new PolicyResultBuilder(Name);
         var candidates = PolicyCandidateFactory.CreateTargetPriority(context);
+        builder.SetCandidateSummary(PolicyRuleEvaluation.CandidateSummary(candidates));
+        var fallbackCandidates = PolicyRuleEvaluation.WithFallbackCandidate(candidates, context, Name);
+        var rules = _ruleProvider.GetRules();
 
-        foreach (var rule in _ruleProvider.GetRules().TargetPriorityRules)
-        {
-            var matchedCandidate = candidates.FirstOrDefault(candidate => _matcher.IsMatch(rule, candidate, out _));
-
-            if (matchedCandidate is null || !_matcher.IsMatch(rule, matchedCandidate, out var matchedCriteria))
-            {
-                continue;
-            }
-
-            builder.AddReason(rule.RuleName, rule.Reason);
-            builder.AddDirective(
-                rule.DirectiveKind,
-                rule.Priority,
-                matchedCandidate.CandidateId,
-                PolicyHelpers.ResolveTargetLabel(rule, matchedCandidate),
-                rule.SuggestedPolicy,
-                PolicyHelpers.RuleMetadata(rule, matchedCandidate, matchedCriteria, context.Now),
-                rule.Blocks,
-                rule.Aborts);
-            break;
-        }
+        _ = PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.TargetPriorityRules, candidates, context.Now) ||
+            PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.TargetDenyRules, candidates, context.Now) ||
+            PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.TargetFallbackRules, fallbackCandidates, context.Now);
 
         return ValueTask.FromResult(builder.Build());
     }

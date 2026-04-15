@@ -26,28 +26,13 @@ public sealed class ThreatResponsePolicy : IPolicy
     {
         var builder = new PolicyResultBuilder(Name);
         var candidates = PolicyCandidateFactory.CreateThreatResponse(context);
+        builder.SetCandidateSummary(PolicyRuleEvaluation.CandidateSummary(candidates));
+        var fallbackCandidates = PolicyRuleEvaluation.WithFallbackCandidate(candidates, context, Name);
+        var rules = _ruleProvider.GetRules();
 
-        foreach (var rule in _ruleProvider.GetRules().ThreatResponseRules)
-        {
-            var candidate = candidates.FirstOrDefault(candidate => _matcher.IsMatch(rule, candidate, out _));
-
-            if (candidate is null || !_matcher.IsMatch(rule, candidate, out var matchedCriteria))
-            {
-                continue;
-            }
-
-            builder.AddReason(rule.RuleName, rule.Reason);
-            builder.AddDirective(
-                rule.DirectiveKind,
-                rule.Priority,
-                candidate.CandidateId,
-                PolicyHelpers.ResolveTargetLabel(rule, candidate),
-                rule.SuggestedPolicy,
-                PolicyHelpers.RuleMetadata(rule, candidate, matchedCriteria, context.Now),
-                rule.Blocks,
-                rule.Aborts);
-            break;
-        }
+        _ = PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.ThreatResponseRetreatRules, candidates, context.Now) ||
+            PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.ThreatResponseDenyRules, candidates, context.Now) ||
+            PolicyRuleEvaluation.TryApplyFirst(builder, _matcher, rules.ThreatResponseFallbackRules, fallbackCandidates, context.Now);
 
         return ValueTask.FromResult(builder.Build());
     }

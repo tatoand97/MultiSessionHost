@@ -75,6 +75,37 @@ internal static class PolicyCandidateFactory
         return new AbortCandidate(candidateId, label, type, [], common.ThreatSeverity, common.RiskSeverity, common.SuggestedPolicy, common.SessionStatus, common.NavigationStatus, common.IsTransitioning, common.HasDestination, common.IsNavigationIdle, common.IsActivityIdle, common.HasActiveTarget, common.ResourceCritical, common.ResourceDegraded, common.DefensivePostureActive, common.ProgressPercent, common.ResourcePercent, common.WarningCount, common.UnknownCount, common.AvailableCount, common.Confidence, common.Metrics, common.Metadata);
     }
 
+    public static GenericPolicyRuleCandidate CreateFallback(PolicyEvaluationContext context, string policyName)
+    {
+        var common = CreateCommon(context);
+        return new GenericPolicyRuleCandidate(
+            "fallback:" + policyName,
+            context.SessionId.Value,
+            policyName,
+            Tags(context.SessionSnapshot.Definition.Tags),
+            common.ThreatSeverity,
+            common.RiskSeverity,
+            common.SuggestedPolicy,
+            common.SessionStatus,
+            common.NavigationStatus,
+            common.IsTransitioning,
+            common.HasDestination,
+            common.IsNavigationIdle,
+            common.IsActivityIdle,
+            common.HasActiveTarget,
+            common.ResourceCritical,
+            common.ResourceDegraded,
+            common.DefensivePostureActive,
+            common.ProgressPercent,
+            common.ResourcePercent,
+            common.WarningCount,
+            common.UnknownCount,
+            common.AvailableCount,
+            common.Confidence,
+            common.Metrics,
+            common.Metadata);
+    }
+
     private static CommonCandidateValues CreateCommon(PolicyEvaluationContext context)
     {
         var domain = context.SessionDomainState;

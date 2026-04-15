@@ -733,14 +733,13 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
-        if (!TryValidatePolicyRuleSet("PolicyEngine.Rules.SiteSelection.AllowRules", options.Rules.SiteSelection.AllowRules, requireMatcher: false, out error) ||
-            !TryValidatePolicyRuleSet("PolicyEngine.Rules.ThreatResponse.RetreatRules", options.Rules.ThreatResponse.RetreatRules, requireMatcher: true, out error) ||
-            !TryValidatePolicyRuleSet("PolicyEngine.Rules.ThreatResponse.DenyRules", options.Rules.ThreatResponse.DenyRules, requireMatcher: true, out error) ||
-            !TryValidatePolicyRuleSet("PolicyEngine.Rules.TargetPrioritization.PriorityRules", options.Rules.TargetPrioritization.PriorityRules, requireMatcher: true, out error) ||
-            !TryValidatePolicyRuleSet("PolicyEngine.Rules.TargetPrioritization.DenyRules", options.Rules.TargetPrioritization.DenyRules, requireMatcher: true, out error) ||
-            !TryValidatePolicyRuleSet("PolicyEngine.Rules.ResourceUsage.Rules", options.Rules.ResourceUsage.Rules, requireMatcher: true, out error) ||
-            !TryValidatePolicyRuleSet("PolicyEngine.Rules.Transit.Rules", options.Rules.Transit.Rules, requireMatcher: true, out error) ||
-            !TryValidatePolicyRuleSet("PolicyEngine.Rules.Abort.Rules", options.Rules.Abort.Rules, requireMatcher: true, out error))
+        if (!TryValidatePolicyRuleFamilies(options.Rules, "PolicyEngine.Rules", out error) ||
+            !TryValidatePolicyRuleFamilies(options.SelectNextSitePolicy.Rules, "PolicyEngine.SelectNextSitePolicy.Rules", out error) ||
+            !TryValidatePolicyRuleFamilies(options.ThreatResponsePolicy.Rules, "PolicyEngine.ThreatResponsePolicy.Rules", out error) ||
+            !TryValidatePolicyRuleFamilies(options.TargetPrioritizationPolicy.Rules, "PolicyEngine.TargetPrioritizationPolicy.Rules", out error) ||
+            !TryValidatePolicyRuleFamilies(options.ResourceUsagePolicy.Rules, "PolicyEngine.ResourceUsagePolicy.Rules", out error) ||
+            !TryValidatePolicyRuleFamilies(options.TransitPolicy.Rules, "PolicyEngine.TransitPolicy.Rules", out error) ||
+            !TryValidatePolicyRuleFamilies(options.AbortPolicy.Rules, "PolicyEngine.AbortPolicy.Rules", out error))
         {
             return false;
         }
@@ -765,6 +764,40 @@ public static class SessionHostOptionsExtensions
         error = null;
         return true;
     }
+
+    private static bool TryValidatePolicyRuleFamilies(BehaviorRulesOptions rules, string path, out string? error) =>
+        TryValidatePolicyRuleFamilies(rules.SiteSelection, $"{path}.SiteSelection", out error) &&
+        TryValidatePolicyRuleFamilies(rules.ThreatResponse, $"{path}.ThreatResponse", out error) &&
+        TryValidatePolicyRuleFamilies(rules.TargetPrioritization, $"{path}.TargetPrioritization", out error) &&
+        TryValidatePolicyRuleFamilies(rules.ResourceUsage, $"{path}.ResourceUsage", out error) &&
+        TryValidatePolicyRuleFamilies(rules.Transit, $"{path}.Transit", out error) &&
+        TryValidatePolicyRuleFamilies(rules.Abort, $"{path}.Abort", out error);
+
+    private static bool TryValidatePolicyRuleFamilies(SiteSelectionRulesOptions rules, string path, out string? error) =>
+        TryValidatePolicyRuleSet($"{path}.AllowRules", rules.AllowRules, requireMatcher: false, AllowedSiteSelectionDirectiveKinds(), out error) &&
+        TryValidateFallbackRule($"{path}.Fallback", rules.Fallback, AllowedSiteSelectionDirectiveKinds(), out error);
+
+    private static bool TryValidatePolicyRuleFamilies(ThreatResponseRulesOptions rules, string path, out string? error) =>
+        TryValidatePolicyRuleSet($"{path}.RetreatRules", rules.RetreatRules, requireMatcher: true, AllowedThreatResponseDirectiveKinds(), out error) &&
+        TryValidatePolicyRuleSet($"{path}.DenyRules", rules.DenyRules, requireMatcher: true, AllowedThreatResponseDirectiveKinds(), out error) &&
+        TryValidateFallbackRule($"{path}.Fallback", rules.Fallback, AllowedThreatResponseDirectiveKinds(), out error);
+
+    private static bool TryValidatePolicyRuleFamilies(TargetPrioritizationRulesOptions rules, string path, out string? error) =>
+        TryValidatePolicyRuleSet($"{path}.PriorityRules", rules.PriorityRules, requireMatcher: true, AllowedTargetPrioritizationDirectiveKinds(), out error) &&
+        TryValidatePolicyRuleSet($"{path}.DenyRules", rules.DenyRules, requireMatcher: true, AllowedTargetPrioritizationDirectiveKinds(), out error) &&
+        TryValidateFallbackRule($"{path}.Fallback", rules.Fallback, AllowedTargetPrioritizationDirectiveKinds(), out error);
+
+    private static bool TryValidatePolicyRuleFamilies(ResourceUsageRulesOptions rules, string path, out string? error) =>
+        TryValidatePolicyRuleSet($"{path}.Rules", rules.Rules, requireMatcher: true, AllowedResourceUsageDirectiveKinds(), out error) &&
+        TryValidateFallbackRule($"{path}.Fallback", rules.Fallback, AllowedResourceUsageDirectiveKinds(), out error);
+
+    private static bool TryValidatePolicyRuleFamilies(TransitRulesOptions rules, string path, out string? error) =>
+        TryValidatePolicyRuleSet($"{path}.Rules", rules.Rules, requireMatcher: true, AllowedTransitDirectiveKinds(), out error) &&
+        TryValidateFallbackRule($"{path}.Fallback", rules.Fallback, AllowedTransitDirectiveKinds(), out error);
+
+    private static bool TryValidatePolicyRuleFamilies(AbortRulesOptions rules, string path, out string? error) =>
+        TryValidatePolicyRuleSet($"{path}.Rules", rules.Rules, requireMatcher: true, AllowedAbortDirectiveKinds(), out error) &&
+        TryValidateFallbackRule($"{path}.Fallback", rules.Fallback, AllowedAbortDirectiveKinds(), out error);
 
     private static bool TryValidateAggregationRules(
         DecisionPlanAggregationRulesOptions options,
@@ -853,6 +886,7 @@ public static class SessionHostOptionsExtensions
         string path,
         IReadOnlyList<PolicyRuleOptions> rules,
         bool requireMatcher,
+        IReadOnlySet<string> allowedDirectiveKinds,
         out string? error)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -902,6 +936,12 @@ public static class SessionHostOptionsExtensions
                 return false;
             }
 
+            if (!allowedDirectiveKinds.Contains(rule.DirectiveKind.Trim()))
+            {
+                error = $"{path}.{ruleName}.DirectiveKind '{rule.DirectiveKind}' is not allowed for this policy rule family.";
+                return false;
+            }
+
             if (rule.MatchLabels.Any(static value => string.IsNullOrWhiteSpace(value)) ||
                 rule.MatchTypes.Any(static value => string.IsNullOrWhiteSpace(value)) ||
                 rule.MatchTags.Any(static value => string.IsNullOrWhiteSpace(value)))
@@ -932,6 +972,47 @@ public static class SessionHostOptionsExtensions
                 error = $"{path}.{ruleName} must define at least one matcher or threshold.";
                 return false;
             }
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateFallbackRule(
+        string path,
+        FallbackRuleOptions fallback,
+        IReadOnlySet<string> allowedDirectiveKinds,
+        out string? error)
+    {
+        if (!fallback.Enabled)
+        {
+            error = null;
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(fallback.RuleName))
+        {
+            error = $"{path} is enabled and must define RuleName.";
+            return false;
+        }
+
+        var ruleName = fallback.RuleName.Trim();
+
+        if (!TryValidatePolicyRuleSet(path, [fallback], requireMatcher: false, allowedDirectiveKinds, out error))
+        {
+            return false;
+        }
+
+        if (HasAnyMatcher(fallback))
+        {
+            error = $"{path}.{ruleName} cannot define matchers because fallback rules represent no-match behavior.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(fallback.Reason))
+        {
+            error = $"{path}.{ruleName}.Reason is required for enabled fallback rules.";
+            return false;
         }
 
         error = null;
@@ -970,6 +1051,27 @@ public static class SessionHostOptionsExtensions
         rule.MinConfidence is not null ||
         rule.MaxConfidence is not null ||
         !string.IsNullOrWhiteSpace(rule.MetricName);
+
+    private static IReadOnlySet<string> AllowedSiteSelectionDirectiveKinds() =>
+        DirectiveKindSet("Observe", "Navigate", "SelectSite", "PauseActivity", "Wait");
+
+    private static IReadOnlySet<string> AllowedThreatResponseDirectiveKinds() =>
+        DirectiveKindSet("Observe", "PrioritizeTarget", "AvoidTarget", "PauseActivity", "Withdraw", "Wait");
+
+    private static IReadOnlySet<string> AllowedTargetPrioritizationDirectiveKinds() =>
+        DirectiveKindSet("Observe", "SelectTarget", "PrioritizeTarget", "AvoidTarget", "PauseActivity", "Wait");
+
+    private static IReadOnlySet<string> AllowedResourceUsageDirectiveKinds() =>
+        DirectiveKindSet("Observe", "UseResource", "ConserveResource", "PauseActivity", "Withdraw", "Wait");
+
+    private static IReadOnlySet<string> AllowedTransitDirectiveKinds() =>
+        DirectiveKindSet("Observe", "Navigate", "PauseActivity", "Wait");
+
+    private static IReadOnlySet<string> AllowedAbortDirectiveKinds() =>
+        DirectiveKindSet("Observe", "PauseActivity", "Withdraw", "Abort", "Wait");
+
+    private static IReadOnlySet<string> DirectiveKindSet(params string[] directiveKinds) =>
+        directiveKinds.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private static bool IsValidDirectiveKind(string? value)
     {

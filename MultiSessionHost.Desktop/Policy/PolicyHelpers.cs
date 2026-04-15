@@ -40,7 +40,11 @@ internal static class PolicyHelpers
             ["matchedRuleName"] = rule.RuleName,
             ["reasonRuleName"] = rule.RuleName,
             ["matchedCriteria"] = string.Join(",", matchedCriteria),
-            ["policyRuleFamily"] = rule.Family.ToString()
+            ["policyRuleFamily"] = rule.RuleFamily,
+            ["policyName"] = rule.PolicyName,
+            ["ruleIntent"] = rule.RuleIntent,
+            ["sourceScope"] = rule.SourceScope,
+            ["isFallback"] = rule.IsFallback.ToString()
         };
 
         if (rule.MinimumWait > TimeSpan.Zero)
