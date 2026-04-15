@@ -33,6 +33,8 @@ public sealed class SessionHostOptions
 
     public DecisionExecutionOptions DecisionExecution { get; init; } = new();
 
+    public OperationalMemoryOptions OperationalMemory { get; init; } = new();
+
     public IReadOnlyList<DesktopTargetProfileOptions> DesktopTargets { get; init; } = [];
 
     public IReadOnlyList<SessionTargetBindingOptions> SessionTargetBindings { get; init; } = [];
@@ -53,6 +55,25 @@ public sealed class DecisionExecutionOptions
     public bool FailOnUnhandledBlockingDirective { get; init; }
 
     public bool RecordNoOpExecutions { get; init; } = true;
+}
+
+public sealed class OperationalMemoryOptions
+{
+    public bool EnableOperationalMemory { get; init; } = true;
+
+    public int MaxHistoryEntries { get; init; } = 250;
+
+    public int MaxWorksitesPerSession { get; init; } = 100;
+
+    public int MaxRiskObservationsPerSession { get; init; } = 100;
+
+    public int MaxPresenceObservationsPerSession { get; init; } = 100;
+
+    public int MaxTimingObservationsPerSession { get; init; } = 100;
+
+    public int MaxOutcomeObservationsPerSession { get; init; } = 100;
+
+    public int StaleAfterMinutes { get; init; } = 60;
 }
 
 public sealed class SessionDefinitionOptions

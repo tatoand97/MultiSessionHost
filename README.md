@@ -128,6 +128,14 @@ La integración de escritorio ya no está acoplada a `MultiSessionHost.TestDeskt
 - `ISessionDecisionPlanStore`
   - mantiene el último `DecisionPlan` por `SessionId`
   - thread-safe, en memoria y aislado por sesión
+- `ISessionOperationalMemoryStore`
+  - mantiene memoria operacional por `SessionId`
+  - conserva snapshot actual + historial normalizado acotado
+  - expone lectura estrecha para futuras políticas sin acoplarlas al historial raw
+- `ISessionOperationalMemoryUpdater`
+  - proyecta señales runtime hacia memoria operacional
+  - centraliza derivación de worksite, riesgo, presencia, timing y outcomes
+  - no persiste en base de datos y no reemplaza `SessionDomainState` ni `DecisionPlan`
 
 ## Flujo runtime
 
@@ -158,6 +166,8 @@ Worker session
   -> SessionActivityStateStore
   -> optional decision plan execution
   -> SessionDecisionPlanExecutionStore
+  -> operational memory update
+  -> SessionOperationalMemoryStore
   -> Admin API inspection
 ```
 
@@ -217,6 +227,122 @@ Validaciones:
 - `POST /sessions/{id}/decision-plan/execute`
 
 `POST /sessions/{id}/decision-plan/execute` ejecuta el último `DecisionPlan` persistido para la sesión. Si no existe plan, responde `409 Conflict`.
+
+## Operational memory (Fase 3.1)
+
+La memoria operacional es una capa **in-memory**, por sesión, thread-safe e inspeccionable que recuerda observaciones runtime a través del tiempo. Su objetivo es dar contexto histórico a futuras políticas sin obligarlas a leer stores raw ni a reconstruir historial desde `SessionDomainState`, `RiskAssessmentResult`, actividad o ejecución.
+
+No es persistencia a DB todavía. Al reiniciar el proceso se pierde, igual que otros stores in-memory actuales.
+
+### Qué guarda
+
+- `WorksiteObservation`: propiedades observadas de sitios de trabajo genéricos, selección, llegada, visitas, último outcome, severidad asociada, señales de presencia y confianza.
+- `RiskObservation`: entidades o fuentes evaluadas por riesgo, severidad, policy sugerida, regla aplicada, conteo y frescura.
+- `PresenceObservation`: presencia/ocupación genérica derivada de señales semánticas.
+- `TimingObservation`: duraciones genéricas como `arrival-delay`, `wait-window`, `transition-duration` y retrasos tipo cooldown.
+- `OutcomeObservation`: resultados de `DecisionPlanExecutionResult` o estados de plan cuando no hubo ejecución.
+- `MemoryObservationRecord`: historial normalizado acotado de cambios observados.
+
+`SessionOperationalMemorySnapshot` contiene el resumen actual, listas categorizadas, warnings y metadata. `SessionOperationalMemorySummary` expone conteos, `TopRememberedRiskSeverity`, `MostRecentOutcomeKind` y `LastUpdatedAtUtc`.
+
+### Diferencia con otras capas
+
+- `SessionDomainState` describe el **estado actual proyectado** de la sesión.
+- `DecisionPlan` describe la **intención actual** producida por políticas.
+- `DecisionPlanExecutionResult` describe la **ejecución de un plan**.
+- `SessionOperationalMemorySnapshot` resume **lo recordado históricamente** para esa sesión, con frescura y conteos.
+
+La memoria se actualiza después de que existen suficientes señales:
+
+```text
+ui refresh
+  -> semantic extraction
+  -> risk classification
+  -> domain projection
+  -> policy engine
+  -> decision plan store
+  -> activity state evaluation/store
+  -> optional decision plan execution
+  -> decision execution store
+  -> operational memory update
+  -> operational memory store
+```
+
+Si la ejecución automática está deshabilitada, la memoria igualmente se actualiza desde dominio, extracción semántica, riesgo, plan y actividad. Si se ejecuta manualmente `POST /sessions/{id}/decision-plan/execute`, el resultado también se proyecta a memoria.
+
+### Configuración
+
+`MultiSessionHost:OperationalMemory`:
+
+```json
+{
+  "OperationalMemory": {
+    "EnableOperationalMemory": true,
+    "MaxHistoryEntries": 250,
+    "MaxWorksitesPerSession": 100,
+    "MaxRiskObservationsPerSession": 100,
+    "MaxPresenceObservationsPerSession": 100,
+    "MaxTimingObservationsPerSession": 100,
+    "MaxOutcomeObservationsPerSession": 100,
+    "StaleAfterMinutes": 60
+  }
+}
+```
+
+Validaciones:
+
+- todos los límites máximos deben ser `> 0`
+- `StaleAfterMinutes >= 0`
+- si `EnableOperationalMemory=false`, el updater no falla y no produce nuevos snapshots
+
+### Admin API de memoria
+
+- `GET /memory`
+- `GET /sessions/{id}/memory`
+- `GET /sessions/{id}/memory/summary`
+- `GET /sessions/{id}/memory/history`
+
+Ejemplo abreviado:
+
+```json
+{
+  "sessionId": "alpha",
+  "capturedAtUtc": "2026-04-15T12:00:00Z",
+  "updatedAtUtc": "2026-04-15T12:05:00Z",
+  "summary": {
+    "knownWorksiteCount": 1,
+    "activeRiskMemoryCount": 2,
+    "activePresenceMemoryCount": 1,
+    "timingObservationCount": 1,
+    "outcomeObservationCount": 1,
+    "lastUpdatedAtUtc": "2026-04-15T12:05:00Z",
+    "topRememberedRiskSeverity": "High",
+    "mostRecentOutcomeKind": "success"
+  },
+  "knownWorksites": [
+    {
+      "worksiteKey": "worksite:primary-worksite",
+      "worksiteLabel": "primary-worksite",
+      "tags": [ "SelectSite" ],
+      "lastSelectedAtUtc": "2026-04-15T12:04:30Z",
+      "lastArrivedAtUtc": "2026-04-15T12:05:00Z",
+      "lastOutcome": "success",
+      "lastObservedRiskSeverity": "High",
+      "visitCount": 1,
+      "successCount": 1,
+      "failureCount": 0,
+      "lastKnownConfidence": 0.9,
+      "isStale": false
+    }
+  ],
+  "recentRiskObservations": [],
+  "recentPresenceObservations": [],
+  "recentTimingObservations": [],
+  "recentOutcomeObservations": [],
+  "warnings": [],
+  "metadata": {}
+}
+```
 
 ## Modelo de dominio por sesión
 

@@ -332,6 +332,42 @@ public sealed class SessionHostOptionsValidationTests
     }
 
     [Fact]
+    public void TryValidate_FailsWhenOperationalMemoryLimitIsInvalid()
+    {
+        var options = new SessionHostOptions
+        {
+            OperationalMemory = new OperationalMemoryOptions
+            {
+                MaxRiskObservationsPerSession = 0
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("OperationalMemory.MaxRiskObservationsPerSession", error);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenOperationalMemoryStaleThresholdIsNegative()
+    {
+        var options = new SessionHostOptions
+        {
+            OperationalMemory = new OperationalMemoryOptions
+            {
+                StaleAfterMinutes = -1
+            },
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("OperationalMemory.StaleAfterMinutes", error);
+    }
+
+    [Fact]
     public void TryValidate_FailsWhenPolicyOrderContainsUnknownPolicy()
     {
         var options = new SessionHostOptions

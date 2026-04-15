@@ -7,6 +7,7 @@ using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
+using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Models;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
@@ -746,6 +747,123 @@ public static class DtoMappingExtensions
             record.Result.ToDto());
 
     public static DecisionPlanExecutionHistoryDto ToHistoryDto(this SessionId sessionId, IReadOnlyList<DecisionPlanExecutionRecord> records) =>
+        new(
+            sessionId.Value,
+            records.Select(static record => record.ToDto()).ToArray());
+
+    public static SessionOperationalMemorySnapshotDto ToDto(this SessionOperationalMemorySnapshot snapshot) =>
+        new(
+            snapshot.SessionId.Value,
+            snapshot.CapturedAtUtc,
+            snapshot.UpdatedAtUtc,
+            snapshot.Summary.ToDto(),
+            snapshot.KnownWorksites.Select(static item => item.ToDto()).ToArray(),
+            snapshot.RecentRiskObservations.Select(static item => item.ToDto()).ToArray(),
+            snapshot.RecentPresenceObservations.Select(static item => item.ToDto()).ToArray(),
+            snapshot.RecentTimingObservations.Select(static item => item.ToDto()).ToArray(),
+            snapshot.RecentOutcomeObservations.Select(static item => item.ToDto()).ToArray(),
+            snapshot.Warnings,
+            snapshot.Metadata);
+
+    public static SessionOperationalMemorySummaryDto ToDto(this SessionOperationalMemorySummary summary) =>
+        new(
+            summary.KnownWorksiteCount,
+            summary.ActiveRiskMemoryCount,
+            summary.ActivePresenceMemoryCount,
+            summary.TimingObservationCount,
+            summary.OutcomeObservationCount,
+            summary.LastUpdatedAtUtc,
+            summary.TopRememberedRiskSeverity.ToString(),
+            summary.MostRecentOutcomeKind);
+
+    public static WorksiteObservationDto ToDto(this WorksiteObservation observation) =>
+        new(
+            observation.WorksiteKey,
+            observation.WorksiteLabel,
+            observation.Tags,
+            observation.FirstObservedAtUtc,
+            observation.LastObservedAtUtc,
+            observation.LastSelectedAtUtc,
+            observation.LastArrivedAtUtc,
+            observation.LastOutcome,
+            observation.LastObservedRiskSeverity.ToString(),
+            observation.OccupancySignals,
+            observation.VisitCount,
+            observation.SuccessCount,
+            observation.FailureCount,
+            observation.LastKnownConfidence,
+            observation.IsStale,
+            observation.Metadata);
+
+    public static RiskObservationDto ToDto(this RiskObservation observation) =>
+        new(
+            observation.ObservationId,
+            observation.EntityKey,
+            observation.EntityLabel,
+            observation.SourceKey,
+            observation.SourceLabel,
+            observation.Severity.ToString(),
+            observation.SuggestedPolicy.ToString(),
+            observation.RuleName,
+            observation.FirstObservedAtUtc,
+            observation.LastObservedAtUtc,
+            observation.Count,
+            observation.LastKnownConfidence,
+            observation.IsStale,
+            observation.Metadata);
+
+    public static PresenceObservationDto ToDto(this PresenceObservation observation) =>
+        new(
+            observation.ObservationId,
+            observation.EntityKey,
+            observation.EntityLabel,
+            observation.EntityType,
+            observation.Status,
+            observation.FirstObservedAtUtc,
+            observation.LastObservedAtUtc,
+            observation.Count,
+            observation.LastKnownConfidence,
+            observation.IsStale,
+            observation.Metadata);
+
+    public static TimingObservationDto ToDto(this TimingObservation observation) =>
+        new(
+            observation.TimingKey,
+            observation.Kind,
+            observation.FirstObservedAtUtc,
+            observation.LastObservedAtUtc,
+            observation.LastDurationMs,
+            observation.SampleCount,
+            observation.MinDurationMs,
+            observation.MaxDurationMs,
+            observation.AverageDurationMs,
+            observation.IsStale,
+            observation.Metadata);
+
+    public static OutcomeObservationDto ToDto(this OutcomeObservation observation) =>
+        new(
+            observation.OutcomeId,
+            observation.RelatedWorksiteKey,
+            observation.RelatedDirectiveKind,
+            observation.RelatedActivityState,
+            observation.ResultKind,
+            observation.ObservedAtUtc,
+            observation.Message,
+            observation.IsStale,
+            observation.Metadata);
+
+    public static MemoryObservationRecordDto ToDto(this MemoryObservationRecord record) =>
+        new(
+            record.ObservationId,
+            record.SessionId.Value,
+            record.Category.ToString(),
+            record.ObservationKey,
+            record.ObservedAtUtc,
+            record.Source,
+            record.Summary,
+            record.Metadata);
+
+    public static SessionOperationalMemoryHistoryDto ToMemoryHistoryDto(this SessionId sessionId, IReadOnlyList<MemoryObservationRecord> records) =>
         new(
             sessionId.Value,
             records.Select(static record => record.ToDto()).ToArray());

@@ -10,6 +10,7 @@ using MultiSessionHost.Desktop.Commands;
 using MultiSessionHost.Desktop.Drivers;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
+using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Processes;
 using MultiSessionHost.Desktop.Risk;
@@ -117,6 +118,10 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<IDecisionPlanExecutor, DefaultDecisionPlanExecutor>();
         services.AddSingleton<ISessionActivityStateStore, InMemorySessionActivityStateStore>();
         services.AddSingleton<ISessionActivityStateEvaluator, DefaultSessionActivityStateEvaluator>();
+        services.AddSingleton<InMemorySessionOperationalMemoryStore>();
+        services.AddSingleton<ISessionOperationalMemoryStore>(static serviceProvider => serviceProvider.GetRequiredService<InMemorySessionOperationalMemoryStore>());
+        services.AddSingleton<ISessionOperationalMemoryReader>(static serviceProvider => serviceProvider.GetRequiredService<InMemorySessionOperationalMemoryStore>());
+        services.AddSingleton<ISessionOperationalMemoryUpdater, DefaultSessionOperationalMemoryUpdater>();
         services.AddSingleton<ISessionUiRefreshService, DefaultSessionUiRefreshService>();
         services.AddSingleton<SelfHostedHttpUiTreeNormalizer>();
         services.AddSingleton<TestAppUiTreeNormalizer>();

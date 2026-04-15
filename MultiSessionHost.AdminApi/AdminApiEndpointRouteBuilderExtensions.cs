@@ -12,6 +12,7 @@ using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
+using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.UiModel.Models;
@@ -341,6 +342,23 @@ public static class AdminApiEndpointRouteBuilderExtensions
             });
 
         endpoints.MapGet(
+            "/memory",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionOperationalMemoryStore operationalMemoryStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var snapshots = await operationalMemoryStore.GetAllAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(snapshots.Select(static snapshot => snapshot.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
             "/policy-rules",
             async Task<IResult> (
                 HttpContext httpContext,
@@ -599,6 +617,93 @@ public static class AdminApiEndpointRouteBuilderExtensions
             });
 
         endpoints.MapGet(
+            "/sessions/{id}/memory",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionOperationalMemoryStore operationalMemoryStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var snapshot = await operationalMemoryStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return snapshot is null ? Results.NotFound() : Results.Ok(snapshot.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/memory/summary",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionOperationalMemoryStore operationalMemoryStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var summary = await operationalMemoryStore.GetSummaryAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return summary is null ? Results.NotFound() : Results.Ok(summary.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/memory/history",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionOperationalMemoryStore operationalMemoryStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var history = await operationalMemoryStore.GetHistoryAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(sessionId.ToMemoryHistoryDto(history));
+            });
+
+        endpoints.MapGet(
             "/sessions/{id}/decision-plan/directives",
             async Task<IResult> (
                 string id,
@@ -667,6 +772,13 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 ISessionCoordinator sessionCoordinator,
                 ISessionDecisionPlanStore decisionPlanStore,
                 IDecisionPlanExecutor decisionPlanExecutor,
+                ISessionDomainStateStore domainStateStore,
+                ISessionSemanticExtractionStore semanticExtractionStore,
+                ISessionRiskAssessmentStore riskAssessmentStore,
+                ISessionActivityStateStore activityStateStore,
+                ISessionOperationalMemoryStore operationalMemoryStore,
+                ISessionOperationalMemoryUpdater operationalMemoryUpdater,
+                IClock clock,
                 CancellationToken cancellationToken) =>
             {
                 if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
@@ -691,6 +803,29 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 }
 
                 var executionResult = await decisionPlanExecutor.ExecuteLatestAsync(sessionId, wasAutoExecuted: false, cancellationToken).ConfigureAwait(false);
+                var previousMemory = await operationalMemoryStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                var memoryResult = await operationalMemoryUpdater.UpdateAsync(
+                    new SessionOperationalMemoryUpdateContext(
+                        sessionId,
+                        previousMemory,
+                        await domainStateStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false),
+                        await semanticExtractionStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false),
+                        await riskAssessmentStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false),
+                        plan,
+                        executionResult,
+                        await activityStateStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false),
+                        clock.UtcNow),
+                    cancellationToken).ConfigureAwait(false);
+
+                if (memoryResult.Snapshot is not null)
+                {
+                    await operationalMemoryStore.UpsertAsync(
+                        sessionId,
+                        memoryResult.Snapshot,
+                        memoryResult.AddedObservationRecords,
+                        cancellationToken).ConfigureAwait(false);
+                }
+
                 return Results.Ok(executionResult.ToDto());
             });
 

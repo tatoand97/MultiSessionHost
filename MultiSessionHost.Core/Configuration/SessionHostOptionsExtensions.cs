@@ -97,6 +97,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidateOperationalMemory(options.OperationalMemory, out error))
+        {
+            return false;
+        }
+
         if (options.Sessions.Count == 0)
         {
             error = "At least one session must be configured.";
@@ -163,6 +168,58 @@ public static class SessionHostOptionsExtensions
         if ((options.DriverMode == DriverMode.DesktopTargetAdapter || options.DesktopTargets.Count > 0 || options.SessionTargetBindings.Count > 0) &&
             !TryValidateDesktopTargetConfiguration(options, configuredSessionIds, out error))
         {
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateOperationalMemory(
+        OperationalMemoryOptions options,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.MaxHistoryEntries <= 0)
+        {
+            error = "OperationalMemory.MaxHistoryEntries must be greater than zero.";
+            return false;
+        }
+
+        if (options.MaxWorksitesPerSession <= 0)
+        {
+            error = "OperationalMemory.MaxWorksitesPerSession must be greater than zero.";
+            return false;
+        }
+
+        if (options.MaxRiskObservationsPerSession <= 0)
+        {
+            error = "OperationalMemory.MaxRiskObservationsPerSession must be greater than zero.";
+            return false;
+        }
+
+        if (options.MaxPresenceObservationsPerSession <= 0)
+        {
+            error = "OperationalMemory.MaxPresenceObservationsPerSession must be greater than zero.";
+            return false;
+        }
+
+        if (options.MaxTimingObservationsPerSession <= 0)
+        {
+            error = "OperationalMemory.MaxTimingObservationsPerSession must be greater than zero.";
+            return false;
+        }
+
+        if (options.MaxOutcomeObservationsPerSession <= 0)
+        {
+            error = "OperationalMemory.MaxOutcomeObservationsPerSession must be greater than zero.";
+            return false;
+        }
+
+        if (options.StaleAfterMinutes < 0)
+        {
+            error = "OperationalMemory.StaleAfterMinutes cannot be negative.";
             return false;
         }
 

@@ -7,6 +7,7 @@ using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
+using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Models;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
@@ -35,6 +36,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly ISessionRiskAssessmentStore _sessionRiskAssessmentStore;
     private readonly ISessionActivityStateEvaluator _activityStateEvaluator;
     private readonly ISessionActivityStateStore _activityStateStore;
+    private readonly ISessionOperationalMemoryStore _operationalMemoryStore;
+    private readonly ISessionOperationalMemoryUpdater _operationalMemoryUpdater;
     private readonly IServiceProvider _serviceProvider;
     private readonly IClock _clock;
     private readonly ILogger<DefaultSessionUiRefreshService> _logger;
@@ -57,6 +60,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         ISessionRiskAssessmentStore sessionRiskAssessmentStore,
         ISessionActivityStateEvaluator activityStateEvaluator,
         ISessionActivityStateStore activityStateStore,
+        ISessionOperationalMemoryStore operationalMemoryStore,
+        ISessionOperationalMemoryUpdater operationalMemoryUpdater,
         IServiceProvider serviceProvider,
         IClock clock,
         ILogger<DefaultSessionUiRefreshService> logger)
@@ -78,6 +83,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _sessionRiskAssessmentStore = sessionRiskAssessmentStore;
         _activityStateEvaluator = activityStateEvaluator;
         _activityStateStore = activityStateStore;
+        _operationalMemoryStore = operationalMemoryStore;
+        _operationalMemoryUpdater = operationalMemoryUpdater;
         _serviceProvider = serviceProvider;
         _clock = clock;
         _logger = logger;
@@ -235,6 +242,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
             var activityEvaluationResult = await _activityStateEvaluator.EvaluateAsync(activityEvaluationContext, cancellationToken).ConfigureAwait(false);
             await _activityStateStore.UpsertAsync(snapshot.SessionId, activityEvaluationResult.NewSnapshot, cancellationToken).ConfigureAwait(false);
 
+            DecisionPlanExecutionResult? executionResult = null;
+
             if (_options.DecisionExecution.EnableDecisionExecution && _options.DecisionExecution.AutoExecuteAfterEvaluation)
             {
                 var executionContext = new DecisionPlanExecutionContext(
@@ -246,8 +255,18 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     _clock.UtcNow,
                     WasAutoExecuted: true);
                 var decisionPlanExecutor = _serviceProvider.GetRequiredService<IDecisionPlanExecutor>();
-                await decisionPlanExecutor.ExecuteAsync(executionContext, cancellationToken).ConfigureAwait(false);
+                executionResult = await decisionPlanExecutor.ExecuteAsync(executionContext, cancellationToken).ConfigureAwait(false);
             }
+
+            await UpdateOperationalMemoryAsync(
+                snapshot.SessionId,
+                updatedDomainState,
+                semanticExtraction,
+                currentRiskAssessment,
+                currentDecisionPlan,
+                executionResult,
+                activityEvaluationResult.NewSnapshot,
+                cancellationToken).ConfigureAwait(false);
 
             return await _sessionUiStateStore.UpdateAsync(
                 snapshot.SessionId,
@@ -304,6 +323,40 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         if (!_options.EnableUiSnapshots)
         {
             throw new InvalidOperationException("UI snapshots are disabled. Set EnableUiSnapshots=true to request raw or projected UI state.");
+        }
+    }
+
+    private async ValueTask UpdateOperationalMemoryAsync(
+        SessionId sessionId,
+        SessionDomainState domainState,
+        UiSemanticExtractionResult semanticExtraction,
+        RiskAssessmentResult? riskAssessment,
+        DecisionPlan decisionPlan,
+        DecisionPlanExecutionResult? executionResult,
+        SessionActivitySnapshot activitySnapshot,
+        CancellationToken cancellationToken)
+    {
+        var previousMemory = await _operationalMemoryStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var memoryResult = await _operationalMemoryUpdater.UpdateAsync(
+            new SessionOperationalMemoryUpdateContext(
+                sessionId,
+                previousMemory,
+                domainState,
+                semanticExtraction,
+                riskAssessment,
+                decisionPlan,
+                executionResult,
+                activitySnapshot,
+                _clock.UtcNow),
+            cancellationToken).ConfigureAwait(false);
+
+        if (memoryResult.Snapshot is not null)
+        {
+            await _operationalMemoryStore.UpsertAsync(
+                sessionId,
+                memoryResult.Snapshot,
+                memoryResult.AddedObservationRecords,
+                cancellationToken).ConfigureAwait(false);
         }
     }
 }
