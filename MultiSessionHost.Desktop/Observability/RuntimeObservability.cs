@@ -55,4 +55,10 @@ public static class RuntimeObservability
     public static readonly Counter<long> NativeCaptureFailureTotal = Meter.CreateCounter<long>("native_capture_failure_total");
     public static readonly Histogram<double> NativeCaptureDuration = Meter.CreateHistogram<double>("native_capture_duration_ms");
     public static readonly Counter<long> NativeIdentityFallbackTotal = Meter.CreateCounter<long>("native_identity_fallback_total");
+    public static readonly Counter<long> NativeActionTotal = Meter.CreateCounter<long>("native_action_total");
+    public static readonly Counter<long> NativeActionFailureTotal = Meter.CreateCounter<long>("native_action_failure_total");
+    public static readonly Histogram<double> NativeActionDuration = Meter.CreateHistogram<double>("native_action_duration_ms");
+    public static readonly Histogram<double> NativeActionLocateDuration = Meter.CreateHistogram<double>("native_action_locate_duration_ms");
+    public static readonly Histogram<double> NativeActionVerificationDuration = Meter.CreateHistogram<double>("native_action_verification_duration_ms");
+    public static readonly Counter<long> NativeActionFallbackTotal = Meter.CreateCounter<long>("native_action_fallback_total");
 }

@@ -11,7 +11,7 @@ public sealed class NativeUiAutomationIdentityBuilder
         return Assign(root, "root", 0, []);
     }
 
-    private static NativeUiAutomationNode Assign(
+    private NativeUiAutomationNode Assign(
         NativeUiAutomationElementSnapshot element,
         string parentSignature,
         int siblingIndex,
@@ -50,7 +50,7 @@ public sealed class NativeUiAutomationIdentityBuilder
             children);
     }
 
-    private static NativeUiNodeIdentity BuildIdentity(
+    public NativeUiNodeIdentity BuildIdentity(
         NativeUiAutomationElementSnapshot element,
         string parentSignature,
         int siblingIndex,
@@ -88,7 +88,7 @@ public sealed class NativeUiAutomationIdentityBuilder
             "ancestor-path+role+occurrence");
     }
 
-    private static string SemanticKey(NativeUiAutomationElementSnapshot element) =>
+    public string SemanticKey(NativeUiAutomationElementSnapshot element) =>
         string.Join(
             "|",
             Normalize(element.FrameworkId),

@@ -773,6 +773,104 @@ No se agregan endpoints nuevos para 6.1. Las superficies existentes siguen siend
 
 6.1 solo cubre attach, validate, ingestion y mapping de identidad. No implementa clicks, teclado, menus, OCR, CV, image matching, screen scraping por coordenadas, semantic packs por app ni behavior packs. La implementacion inicial es Windows-only y depende de la informacion que cada aplicacion exponga por UI Automation.
 
+## Fase 6.2: ejecucion real de acciones UIA
+
+Fase 6.2 agrega ejecucion real no cooperativa para `WindowsUiAutomationDesktop` sin cambiar el modelo Worker-first, sin reconstruir AdminDesktop y sin agregar endpoints publicos nuevos. Los comandos existentes siguen entrando por:
+
+- `POST /sessions/{id}/commands`
+- `POST /sessions/{id}/nodes/{nodeId}/click`
+- `POST /sessions/{id}/nodes/{nodeId}/invoke`
+- `POST /sessions/{id}/nodes/{nodeId}/text`
+- `POST /sessions/{id}/nodes/{nodeId}/toggle`
+- `POST /sessions/{id}/nodes/{nodeId}/select`
+
+El pipeline sigue siendo el mismo: `UiCommandExecutor -> IUiActionResolver -> IUiInteractionAdapter`. Para targets `WindowsUiAutomationDesktop`, DI registra `WindowsUiAutomationUiInteractionAdapter`.
+
+### Localizacion live
+
+La ejecucion no actua sobre el arbol proyectado como objeto stale. Antes de cada accion, `NativeUiAutomationElementLocator` vuelve al target adjunto, obtiene el root UIA live desde el handle de ventana y reconstruye identidades con la misma estrategia de 6.1:
+
+- `AutomationId + ancestor`;
+- `RuntimeId + ancestor`;
+- atributos semanticos + ancestor + ocurrencia;
+- fallback estructural.
+
+El locator intenta primero el `nodeId` exacto. Si hubo drift moderado, usa metadata normalizada del nodo proyectado (`automationId`, `runtimeId`, `frameworkId`, `className`, role/name e `identityBasis`) para reubicar el elemento sin relajar la confianza hasta el punto de actuar sobre otro control. Si no puede ubicarlo devuelve fallos explicitos:
+
+- `native.element.not_found`
+- `native.element.stale`
+
+### Estrategia de interaccion
+
+La prioridad es semantica/nativa primero:
+
+- `ClickNode`: usa `TogglePattern` para toggles, `SelectionItemPattern` para items, `ExpandCollapsePattern` para expand/collapse y luego `InvokePattern` cuando corresponde.
+- `InvokeNodeAction`: respeta intentos como `expand`, `collapse`, `open`, `show-menu` o `select` cuando vienen en `ActionName`; si no, usa `InvokePattern`.
+- `SetText`: usa `ValuePattern.SetValue()` y verifica el valor resultante.
+- `ToggleNode`: es idempotente cuando el comando trae `boolValue`; no toggleará si el estado ya coincide.
+- `SelectItem`: selecciona el item directo con `SelectionItemPattern` o busca un descendiente determinista por `Name`/`Value` en listas y combos; puede expandir/cerrar combos cuando `ComboAutoExpand=true`.
+
+No se agrega OCR, CV, image matching ni click por screenshot. La abstraccion `INativeInputFallbackExecutor` existe como fallback estrecho y observable, pero queda deshabilitada por defecto; el adapter no depende de hacks de clipboard ni de coordenadas como camino principal.
+
+### Configuracion
+
+`MultiSessionHost:NativeInteraction` controla timeouts, retries y fallbacks:
+
+```json
+{
+  "NativeInteraction": {
+    "EnableNativeInteractionFallback": false,
+    "PreActionFocusEnabled": true,
+    "ActionTimeoutMs": 2000,
+    "RetryCount": 2,
+    "RetryDelayMs": 75,
+    "PostActionVerificationTimeoutMs": 500,
+    "SetTextClearBeforeInput": true,
+    "ComboAutoExpand": true,
+    "UseLegacyAccessibleFallback": true,
+    "EnableKeyboardFallback": false,
+    "InputFallbackDelayMs": 25
+  }
+}
+```
+
+La validacion de opciones rechaza timeouts no positivos, retries/delays negativos y `EnableKeyboardFallback=true` si `EnableNativeInteractionFallback=false`.
+
+### Recovery, feedback y observabilidad
+
+Antes y durante la accion se valida que proceso y ventana sigan disponibles. Perdida de target, nodos stale, fallos de patron y fallos de verificacion entran al store de recovery existente como `AttachmentLost`, `MetadataDrift` o `CommandExecutionFailure`; no hay un segundo subsistema de recovery. Los resultados vuelven como `UiInteractionResult` con mensajes que indican el patron usado y si la verificacion fue fuerte o inconclusa. `UiCommandExecutor` conserva el refresh post-exito existente.
+
+Eventos nativos nuevos emitidos por el recorder existente:
+
+- `native.action.locate.started`
+- `native.action.locate.succeeded`
+- `native.action.locate.failed`
+- `native.action.focus.started`
+- `native.action.focus.succeeded`
+- `native.action.pattern.invoke`
+- `native.action.pattern.setvalue`
+- `native.action.pattern.toggle`
+- `native.action.pattern.select`
+- `native.action.pattern.expand`
+- `native.action.pattern.legacy_default`
+- `native.action.fallback.keyboard`
+- `native.action.failed`
+- `native.action.verified`
+- `native.action.verification_failed`
+
+Metricas nuevas en `RuntimeObservability`:
+
+- `native_action_total`
+- `native_action_failure_total`
+- `native_action_duration_ms`
+- `native_action_locate_duration_ms`
+- `native_action_verification_duration_ms`
+- `native_action_fallback_total`
+
+### Limites 6.2
+
+La primera ejecucion nativa depende de los patrones que cada aplicacion exponga por UI Automation. Cuando una app no publica `InvokePattern`, `ValuePattern`, `TogglePattern`, `SelectionItemPattern` o `ExpandCollapsePattern`, el comando falla de forma explicita salvo que se habilite un fallback controlado. Legacy accessibility se mantiene como ruta adapter-level cuando el provider la exponga; en la implementacion base puede no estar disponible en todos los runtimes Windows/.NET.
+
 ## Modelo de dominio por sesión
 
 `SessionDomainState` es un snapshot inmutable, genérico y orientado a actividad. Existe para que las capas futuras puedan tomar decisiones sobre la sesión sin acoplarse al shape técnico de la UI proyectada. El estado se crea durante el bootstrap de cada sesión con `Source=Bootstrap`, valores seguros (`Unknown`, `Idle`, `None`, `null`) y timestamps iniciales.

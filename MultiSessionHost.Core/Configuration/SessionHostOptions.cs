@@ -43,6 +43,8 @@ public sealed class SessionHostOptions
 
     public RecoveryOptions Recovery { get; init; } = new();
 
+    public NativeInteractionOptions NativeInteraction { get; init; } = new();
+
     public IReadOnlyList<DesktopTargetProfileOptions> DesktopTargets { get; init; } = [];
 
     public IReadOnlyList<SessionTargetBindingOptions> SessionTargetBindings { get; init; } = [];
@@ -159,6 +161,31 @@ public sealed class RecoveryOptions
     public int ExhaustedAdapterFailureThreshold { get; init; } = 6;
 
     public int RecoveryHistoryLimit { get; init; } = 100;
+}
+
+public sealed class NativeInteractionOptions
+{
+    public bool EnableNativeInteractionFallback { get; init; }
+
+    public bool PreActionFocusEnabled { get; init; } = true;
+
+    public int ActionTimeoutMs { get; init; } = 2_000;
+
+    public int RetryCount { get; init; } = 2;
+
+    public int RetryDelayMs { get; init; } = 75;
+
+    public int PostActionVerificationTimeoutMs { get; init; } = 500;
+
+    public bool SetTextClearBeforeInput { get; init; } = true;
+
+    public bool ComboAutoExpand { get; init; } = true;
+
+    public bool UseLegacyAccessibleFallback { get; init; } = true;
+
+    public bool EnableKeyboardFallback { get; init; }
+
+    public int InputFallbackDelayMs { get; init; } = 25;
 }
 
 public sealed class ObservabilityOptions

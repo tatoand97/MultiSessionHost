@@ -168,11 +168,15 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<MultiSessionHost.Core.Interfaces.IUiCommandExecutor, UiCommandExecutor>();
         services.AddSingleton<NativeUiAutomationIdentityBuilder>();
         services.AddSingleton<INativeUiAutomationReader, WindowsUiAutomationReader>();
+        services.AddSingleton<INativeUiAutomationElementProvider, WindowsUiAutomationElementProvider>();
+        services.AddSingleton<INativeUiAutomationElementLocator, NativeUiAutomationElementLocator>();
+        services.AddSingleton<INativeInputFallbackExecutor, DisabledNativeInputFallbackExecutor>();
         services.AddSingleton<IDesktopTargetAdapter, SelfHostedHttpDesktopTargetAdapter>();
         services.AddSingleton<IDesktopTargetAdapter, DesktopTestAppTargetAdapter>();
         services.AddSingleton<IDesktopTargetAdapter, WindowsUiAutomationDesktopTargetAdapter>();
         services.AddSingleton<IDesktopTargetAdapterRegistry, DesktopTargetAdapterRegistry>();
         services.AddSingleton<IUiInteractionAdapter, TestDesktopAppUiInteractionAdapter>();
+        services.AddSingleton<IUiInteractionAdapter, WindowsUiAutomationUiInteractionAdapter>();
         services.AddSingleton<DesktopTargetSessionDriver>();
 
         return services;

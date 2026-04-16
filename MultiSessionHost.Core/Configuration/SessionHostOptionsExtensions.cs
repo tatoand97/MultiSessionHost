@@ -117,6 +117,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidateNativeInteraction(options.NativeInteraction, out error))
+        {
+            return false;
+        }
+
         if (!TryValidateObservability(options.Observability, out error))
         {
             return false;
@@ -418,6 +423,52 @@ public static class SessionHostOptionsExtensions
         if (options.MaxReasonMetricsPerSession <= 0)
         {
             error = "Observability.MaxReasonMetricsPerSession must be greater than zero.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateNativeInteraction(
+        NativeInteractionOptions options,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.ActionTimeoutMs <= 0)
+        {
+            error = "NativeInteraction.ActionTimeoutMs must be greater than zero.";
+            return false;
+        }
+
+        if (options.RetryCount < 0)
+        {
+            error = "NativeInteraction.RetryCount cannot be negative.";
+            return false;
+        }
+
+        if (options.RetryDelayMs < 0)
+        {
+            error = "NativeInteraction.RetryDelayMs cannot be negative.";
+            return false;
+        }
+
+        if (options.PostActionVerificationTimeoutMs < 0)
+        {
+            error = "NativeInteraction.PostActionVerificationTimeoutMs cannot be negative.";
+            return false;
+        }
+
+        if (options.InputFallbackDelayMs < 0)
+        {
+            error = "NativeInteraction.InputFallbackDelayMs cannot be negative.";
+            return false;
+        }
+
+        if (options.EnableKeyboardFallback && !options.EnableNativeInteractionFallback)
+        {
+            error = "NativeInteraction.EnableKeyboardFallback requires NativeInteraction.EnableNativeInteractionFallback=true.";
             return false;
         }
 
