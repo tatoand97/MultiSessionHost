@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
+using MultiSessionHost.Desktop.Snapshots;
 using MultiSessionHost.Tests.Common;
 using MultiSessionHost.UiModel.Extensions;
 
@@ -33,6 +34,7 @@ public sealed class SessionCoordinatorUiTests
         var alphaUi = await harness.Coordinator.RefreshSessionUiAsync(alphaSessionId, CancellationToken.None);
         var betaUi = await harness.Coordinator.RefreshSessionUiAsync(betaSessionId, CancellationToken.None);
         var attachments = harness.Host.Services.GetRequiredService<IAttachedSessionStore>().GetAll().ToDictionary(static item => item.SessionId);
+        var screenSnapshotStore = harness.Host.Services.GetRequiredService<ISessionScreenSnapshotStore>();
 
         Assert.NotNull(alphaUi.ProjectedTree);
         Assert.NotNull(betaUi.ProjectedTree);
@@ -44,6 +46,9 @@ public sealed class SessionCoordinatorUiTests
         Assert.Contains(betaId, betaUi.ProjectedTree!.Flatten().Select(static node => node.Text).Where(static text => text is not null)!);
         Assert.DoesNotContain(betaId, alphaUi.ProjectedTree.Flatten().Select(static node => node.Text).Where(static text => text is not null)!);
         Assert.DoesNotContain(alphaId, betaUi.ProjectedTree.Flatten().Select(static node => node.Text).Where(static text => text is not null)!);
+        Assert.Null(await screenSnapshotStore.GetLatestAsync(alphaSessionId, CancellationToken.None));
+        Assert.Null(await screenSnapshotStore.GetLatestAsync(betaSessionId, CancellationToken.None));
+        Assert.Empty(await screenSnapshotStore.GetAllLatestSummariesAsync(CancellationToken.None));
     }
 
     private static async Task WaitForRunningAsync(WorkerHostHarness harness, params SessionId[] sessionIds)

@@ -38,7 +38,10 @@ public sealed class WorkerHostHarness : IAsyncDisposable
 
     public IWorkQueue WorkQueue => Host.Services.GetRequiredService<IWorkQueue>();
 
-    public static async Task<WorkerHostHarness> StartAsync(SessionHostOptions options)
+    public static Task<WorkerHostHarness> StartAsync(SessionHostOptions options) =>
+        StartAsync(options, configureServices: null);
+
+    public static async Task<WorkerHostHarness> StartAsync(SessionHostOptions options, Action<IServiceCollection>? configureServices)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -61,6 +64,7 @@ public sealed class WorkerHostHarness : IAsyncDisposable
                     services.AddMultiSessionHostRuntime();
                     services.AddAdminApiServices();
                     services.AddHostedService<WorkerHostService>();
+                    configureServices?.Invoke(services);
                 });
 
         if (options.EnableAdminApi)

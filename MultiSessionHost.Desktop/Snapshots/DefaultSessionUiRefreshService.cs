@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MultiSessionHost.Core.Configuration;
@@ -23,6 +24,8 @@ namespace MultiSessionHost.Desktop.Snapshots;
 
 public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
 {
+    private static readonly JsonSerializerOptions SnapshotJsonOptions = new(JsonSerializerDefaults.Web);
+
     private readonly SessionHostOptions _options;
     private readonly IDesktopTargetAdapterRegistry _adapterRegistry;
     private readonly IUiSnapshotSerializer _uiSnapshotSerializer;
@@ -45,6 +48,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly ITargetBehaviorPackPlanner _targetBehaviorPackPlanner;
     private readonly IRuntimePersistenceCoordinator _runtimePersistenceCoordinator;
     private readonly ISessionRecoveryStateStore _recoveryStateStore;
+    private readonly ISessionScreenSnapshotStore _screenSnapshotStore;
     private readonly IObservabilityRecorder _observabilityRecorder;
     private readonly IServiceProvider _serviceProvider;
     private readonly IClock _clock;
@@ -73,6 +77,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         ITargetBehaviorPackPlanner targetBehaviorPackPlanner,
         IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
         ISessionRecoveryStateStore recoveryStateStore,
+        ISessionScreenSnapshotStore screenSnapshotStore,
         IObservabilityRecorder observabilityRecorder,
         IServiceProvider serviceProvider,
         IClock clock,
@@ -100,6 +105,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _targetBehaviorPackPlanner = targetBehaviorPackPlanner;
         _runtimePersistenceCoordinator = runtimePersistenceCoordinator;
         _recoveryStateStore = recoveryStateStore;
+        _screenSnapshotStore = screenSnapshotStore;
         _observabilityRecorder = observabilityRecorder;
         _serviceProvider = serviceProvider;
         _clock = clock;
@@ -120,6 +126,11 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
             var adapter = _adapterRegistry.Resolve(context.Profile.Kind);
             var uiSnapshot = await adapter.CaptureUiSnapshotAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
             var rawJson = _uiSnapshotSerializer.Serialize(uiSnapshot);
+            var pendingScreenSnapshot = await PrepareScreenSnapshotIfNeededAsync(
+                snapshot.SessionId,
+                context.Profile.Kind,
+                uiSnapshot,
+                cancellationToken).ConfigureAwait(false);
             captureStart.Stop();
 
             await _observabilityRecorder.RecordActivityAsync(
@@ -138,16 +149,35 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
 
             await _recoveryStateStore.RegisterSuccessAsync(snapshot.SessionId, "ui-capture", "recovery.success_cleared_failures", "UI snapshot captured successfully.", new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
 
-            return await _sessionUiStateStore.UpdateAsync(
-                snapshot.SessionId,
-                current => current with
+            try
+            {
+                var updatedUiState = await _sessionUiStateStore.UpdateAsync(
+                    snapshot.SessionId,
+                    current => current with
+                    {
+                        RawSnapshotJson = rawJson,
+                        LastSnapshotCapturedAtUtc = pendingScreenSnapshot?.Snapshot.CapturedAtUtc ?? uiSnapshot.CapturedAtUtc,
+                        LastRefreshError = null,
+                        LastRefreshErrorAtUtc = null
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                if (pendingScreenSnapshot is not null)
                 {
-                    RawSnapshotJson = rawJson,
-                    LastSnapshotCapturedAtUtc = uiSnapshot.CapturedAtUtc,
-                    LastRefreshError = null,
-                    LastRefreshErrorAtUtc = null
-                },
-                cancellationToken).ConfigureAwait(false);
+                    await _screenSnapshotStore.UpsertLatestAsync(snapshot.SessionId, pendingScreenSnapshot.Snapshot, cancellationToken).ConfigureAwait(false);
+                }
+
+                return updatedUiState;
+            }
+            catch
+            {
+                if (pendingScreenSnapshot is not null)
+                {
+                    await RollbackScreenSnapshotAsync(snapshot.SessionId, pendingScreenSnapshot.Previous, cancellationToken).ConfigureAwait(false);
+                }
+
+                throw;
+            }
         }
         catch (Exception exception)
         {
@@ -203,15 +233,37 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 var adapter = _adapterRegistry.Resolve(context.Profile.Kind);
                 uiSnapshot = await adapter.CaptureUiSnapshotAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
                 rawJson = _uiSnapshotSerializer.Serialize(uiSnapshot);
-
-                uiState = await _sessionUiStateStore.UpdateAsync(
+                var pendingScreenSnapshot = await PrepareScreenSnapshotIfNeededAsync(
                     snapshot.SessionId,
-                    current => current with
-                    {
-                        RawSnapshotJson = rawJson,
-                        LastSnapshotCapturedAtUtc = uiSnapshot.CapturedAtUtc
-                    },
+                    context.Profile.Kind,
+                    uiSnapshot,
                     cancellationToken).ConfigureAwait(false);
+
+                try
+                {
+                    uiState = await _sessionUiStateStore.UpdateAsync(
+                        snapshot.SessionId,
+                        current => current with
+                        {
+                            RawSnapshotJson = rawJson,
+                            LastSnapshotCapturedAtUtc = pendingScreenSnapshot?.Snapshot.CapturedAtUtc ?? uiSnapshot.CapturedAtUtc
+                        },
+                        cancellationToken).ConfigureAwait(false);
+
+                    if (pendingScreenSnapshot is not null)
+                    {
+                        await _screenSnapshotStore.UpsertLatestAsync(snapshot.SessionId, pendingScreenSnapshot.Snapshot, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                catch
+                {
+                    if (pendingScreenSnapshot is not null)
+                    {
+                        await RollbackScreenSnapshotAsync(snapshot.SessionId, pendingScreenSnapshot.Previous, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    throw;
+                }
             }
             else
             {
@@ -435,6 +487,43 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
 
     private static bool SupportsProjectedTree(DesktopTargetKind kind) =>
         kind != DesktopTargetKind.ScreenCaptureDesktop;
+
+    private async ValueTask<PendingScreenSnapshotWrite?> PrepareScreenSnapshotIfNeededAsync(
+        SessionId sessionId,
+        DesktopTargetKind targetKind,
+        UiSnapshotEnvelope uiSnapshot,
+        CancellationToken cancellationToken)
+    {
+        if (targetKind != DesktopTargetKind.ScreenCaptureDesktop)
+        {
+            return null;
+        }
+
+        var existing = await _screenSnapshotStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var screenSnapshot = uiSnapshot.Root.Deserialize<ScreenSnapshot>(SnapshotJsonOptions)
+            ?? throw new InvalidOperationException($"Screen snapshot payload for session '{sessionId}' could not be deserialized.");
+        var storedSnapshot = SessionScreenSnapshot.FromScreenSnapshot(screenSnapshot, targetKind, (existing?.Sequence ?? 0) + 1);
+
+        return new PendingScreenSnapshotWrite(existing, storedSnapshot);
+    }
+
+    private async ValueTask RollbackScreenSnapshotAsync(
+        SessionId sessionId,
+        SessionScreenSnapshot? previousSnapshot,
+        CancellationToken cancellationToken)
+    {
+        if (previousSnapshot is null)
+        {
+            await _screenSnapshotStore.RemoveAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await _screenSnapshotStore.UpsertLatestAsync(sessionId, previousSnapshot, cancellationToken).ConfigureAwait(false);
+    }
+
+    private sealed record PendingScreenSnapshotWrite(
+        SessionScreenSnapshot? Previous,
+        SessionScreenSnapshot Snapshot);
 
     private static UiSemanticExtractionResult CreateRawOnlySemanticExtraction(
         SessionId sessionId,

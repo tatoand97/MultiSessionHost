@@ -19,6 +19,7 @@ using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Observability;
+using MultiSessionHost.Desktop.Snapshots;
 using MultiSessionHost.UiModel.Models;
 
 namespace MultiSessionHost.AdminApi;
@@ -274,6 +275,127 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 }
 
                 return Results.Ok((sessionCoordinator.GetSessionUiState(sessionId) ?? SessionUiState.Create(sessionId)).ToUiRawDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/screen",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionScreenSnapshotStore screenSnapshotStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var snapshot = await screenSnapshotStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return snapshot is null ? Results.NotFound() : Results.Ok(snapshot.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/screen/summary",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionScreenSnapshotStore screenSnapshotStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var summary = await screenSnapshotStore.GetLatestSummaryAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return summary is null ? Results.NotFound() : Results.Ok(summary.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/screen/history",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionScreenSnapshotStore screenSnapshotStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var history = await screenSnapshotStore.GetHistoryAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(history.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/screen",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionScreenSnapshotStore screenSnapshotStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var snapshots = await screenSnapshotStore.GetAllLatestAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(snapshots.Select(static snapshot => snapshot.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/screen/summaries",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionScreenSnapshotStore screenSnapshotStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var summaries = await screenSnapshotStore.GetAllLatestSummariesAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(summaries.Select(static summary => summary.ToDto()).ToArray());
             });
 
         endpoints.MapGet(

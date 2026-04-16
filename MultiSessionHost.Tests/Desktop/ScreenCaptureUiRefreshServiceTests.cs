@@ -6,6 +6,7 @@ using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Snapshots;
 using MultiSessionHost.Infrastructure.DependencyInjection;
 using MultiSessionHost.Tests.Common;
 using MultiSessionHost.UiModel.Models;
@@ -47,8 +48,11 @@ public sealed class ScreenCaptureUiRefreshServiceTests
         var context = provider.GetRequiredService<IDesktopTargetProfileResolver>().Resolve(snapshot);
         var attachment = new DesktopSessionAttachment(sessionId, context.Target, process, window, null, clock.UtcNow);
         var refreshService = provider.GetRequiredService<ISessionUiRefreshService>();
+        var screenSnapshotStore = provider.GetRequiredService<ISessionScreenSnapshotStore>();
 
         var state = await refreshService.RefreshAsync(snapshot, context, attachment, CancellationToken.None);
+        var storedSnapshot = await screenSnapshotStore.GetLatestAsync(sessionId, CancellationToken.None);
+        var summary = await screenSnapshotStore.GetLatestSummaryAsync(sessionId, CancellationToken.None);
 
         Assert.NotNull(state.RawSnapshotJson);
         Assert.Null(state.ProjectedTree);
@@ -63,6 +67,14 @@ public sealed class ScreenCaptureUiRefreshServiceTests
         Assert.Equal(800, document.RootElement.GetProperty("root").GetProperty("imageWidth").GetInt32());
         Assert.Equal(600, document.RootElement.GetProperty("root").GetProperty("imageHeight").GetInt32());
         Assert.Equal("ScreenCaptureDesktop", document.RootElement.GetProperty("root").GetProperty("metadata").GetProperty("targetKind").GetString());
+        Assert.NotNull(storedSnapshot);
+        Assert.NotNull(summary);
+        Assert.Equal(sessionId, storedSnapshot!.SessionId);
+        Assert.Equal(800, storedSnapshot.ImageWidth);
+        Assert.Equal(3, storedSnapshot.PayloadByteLength);
+        Assert.Equal("FakeCapture", storedSnapshot.CaptureBackend);
+        Assert.Equal("ScreenCapture", summary!.CaptureSource);
+        Assert.Equal(3, summary.PayloadByteLength);
     }
 
     [Fact]
@@ -99,6 +111,55 @@ public sealed class ScreenCaptureUiRefreshServiceTests
 
         var uiState = coordinator.GetSessionUiState(sessionId)!;
         Assert.Contains("window", uiState.LastRefreshError, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ScreenSnapshotStore_PreservesLastKnownSnapshotAcrossStopAndRestartUntilReplaced()
+    {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var options = CreateOptions();
+        var process = new DesktopProcessInfo(321, "ScreenApp", null, 456);
+        var window = new DesktopWindowInfo(456, 321, "Screen Fixture", true);
+
+        var services = new ServiceCollection();
+        services.AddSingleton(options);
+        services.AddMultiSessionHostRuntime();
+        services.AddSingleton<IClock>(clock);
+        services.AddSingleton<IProcessLocator>(new StubProcessLocator(process));
+        services.AddSingleton<IWindowLocator>(new StubWindowLocator(window));
+        services.AddSingleton<IWindowFrameCapture>(new SequenceWindowFrameCapture(
+            new WindowFrameCaptureResult(new UiBounds(50, 60, 800, 600), 800, 600, "image/png", "Format32bppArgb", [10, 20, 30], "FakeCapture"),
+            new WindowFrameCaptureResult(new UiBounds(50, 60, 800, 600), 800, 600, "image/png", "Format32bppArgb", [40, 50], "FakeCapture")));
+        await using var provider = services.BuildServiceProvider();
+
+        var coordinator = provider.GetRequiredService<ISessionCoordinator>();
+        var store = provider.GetRequiredService<ISessionScreenSnapshotStore>();
+        var sessionId = new SessionId("alpha");
+
+        await coordinator.InitializeAsync(CancellationToken.None);
+        await coordinator.StartSessionAsync(sessionId, CancellationToken.None);
+
+        var firstRefresh = await coordinator.RefreshSessionUiAsync(sessionId, CancellationToken.None);
+        var firstSnapshot = await store.GetLatestAsync(sessionId, CancellationToken.None);
+
+        await coordinator.StopSessionAsync(sessionId, CancellationToken.None);
+
+        var snapshotAfterStop = await store.GetLatestAsync(sessionId, CancellationToken.None);
+
+        await coordinator.StartSessionAsync(sessionId, CancellationToken.None);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var secondRefresh = await coordinator.RefreshSessionUiAsync(sessionId, CancellationToken.None);
+        var secondSnapshot = await store.GetLatestAsync(sessionId, CancellationToken.None);
+
+        Assert.NotNull(firstRefresh.RawSnapshotJson);
+        Assert.NotNull(secondRefresh.RawSnapshotJson);
+        Assert.NotNull(firstSnapshot);
+        Assert.NotNull(snapshotAfterStop);
+        Assert.NotNull(secondSnapshot);
+        Assert.Equal(firstSnapshot!.Sequence, snapshotAfterStop!.Sequence);
+        Assert.Equal(firstSnapshot.PayloadByteLength, snapshotAfterStop.PayloadByteLength);
+        Assert.Equal(firstSnapshot.Sequence + 1, secondSnapshot!.Sequence);
+        Assert.Equal(2, secondSnapshot.PayloadByteLength);
     }
 
     private static SessionHostOptions CreateOptions() =>
@@ -151,6 +212,26 @@ public sealed class ScreenCaptureUiRefreshServiceTests
 
         public Task<WindowFrameCaptureResult> CaptureAsync(DesktopSessionAttachment attachment, CancellationToken cancellationToken) =>
             Task.FromResult(_result);
+    }
+
+    private sealed class SequenceWindowFrameCapture : IWindowFrameCapture
+    {
+        private readonly Queue<WindowFrameCaptureResult> _results;
+
+        public SequenceWindowFrameCapture(params WindowFrameCaptureResult[] results)
+        {
+            _results = new Queue<WindowFrameCaptureResult>(results);
+        }
+
+        public Task<WindowFrameCaptureResult> CaptureAsync(DesktopSessionAttachment attachment, CancellationToken cancellationToken)
+        {
+            if (_results.Count == 0)
+            {
+                throw new InvalidOperationException("No more capture results were configured.");
+            }
+
+            return Task.FromResult(_results.Dequeue());
+        }
     }
 
     private sealed class StubProcessLocator : IProcessLocator

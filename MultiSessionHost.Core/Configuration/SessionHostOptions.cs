@@ -37,6 +37,8 @@ public sealed class SessionHostOptions
 
     public OperationalMemoryOptions OperationalMemory { get; init; } = new();
 
+    public ScreenSnapshotStoreOptions ScreenSnapshots { get; init; } = new();
+
     public RuntimePersistenceOptions RuntimePersistence { get; init; } = new();
 
     public PolicyControlOptions PolicyControl { get; init; } = new();
@@ -84,6 +86,11 @@ public sealed class OperationalMemoryOptions
     public int MaxOutcomeObservationsPerSession { get; init; } = 100;
 
     public int StaleAfterMinutes { get; init; } = 60;
+}
+
+public sealed class ScreenSnapshotStoreOptions
+{
+    public int MaxHistoryEntriesPerSession { get; init; } = 10;
 }
 
 public sealed class RuntimePersistenceOptions

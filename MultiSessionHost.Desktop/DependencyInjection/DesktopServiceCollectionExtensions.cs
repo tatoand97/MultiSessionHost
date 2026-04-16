@@ -68,6 +68,7 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionAttachmentRuntime, DefaultSessionAttachmentRuntime>();
         services.AddSingleton<ISessionRecoveryStateStore, InMemorySessionRecoveryStateStore>();
         services.AddSingleton<ISessionObservabilityStore, InMemorySessionObservabilityStore>();
+        services.AddSingleton<ISessionScreenSnapshotStore, InMemorySessionScreenSnapshotStore>();
         services.AddSingleton<IObservabilityRecorder, DefaultObservabilityRecorder>();
         services.AddSingleton<IUiSnapshotSerializer, JsonUiSnapshotSerializer>();
         services.AddSingleton<IUiSnapshotProvider, SelfHostedHttpUiSnapshotProvider>();

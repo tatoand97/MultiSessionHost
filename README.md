@@ -1636,6 +1636,17 @@ El adapter nuevo es `ScreenCaptureDesktopTargetAdapter`. Valida el proceso y la 
 
 En esta fase no hay OCR ni árbol sintético. Cuando el target usa `ScreenCaptureDesktop`, el refresh conserva `RawSnapshotJson`, permite `ProjectedTree=null` y completa el refresh igualmente. `/sessions/{id}/ui/raw` devuelve el payload visual raw; `/sessions/{id}/ui` puede quedar sin tree hasta que exista una capa semántica visual posterior.
 
+Fase 8.2 agrega un store runtime first-class para snapshots visuales por sesión (`ISessionScreenSnapshotStore`). El refresh exitoso de `ScreenCaptureDesktop` sigue conservando `RawSnapshotJson` por compatibilidad, pero además actualiza el último snapshot visual con metadata resumida, tamaño de payload, backend de captura e historial acotado por sesión. Esto habilita inspección y depuración sin mezclar snapshots de pantalla con árboles UIA.
+
+Los endpoints dedicados de 8.2 son:
+- `GET /sessions/{id}/screen`
+- `GET /sessions/{id}/screen/summary`
+- `GET /sessions/{id}/screen/history`
+- `GET /screen`
+- `GET /screen/summaries`
+
+`/sessions/{id}/screen` devuelve el payload visual almacenado y su metadata. Los endpoints `summary` exponen solo cabeceras ligeras (`imageWidth`, `imageHeight`, `payloadByteLength`, `captureSource`, `captureBackend`, `targetKind`, etc.) para observabilidad. El comportamiento de stop/restart conserva el último snapshot visual conocido hasta que un refresh posterior lo reemplace.
+
 Ejemplo de profile:
 
 ```json

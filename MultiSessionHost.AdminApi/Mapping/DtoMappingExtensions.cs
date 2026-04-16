@@ -15,6 +15,7 @@ using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
+using MultiSessionHost.Desktop.Snapshots;
 
 namespace MultiSessionHost.AdminApi.Mapping;
 
@@ -103,6 +104,58 @@ public static class DtoMappingExtensions
             state.ProjectedTree,
             state.LastDiff,
             state.PlannedWorkItems);
+
+    public static SessionScreenSnapshotDto ToDto(this SessionScreenSnapshot snapshot) =>
+        new(
+            snapshot.SessionId.Value,
+            snapshot.Sequence,
+            snapshot.CapturedAtUtc,
+            snapshot.ProcessId,
+            snapshot.ProcessName,
+            snapshot.WindowHandle,
+            snapshot.WindowTitle,
+            snapshot.WindowBounds,
+            snapshot.ImageWidth,
+            snapshot.ImageHeight,
+            snapshot.ImageFormat,
+            snapshot.PixelFormat,
+            snapshot.PayloadByteLength,
+            snapshot.TargetKind.ToString(),
+            snapshot.CaptureSource,
+            snapshot.ObservabilityBackend,
+            snapshot.CaptureBackend,
+            snapshot.CaptureDurationMs,
+            snapshot.CaptureOrigin,
+            snapshot.ImageBytes,
+            snapshot.Metadata);
+
+    public static SessionScreenSnapshotSummaryDto ToDto(this SessionScreenSnapshotSummary summary) =>
+        new(
+            summary.SessionId.Value,
+            summary.Sequence,
+            summary.CapturedAtUtc,
+            summary.ProcessId,
+            summary.ProcessName,
+            summary.WindowHandle,
+            summary.WindowTitle,
+            summary.WindowBounds,
+            summary.ImageWidth,
+            summary.ImageHeight,
+            summary.ImageFormat,
+            summary.PixelFormat,
+            summary.PayloadByteLength,
+            summary.TargetKind.ToString(),
+            summary.CaptureSource,
+            summary.ObservabilityBackend,
+            summary.CaptureBackend,
+            summary.CaptureDurationMs,
+            summary.CaptureOrigin,
+            summary.Metadata);
+
+    public static SessionScreenSnapshotHistoryDto ToDto(this SessionScreenSnapshotHistory history) =>
+        new(
+            history.SessionId.Value,
+            history.Entries.Select(static entry => entry.ToDto()).ToArray());
 
     public static SessionRecoverySnapshotDto ToDto(this SessionRecoverySnapshot snapshot) =>
         new(

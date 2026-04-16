@@ -102,6 +102,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidateScreenSnapshots(options.ScreenSnapshots, out error))
+        {
+            return false;
+        }
+
         if (!TryValidateRuntimePersistence(options.RuntimePersistence, out error))
         {
             return false;
@@ -245,6 +250,22 @@ public static class SessionHostOptionsExtensions
         if (options.StaleAfterMinutes < 0)
         {
             error = "OperationalMemory.StaleAfterMinutes cannot be negative.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateScreenSnapshots(
+        ScreenSnapshotStoreOptions options,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.MaxHistoryEntriesPerSession <= 0)
+        {
+            error = "ScreenSnapshots.MaxHistoryEntriesPerSession must be greater than zero.";
             return false;
         }
 
