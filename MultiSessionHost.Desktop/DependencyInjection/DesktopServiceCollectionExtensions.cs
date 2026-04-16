@@ -19,6 +19,7 @@ using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Processes;
 using MultiSessionHost.Desktop.Risk;
+using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
 using MultiSessionHost.Desktop.Targets;
 using MultiSessionHost.Desktop.Windows;
@@ -69,6 +70,7 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionRecoveryStateStore, InMemorySessionRecoveryStateStore>();
         services.AddSingleton<ISessionObservabilityStore, InMemorySessionObservabilityStore>();
         services.AddSingleton<ISessionScreenSnapshotStore, InMemorySessionScreenSnapshotStore>();
+        services.AddSingleton<ISessionScreenRegionStore, InMemorySessionScreenRegionStore>();
         services.AddSingleton<IObservabilityRecorder, DefaultObservabilityRecorder>();
         services.AddSingleton<IUiSnapshotSerializer, JsonUiSnapshotSerializer>();
         services.AddSingleton<IUiSnapshotProvider, SelfHostedHttpUiSnapshotProvider>();
@@ -163,6 +165,10 @@ public static class DesktopServiceCollectionExtensions
             });
         services.AddSingleton<IRuntimePersistenceCoordinator, RuntimePersistenceCoordinator>();
         services.AddSingleton<ISessionUiRefreshService, DefaultSessionUiRefreshService>();
+        services.AddSingleton<IScreenRegionLocator, DefaultDesktopGridRegionLocator>();
+        services.AddSingleton<IScreenRegionLocator, InsetDesktopGridRegionLocator>();
+        services.AddSingleton<IScreenRegionLocatorResolver, DefaultScreenRegionLocatorResolver>();
+        services.AddSingleton<IScreenRegionResolutionService, DefaultScreenRegionResolutionService>();
         services.AddSingleton<SelfHostedHttpUiTreeNormalizer>();
         services.AddSingleton<TestAppUiTreeNormalizer>();
         services.AddSingleton<WindowsUiAutomationUiTreeNormalizer>();

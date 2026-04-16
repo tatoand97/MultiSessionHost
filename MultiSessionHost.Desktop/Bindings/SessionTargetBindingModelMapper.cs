@@ -1,6 +1,7 @@
 using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Targets;
 
 namespace MultiSessionHost.Desktop.Bindings;
 
@@ -15,7 +16,7 @@ internal static class SessionTargetBindingModelMapper
             TrimToNull(options.CommandLineFragmentTemplate),
             TrimToNull(options.BaseAddressTemplate),
             options.MatchingMode,
-            NormalizeMetadata(options.Metadata),
+            NormalizeMetadata(ApplyRegionLayoutProfile(options.Metadata, options.RegionLayoutProfile)),
             options.SupportsUiSnapshots,
             options.SupportsStateEndpoint);
 
@@ -47,7 +48,7 @@ internal static class SessionTargetBindingModelMapper
             TrimToNull(options.CommandLineFragmentTemplate),
             TrimToNull(options.BaseAddressTemplate),
             options.MatchingMode,
-            NormalizeMetadata(options.Metadata),
+            NormalizeMetadata(ApplyRegionLayoutProfile(options.Metadata, options.RegionLayoutProfile)),
             options.SupportsUiSnapshots,
             options.SupportsStateEndpoint);
 
@@ -67,6 +68,18 @@ internal static class SessionTargetBindingModelMapper
             static pair => pair.Key.Trim(),
             static pair => pair.Value,
             StringComparer.OrdinalIgnoreCase);
+
+    private static IReadOnlyDictionary<string, string?> ApplyRegionLayoutProfile(IReadOnlyDictionary<string, string?> metadata, string? regionLayoutProfile)
+    {
+        var result = new Dictionary<string, string?>(metadata, StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(regionLayoutProfile))
+        {
+            result[DesktopTargetMetadata.RegionLayoutProfile] = regionLayoutProfile.Trim();
+        }
+
+        return result;
+    }
 
     private static string? TrimToNull(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

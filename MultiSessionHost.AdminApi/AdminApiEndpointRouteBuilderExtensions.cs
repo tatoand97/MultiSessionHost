@@ -19,6 +19,7 @@ using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Observability;
+using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
 using MultiSessionHost.UiModel.Models;
 
@@ -362,6 +363,98 @@ public static class AdminApiEndpointRouteBuilderExtensions
 
                 var history = await screenSnapshotStore.GetHistoryAsync(sessionId, cancellationToken).ConfigureAwait(false);
                 return Results.Ok(history.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/regions",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionScreenRegionStore screenRegionStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var resolution = await screenRegionStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return resolution is null ? Results.NotFound() : Results.Ok(resolution.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/regions/summary",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionScreenRegionStore screenRegionStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var summary = await screenRegionStore.GetLatestSummaryAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return summary is null ? Results.NotFound() : Results.Ok(summary.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/regions",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionScreenRegionStore screenRegionStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var resolutions = await screenRegionStore.GetAllLatestAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(resolutions.Select(static resolution => resolution.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/regions/summaries",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionScreenRegionStore screenRegionStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var summaries = await screenRegionStore.GetAllLatestSummariesAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(summaries.Select(static summary => summary.ToDto()).ToArray());
             });
 
         endpoints.MapGet(

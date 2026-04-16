@@ -245,6 +245,8 @@ public sealed class DesktopTargetProfileOptions
 
     public DesktopTargetKind Kind { get; init; } = DesktopTargetKind.SelfHostedHttpDesktop;
 
+    public string? RegionLayoutProfile { get; init; }
+
     public string ProcessName { get; init; } = string.Empty;
 
     public string? WindowTitleFragment { get; init; }
@@ -275,6 +277,8 @@ public sealed class SessionTargetBindingOptions
 
 public sealed class DesktopTargetProfileOverrideOptions
 {
+    public string? RegionLayoutProfile { get; init; }
+
     public string? ProcessName { get; init; }
 
     public string? WindowTitleFragment { get; init; }

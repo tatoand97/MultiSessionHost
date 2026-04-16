@@ -15,6 +15,7 @@ using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
+using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
 
 namespace MultiSessionHost.AdminApi.Mapping;
@@ -156,6 +157,65 @@ public static class DtoMappingExtensions
         new(
             history.SessionId.Value,
             history.Entries.Select(static entry => entry.ToDto()).ToArray());
+
+    public static ScreenRegionMatchDto ToDto(this ScreenRegionMatch match) =>
+        new(
+            match.RegionName,
+            match.RegionKind,
+            match.Bounds,
+            match.Confidence,
+            match.SourceLocatorName,
+            match.ResolutionReason,
+            match.MatchState.ToString(),
+            match.AnchorStrategy,
+            match.TargetImageWidth,
+            match.TargetImageHeight,
+            match.Metadata);
+
+    public static SessionScreenRegionResolutionDto ToDto(this SessionScreenRegionResolution resolution) =>
+        new(
+            resolution.SessionId.Value,
+            resolution.ResolvedAtUtc,
+            resolution.SourceSnapshotSequence,
+            resolution.SourceSnapshotCapturedAtUtc,
+            resolution.TargetKind.ToString(),
+            resolution.ObservabilityBackend,
+            resolution.CaptureBackend,
+            resolution.TargetProfileName,
+            resolution.RegionLayoutProfile,
+            resolution.LocatorSetName,
+            resolution.LocatorName,
+            resolution.TargetImageWidth,
+            resolution.TargetImageHeight,
+            resolution.TotalRegionsRequested,
+            resolution.MatchedRegionCount,
+            resolution.MissingRegionCount,
+            resolution.Regions.Select(static region => region.ToDto()).ToArray(),
+            resolution.Warnings,
+            resolution.Errors,
+            resolution.Metadata);
+
+    public static SessionScreenRegionSummaryDto ToDto(this SessionScreenRegionSummary summary) =>
+        new(
+            summary.SessionId.Value,
+            summary.ResolvedAtUtc,
+            summary.SourceSnapshotSequence,
+            summary.SourceSnapshotCapturedAtUtc,
+            summary.TargetKind.ToString(),
+            summary.ObservabilityBackend,
+            summary.CaptureBackend,
+            summary.TargetProfileName,
+            summary.RegionLayoutProfile,
+            summary.LocatorSetName,
+            summary.LocatorName,
+            summary.TargetImageWidth,
+            summary.TargetImageHeight,
+            summary.TotalRegionsRequested,
+            summary.MatchedRegionCount,
+            summary.MissingRegionCount,
+            summary.Warnings,
+            summary.Errors,
+            summary.Metadata);
 
     public static SessionRecoverySnapshotDto ToDto(this SessionRecoverySnapshot snapshot) =>
         new(

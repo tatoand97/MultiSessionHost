@@ -6,6 +6,7 @@ using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
 using MultiSessionHost.Infrastructure.DependencyInjection;
 using MultiSessionHost.Tests.Common;
@@ -53,6 +54,9 @@ public sealed class ScreenCaptureUiRefreshServiceTests
         var state = await refreshService.RefreshAsync(snapshot, context, attachment, CancellationToken.None);
         var storedSnapshot = await screenSnapshotStore.GetLatestAsync(sessionId, CancellationToken.None);
         var summary = await screenSnapshotStore.GetLatestSummaryAsync(sessionId, CancellationToken.None);
+        var regionStore = provider.GetRequiredService<ISessionScreenRegionStore>();
+        var regionResolution = await regionStore.GetLatestAsync(sessionId, CancellationToken.None);
+        var regionSummary = await regionStore.GetLatestSummaryAsync(sessionId, CancellationToken.None);
 
         Assert.NotNull(state.RawSnapshotJson);
         Assert.Null(state.ProjectedTree);
@@ -69,12 +73,22 @@ public sealed class ScreenCaptureUiRefreshServiceTests
         Assert.Equal("ScreenCaptureDesktop", document.RootElement.GetProperty("root").GetProperty("metadata").GetProperty("targetKind").GetString());
         Assert.NotNull(storedSnapshot);
         Assert.NotNull(summary);
+        Assert.NotNull(regionResolution);
+        Assert.NotNull(regionSummary);
         Assert.Equal(sessionId, storedSnapshot!.SessionId);
         Assert.Equal(800, storedSnapshot.ImageWidth);
         Assert.Equal(3, storedSnapshot.PayloadByteLength);
         Assert.Equal("FakeCapture", storedSnapshot.CaptureBackend);
         Assert.Equal("ScreenCapture", summary!.CaptureSource);
         Assert.Equal(3, summary.PayloadByteLength);
+        Assert.Equal("DefaultScreenRegionResolutionService", regionResolution!.LocatorSetName);
+        Assert.Equal("DefaultDesktopGridRegionLocator", regionResolution.LocatorName);
+        Assert.Equal(7, regionResolution.TotalRegionsRequested);
+        Assert.Equal(5, regionResolution.MatchedRegionCount);
+        Assert.Equal(0, regionResolution.MissingRegionCount);
+        Assert.Equal("window.full", regionResolution.Regions[0].RegionName);
+        Assert.Equal("DefaultDesktopGridRegionLocator", regionSummary!.LocatorName);
+        Assert.Equal(7, regionSummary.TotalRegionsRequested);
     }
 
     [Fact]

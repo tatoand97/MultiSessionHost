@@ -16,6 +16,7 @@ using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
+using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Targets;
 using MultiSessionHost.UiModel.Interfaces;
 using MultiSessionHost.UiModel.Models;
@@ -49,6 +50,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly IRuntimePersistenceCoordinator _runtimePersistenceCoordinator;
     private readonly ISessionRecoveryStateStore _recoveryStateStore;
     private readonly ISessionScreenSnapshotStore _screenSnapshotStore;
+    private readonly IScreenRegionResolutionService _screenRegionResolutionService;
     private readonly IObservabilityRecorder _observabilityRecorder;
     private readonly IServiceProvider _serviceProvider;
     private readonly IClock _clock;
@@ -78,6 +80,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
         ISessionRecoveryStateStore recoveryStateStore,
         ISessionScreenSnapshotStore screenSnapshotStore,
+        IScreenRegionResolutionService screenRegionResolutionService,
         IObservabilityRecorder observabilityRecorder,
         IServiceProvider serviceProvider,
         IClock clock,
@@ -106,6 +109,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _runtimePersistenceCoordinator = runtimePersistenceCoordinator;
         _recoveryStateStore = recoveryStateStore;
         _screenSnapshotStore = screenSnapshotStore;
+        _screenRegionResolutionService = screenRegionResolutionService;
         _observabilityRecorder = observabilityRecorder;
         _serviceProvider = serviceProvider;
         _clock = clock;
@@ -149,9 +153,11 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
 
             await _recoveryStateStore.RegisterSuccessAsync(snapshot.SessionId, "ui-capture", "recovery.success_cleared_failures", "UI snapshot captured successfully.", new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
 
+            SessionUiState updatedUiState;
+
             try
             {
-                var updatedUiState = await _sessionUiStateStore.UpdateAsync(
+                updatedUiState = await _sessionUiStateStore.UpdateAsync(
                     snapshot.SessionId,
                     current => current with
                     {
@@ -166,8 +172,6 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 {
                     await _screenSnapshotStore.UpsertLatestAsync(snapshot.SessionId, pendingScreenSnapshot.Snapshot, cancellationToken).ConfigureAwait(false);
                 }
-
-                return updatedUiState;
             }
             catch
             {
@@ -178,6 +182,13 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
 
                 throw;
             }
+
+            if (pendingScreenSnapshot is not null)
+            {
+                await _screenRegionResolutionService.ResolveLatestAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
+            }
+
+            return updatedUiState;
         }
         catch (Exception exception)
         {
@@ -263,6 +274,11 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     }
 
                     throw;
+                }
+
+                if (pendingScreenSnapshot is not null)
+                {
+                    await _screenRegionResolutionService.ResolveLatestAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
                 }
             }
             else

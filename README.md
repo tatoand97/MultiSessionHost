@@ -1647,6 +1647,52 @@ Los endpoints dedicados de 8.2 son:
 
 `/sessions/{id}/screen` devuelve el payload visual almacenado y su metadata. Los endpoints `summary` exponen solo cabeceras ligeras (`imageWidth`, `imageHeight`, `payloadByteLength`, `captureSource`, `captureBackend`, `targetKind`, etc.) para observabilidad. El comportamiento de stop/restart conserva el último snapshot visual conocido hasta que un refresh posterior lo reemplace.
 
+## Fase 9.4: framework genérico de localización de regiones en snapshots de pantalla
+
+Fase 9.4 agrega una capa separada y aditiva para resolver regiones visuales determinísticas sobre snapshots ya almacenados. Esta capa no reemplaza `ISessionScreenSnapshotStore`: consume el último `SessionScreenSnapshot` y persiste resultados estructurados en un store dedicado (`ISessionScreenRegionStore`).
+
+Componentes principales:
+
+- `IScreenRegionLocator` / `IScreenRegionLocatorResolver`
+- `IScreenRegionResolutionService` (`DefaultScreenRegionResolutionService`)
+- `ISessionScreenRegionStore` (`InMemorySessionScreenRegionStore`)
+- modelos `SessionScreenRegionResolution`, `SessionScreenRegionSummary`, `ScreenRegionMatch`
+
+Locators base incluidos en esta fase (sin OCR/CV):
+
+- `DefaultDesktopGridRegionLocator`
+- `InsetDesktopGridRegionLocator`
+
+Regiones resueltas por defecto:
+
+- `window.full`
+- `window.top`
+- `window.left`
+- `window.right`
+- `window.bottom`
+- `window.center`
+- `window.safe`
+
+Selección de layout por profile/metadata:
+
+- metadata key `RegionLayoutProfile` (fallback `DefaultDesktopGrid`)
+
+Integración de refresh:
+
+- solo corre para `DesktopTargetKind.ScreenCaptureDesktop`
+- primero persiste snapshot en `ISessionScreenSnapshotStore`
+- después resuelve regiones y persiste en `ISessionScreenRegionStore`
+- si falla la resolución de regiones, el snapshot visual ya persistido se conserva; la falla queda registrada en diagnósticos de región
+
+Endpoints Admin API de regiones:
+
+- `GET /sessions/{id}/regions`
+- `GET /sessions/{id}/regions/summary`
+- `GET /regions`
+- `GET /regions/summaries`
+
+Los endpoints de pantalla de 8.2 (`/screen*`) no cambian.
+
 Ejemplo de profile:
 
 ```json
