@@ -374,7 +374,28 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     },
                     cancellationToken).ConfigureAwait(false);
 
-                semanticExtraction = CreateRawOnlySemanticExtraction(snapshot.SessionId, context.Profile.Kind, _clock.UtcNow);
+                if (context.Profile.Kind == DesktopTargetKind.ScreenCaptureDesktop)
+                {
+                    var currentDomainState = await _sessionDomainStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
+                        ?? throw new InvalidOperationException($"Domain state for session '{snapshot.SessionId}' was not initialized.");
+                    var now = _clock.UtcNow;
+                    var syntheticTree = CreateRawBackedSemanticTree(metadata, uiSnapshot);
+                    var semanticContext = new UiSemanticExtractionContext(
+                        snapshot.SessionId,
+                        projectedUiState,
+                        syntheticTree,
+                        currentDomainState,
+                        snapshot,
+                        context,
+                        attachment,
+                        now);
+
+                    semanticExtraction = await _semanticExtractionPipeline.ExtractAsync(semanticContext, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    semanticExtraction = CreateRawOnlySemanticExtraction(snapshot.SessionId, context.Profile.Kind, _clock.UtcNow);
+                }
             }
 
             await _semanticExtractionStore.UpdateAsync(snapshot.SessionId, semanticExtraction, cancellationToken).ConfigureAwait(false);
@@ -570,6 +591,27 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 $"Projected UI tree is not available for target kind '{kind}'. Raw {kind} capture was stored without tree projection."
             ]
         };
+
+    private static UiTree CreateRawBackedSemanticTree(UiSnapshotMetadata metadata, UiSnapshotEnvelope snapshot)
+    {
+        var root = new UiNode(
+            new UiNodeId("raw-screen-root"),
+            "Window",
+            snapshot.Window.Title,
+            snapshot.Window.Title,
+            null,
+            true,
+            true,
+            false,
+            [
+                new UiAttribute("semanticRole", "screen-capture-root"),
+                new UiAttribute("observabilityBackend", metadata.Properties.TryGetValue("observabilityBackend", out var backend) ? backend ?? "ScreenCapture" : "ScreenCapture"),
+                new UiAttribute("rawOnly", bool.TrueString)
+            ],
+            []);
+
+        return new UiTree(metadata, root);
+    }
 
     private Task FlushIfEnabledAsync(SessionId sessionId, CancellationToken cancellationToken) =>
         _options.RuntimePersistence.AutoFlushAfterStateChanges

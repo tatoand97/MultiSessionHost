@@ -1,4 +1,11 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
+using MultiSessionHost.Core.Enums;
+using MultiSessionHost.Desktop.Ocr;
+using MultiSessionHost.Desktop.Preprocessing;
+using MultiSessionHost.Desktop.Regions;
+using MultiSessionHost.Desktop.Snapshots;
+using MultiSessionHost.Desktop.Templates;
 using MultiSessionHost.UiModel.Models;
 
 namespace MultiSessionHost.Desktop.Extraction;
@@ -6,20 +13,52 @@ namespace MultiSessionHost.Desktop.Extraction;
 public sealed class EveLikeSemanticPackage : ITargetSemanticPackage
 {
     public const string SemanticPackageName = "EveLike";
-    public const string SemanticPackageVersion = "6.3.0";
+    public const string SemanticPackageVersion = "6.4.0";
+
+    private static readonly string[] DefaultRouteRegions = ["window.right", "window.top", "window.center"];
+    private static readonly string[] DefaultRouteHeaderTerms = ["route", "travel", "autopilot", "waypoint", "destination"];
+    private static readonly string[] DefaultRouteIgnoreTerms = ["overview", "probe", "scanner", "local", "wallet", "market", "inventory", "cargo"];
+    private static readonly string[] DefaultArtifactKindPriority = ["threshold", "high-contrast", "grayscale", "raw"];
 
     private readonly IUiTreeQueryService _query;
+    private readonly ISessionScreenSnapshotStore? _screenSnapshotStore;
+    private readonly ISessionScreenRegionStore? _screenRegionStore;
+    private readonly ISessionFramePreprocessingStore? _preprocessingStore;
+    private readonly ISessionOcrExtractionStore? _ocrStore;
+    private readonly ISessionTemplateDetectionStore? _templateStore;
 
-    public EveLikeSemanticPackage(IUiTreeQueryService query)
+    public EveLikeSemanticPackage(
+        IUiTreeQueryService query,
+        ISessionScreenSnapshotStore? screenSnapshotStore = null,
+        ISessionScreenRegionStore? screenRegionStore = null,
+        ISessionFramePreprocessingStore? preprocessingStore = null,
+        ISessionOcrExtractionStore? ocrStore = null,
+        ISessionTemplateDetectionStore? templateStore = null)
     {
         _query = query;
+        _screenSnapshotStore = screenSnapshotStore;
+        _screenRegionStore = screenRegionStore;
+        _preprocessingStore = preprocessingStore;
+        _ocrStore = ocrStore;
+        _templateStore = templateStore;
     }
 
     public string PackageName => SemanticPackageName;
 
     public string PackageVersion => SemanticPackageVersion;
 
-    public ValueTask<TargetSemanticPackageResult> ExtractAsync(TargetSemanticPackageContext context, CancellationToken cancellationToken)
+    public async ValueTask<TargetSemanticPackageResult> ExtractAsync(TargetSemanticPackageContext context, CancellationToken cancellationToken)
+    {
+        var targetKind = context.SemanticContext.TargetContext.Target.Kind;
+        if (targetKind == DesktopTargetKind.ScreenCaptureDesktop)
+        {
+            return await ExtractFromScreenAsync(context, cancellationToken).ConfigureAwait(false);
+        }
+
+        return ExtractFromUiTree(context);
+    }
+
+    private TargetSemanticPackageResult ExtractFromUiTree(TargetSemanticPackageContext context)
     {
         var visibleNodes = _query.Flatten(context.SemanticContext.UiTree)
             .Where(static node => node.Visible)
@@ -89,7 +128,7 @@ public sealed class EveLikeSemanticPackage : ITargetSemanticPackage
             ? Downgrade(SummarizeConfidence(confidenceSummary.Values))
             : SummarizeConfidence(confidenceSummary.Values);
 
-        return ValueTask.FromResult(new TargetSemanticPackageResult(
+        return new TargetSemanticPackageResult(
             PackageName,
             PackageVersion,
             true,
@@ -97,7 +136,578 @@ public sealed class EveLikeSemanticPackage : ITargetSemanticPackage
             package.Warnings,
             confidenceSummary,
             FailureReason: null,
-            EveLike: package));    }
+            EveLike: package);
+    }
+
+    private async ValueTask<TargetSemanticPackageResult> ExtractFromScreenAsync(TargetSemanticPackageContext context, CancellationToken cancellationToken)
+    {
+        var warnings = new List<string>();
+        var route = await ExtractRouteFromScreenAsync(context, warnings, cancellationToken).ConfigureAwait(false);
+
+        var presence = new LocalPresenceSnapshot(
+            IsVisible: false,
+            PanelLabel: null,
+            VisibleEntityCount: 0,
+            TotalEntityCount: null,
+            Entities: [],
+            Confidence: DetectionConfidence.Unknown,
+            Warnings: ["Presence semantics for screen-backed targets remain conservative in Phase 10.1."]);
+
+        var overview = Array.Empty<OverviewEntrySemantic>();
+        var probes = Array.Empty<ProbeScannerEntrySemantic>();
+        var tactical = new TacticalSnapshot([], 0, [], [], [], DetectionConfidence.Unknown, ["Tactical semantics for screen-backed targets remain conservative in Phase 10.1."]);
+        var safety = new SafetyLocationSemantic(false, null, false, false, false, null, DetectionConfidence.Unknown, ["Safety semantics for screen-backed targets remain conservative in Phase 10.1."]);
+
+        warnings.AddRange(presence.Warnings);
+        warnings.AddRange(tactical.Warnings);
+        warnings.AddRange(safety.Reasons);
+
+        var confidenceSummary = new Dictionary<string, DetectionConfidence>(StringComparer.Ordinal)
+        {
+            ["presence"] = presence.Confidence,
+            ["route"] = route.Confidence,
+            ["overview"] = DetectionConfidence.Unknown,
+            ["probeScanner"] = DetectionConfidence.Unknown,
+            ["tactical"] = tactical.Confidence,
+            ["safety"] = safety.Confidence
+        };
+
+        var package = new EveLikeSemanticPackageResult(
+            PackageName,
+            PackageVersion,
+            presence,
+            route,
+            overview,
+            probes,
+            tactical,
+            safety,
+            warnings.Distinct(StringComparer.Ordinal).ToArray(),
+            confidenceSummary);
+
+        return new TargetSemanticPackageResult(
+            PackageName,
+            PackageVersion,
+            true,
+            SummarizeScreenBackedPackageConfidence(route.Confidence),
+            package.Warnings,
+            confidenceSummary,
+            FailureReason: null,
+            EveLike: package);
+    }
+
+    private async ValueTask<TravelRouteSnapshot> ExtractRouteFromScreenAsync(
+        TargetSemanticPackageContext context,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        var metadata = context.SemanticContext.TargetContext.Target.Metadata;
+        var routeRegions = ParseCsvMetadata(metadata, "EveLike.RouteRegionSet", DefaultRouteRegions);
+        var routeHeaderTerms = ParseCsvMetadata(metadata, "EveLike.RouteHeaderTerms", DefaultRouteHeaderTerms);
+        var routeIgnoreTerms = ParseCsvMetadata(metadata, "EveLike.RouteIgnoreTerms", DefaultRouteIgnoreTerms);
+        var minWaypointsForActive = ParseIntMetadata(metadata, "EveLike.RouteMinWaypointsForActive", 2, minimum: 1, maximum: 8);
+        var useTemplateSupport = ParseBoolMetadata(metadata, "EveLike.RouteUseTemplateSupport", defaultValue: true);
+
+        if (_screenSnapshotStore is null || _screenRegionStore is null || _preprocessingStore is null || _ocrStore is null || _templateStore is null)
+        {
+            warnings.Add("Screen-backed route extraction could not run because one or more visual stores were not available.");
+            return new TravelRouteSnapshot(false, null, null, null, 0, [], null, DetectionConfidence.Unknown, ["Visual evidence stores were unavailable."]);
+        }
+
+        var sessionId = context.SemanticContext.SessionId;
+        var snapshot = await _screenSnapshotStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var regions = await _screenRegionStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var preprocessing = await _preprocessingStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var ocr = await _ocrStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var templates = await _templateStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+
+        var reasons = new List<string>();
+
+        if (snapshot is null)
+        {
+            warnings.Add("No screen snapshot was available for route extraction.");
+        }
+
+        if (regions is null)
+        {
+            warnings.Add("No screen region resolution was available for route extraction.");
+        }
+
+        if (preprocessing is null)
+        {
+            warnings.Add("No frame preprocessing result was available for route extraction.");
+        }
+
+        if (ocr is null)
+        {
+            warnings.Add("Route extraction could not assert route state because OCR evidence was unavailable.");
+            return new TravelRouteSnapshot(false, null, null, null, 0, [], null, DetectionConfidence.Unknown, warnings.Distinct(StringComparer.Ordinal).ToArray());
+        }
+
+        if (snapshot is not null && ocr.SourceSnapshotSequence != snapshot.Sequence)
+        {
+            warnings.Add($"OCR data sequence {ocr.SourceSnapshotSequence} did not match latest screen snapshot sequence {snapshot.Sequence}; using OCR conservatively.");
+        }
+
+        if (preprocessing is not null && ocr.SourceSnapshotSequence != preprocessing.SourceSnapshotSequence)
+        {
+            warnings.Add("OCR source sequence did not match latest preprocessing source sequence.");
+        }
+
+        var matchedRegions = regions?.Regions
+            .Where(static region => region.MatchState != ScreenRegionMatchState.Missing)
+            .Select(static region => region.RegionName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? [];
+
+        var prioritizedArtifacts = PrioritizeRouteArtifacts(ocr.Artifacts, routeRegions, matchedRegions);
+        if (prioritizedArtifacts.Length == 0)
+        {
+            warnings.Add("No OCR artifacts were available for route-adjacent regions.");
+            return new TravelRouteSnapshot(false, null, null, null, 0, [], null, DetectionConfidence.Unknown, warnings.Distinct(StringComparer.Ordinal).ToArray());
+        }
+
+        var routeLineCandidates = CollectRouteLineCandidates(prioritizedArtifacts, routeHeaderTerms, routeIgnoreTerms);
+
+        var headerEvidence = routeLineCandidates
+            .Where(candidate => candidate.IsHeader)
+            .ToArray();
+
+        if (headerEvidence.Length > 0)
+        {
+            var topHeader = headerEvidence[0];
+            reasons.Add($"Route panel/header was detected in OCR region '{topHeader.RegionName ?? "full-frame"}'.");
+        }
+
+        var destination = ExtractField(routeLineCandidates, ["destination", "dest", "to"]);
+        var nextWaypoint = ExtractField(routeLineCandidates, ["next waypoint", "next", "waypoint"]);
+        var currentLocation = ExtractField(routeLineCandidates, ["current location", "current system", "current", "location", "system"]);
+        var progressPercent = ExtractProgress(routeLineCandidates);
+
+        var visibleWaypoints = ExtractWaypoints(routeLineCandidates, routeHeaderTerms, routeIgnoreTerms, destination, nextWaypoint, currentLocation);
+        var waypointCount = visibleWaypoints.Length;
+
+        if (waypointCount > 0)
+        {
+            reasons.Add("Visible waypoints were extracted from OCR artifacts.");
+        }
+
+        if (string.IsNullOrWhiteSpace(currentLocation))
+        {
+            warnings.Add("Current location was not emitted because no direct visual evidence was found.");
+        }
+
+        var templateSupportCount = 0;
+        if (useTemplateSupport && templates is not null)
+        {
+            templateSupportCount = CountRouteSupportingTemplates(templates, routeRegions, routeHeaderTerms);
+            if (templateSupportCount > 0)
+            {
+                reasons.Add($"Template detection provided {templateSupportCount} route-supporting matches.");
+            }
+        }
+
+        var hasHeaderEvidence = headerEvidence.Length > 0;
+        var hasWaypointEvidence = waypointCount >= minWaypointsForActive;
+        var hasFieldEvidence = !string.IsNullOrWhiteSpace(destination) || !string.IsNullOrWhiteSpace(nextWaypoint);
+        var hasTemplateSupport = templateSupportCount > 0;
+
+        var routeActive = (hasHeaderEvidence && (waypointCount > 0 || hasFieldEvidence)) ||
+            (hasWaypointEvidence && (hasFieldEvidence || hasTemplateSupport));
+
+        if (!routeActive && (hasHeaderEvidence || waypointCount > 0 || hasFieldEvidence))
+        {
+            warnings.Add("Route was not asserted because only weak OCR/header evidence was present.");
+        }
+
+        if (string.IsNullOrWhiteSpace(nextWaypoint) && waypointCount > 0 && !string.IsNullOrWhiteSpace(destination))
+        {
+            nextWaypoint = visibleWaypoints.FirstOrDefault(waypoint => !string.Equals(waypoint, destination, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(nextWaypoint))
+            {
+                reasons.Add("Next waypoint was inferred from visible route waypoints.");
+            }
+        }
+
+        var confidence = ComputeRouteConfidence(routeActive, hasHeaderEvidence, waypointCount, hasFieldEvidence, hasTemplateSupport);
+        return new TravelRouteSnapshot(
+            routeActive,
+            destination,
+            currentLocation,
+            nextWaypoint,
+            waypointCount,
+            visibleWaypoints,
+            progressPercent,
+            confidence,
+            reasons.Concat(warnings).Distinct(StringComparer.Ordinal).ToArray());
+    }
+
+    private static DetectionConfidence SummarizeScreenBackedPackageConfidence(DetectionConfidence routeConfidence) =>
+        routeConfidence switch
+        {
+            DetectionConfidence.High => DetectionConfidence.Medium,
+            DetectionConfidence.Medium => DetectionConfidence.Low,
+            DetectionConfidence.Low => DetectionConfidence.Low,
+            _ => DetectionConfidence.Unknown
+        };
+
+    private static DetectionConfidence ComputeRouteConfidence(
+        bool routeActive,
+        bool hasHeaderEvidence,
+        int waypointCount,
+        bool hasFieldEvidence,
+        bool hasTemplateSupport)
+    {
+        if (!routeActive)
+        {
+            return hasHeaderEvidence || waypointCount > 0 || hasFieldEvidence
+                ? DetectionConfidence.Low
+                : DetectionConfidence.Unknown;
+        }
+
+        if (hasHeaderEvidence && waypointCount >= 2 && (hasFieldEvidence || hasTemplateSupport))
+        {
+            return DetectionConfidence.High;
+        }
+
+        return DetectionConfidence.Medium;
+    }
+
+    private static string[] ParseCsvMetadata(
+        IReadOnlyDictionary<string, string?> metadata,
+        string key,
+        IReadOnlyList<string> defaultValues)
+    {
+        if (!metadata.TryGetValue(key, out var rawValue) || string.IsNullOrWhiteSpace(rawValue))
+        {
+            return defaultValues.ToArray();
+        }
+
+        var parsed = rawValue
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return parsed.Length == 0 ? defaultValues.ToArray() : parsed;
+    }
+
+    private static int ParseIntMetadata(
+        IReadOnlyDictionary<string, string?> metadata,
+        string key,
+        int defaultValue,
+        int minimum,
+        int maximum)
+    {
+        if (!metadata.TryGetValue(key, out var rawValue) || !int.TryParse(rawValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return defaultValue;
+        }
+
+        return Math.Clamp(parsed, minimum, maximum);
+    }
+
+    private static bool ParseBoolMetadata(IReadOnlyDictionary<string, string?> metadata, string key, bool defaultValue) =>
+        metadata.TryGetValue(key, out var rawValue) && bool.TryParse(rawValue, out var parsed)
+            ? parsed
+            : defaultValue;
+
+    private static OcrArtifactResult[] PrioritizeRouteArtifacts(
+        IReadOnlyList<OcrArtifactResult> artifacts,
+        IReadOnlyList<string> routeRegions,
+        IReadOnlyList<string> knownRegions)
+    {
+        static int ArtifactKindPriority(string sourceArtifactKind)
+        {
+            for (var index = 0; index < DefaultArtifactKindPriority.Length; index++)
+            {
+                if (string.Equals(sourceArtifactKind, DefaultArtifactKindPriority[index], StringComparison.OrdinalIgnoreCase))
+                {
+                    return DefaultArtifactKindPriority.Length - index;
+                }
+            }
+
+            return 0;
+        }
+
+        var routeRegionSet = new HashSet<string>(routeRegions, StringComparer.OrdinalIgnoreCase);
+        var knownRegionSet = new HashSet<string>(knownRegions, StringComparer.OrdinalIgnoreCase);
+
+        return artifacts
+            .Select(artifact =>
+            {
+                var inRouteRegion = artifact.SourceRegionName is not null && routeRegionSet.Contains(artifact.SourceRegionName);
+                var inKnownRegion = artifact.SourceRegionName is not null && knownRegionSet.Contains(artifact.SourceRegionName);
+                var regionScore = inRouteRegion ? 100 : (inKnownRegion ? 20 : 0);
+                var confidenceScore = (int)Math.Round((artifact.Confidence ?? 0d) * 10d, MidpointRounding.AwayFromZero);
+                return new
+                {
+                    Artifact = artifact,
+                    Score = regionScore + (ArtifactKindPriority(artifact.SourceArtifactKind) * 10) + confidenceScore
+                };
+            })
+            .OrderByDescending(static item => item.Score)
+            .ThenBy(static item => item.Artifact.ArtifactName, StringComparer.OrdinalIgnoreCase)
+            .Select(static item => item.Artifact)
+            .ToArray();
+    }
+
+    private static RouteLineCandidate[] CollectRouteLineCandidates(
+        IReadOnlyList<OcrArtifactResult> artifacts,
+        IReadOnlyList<string> routeHeaderTerms,
+        IReadOnlyList<string> routeIgnoreTerms)
+    {
+        var deduplicated = new Dictionary<string, RouteLineCandidate>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var artifact in artifacts)
+        {
+            var rawLines = artifact.Lines.Count > 0
+                ? artifact.Lines.Select(static line => line.Text)
+                : artifact.NormalizedText.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            foreach (var rawLine in rawLines)
+            {
+                var normalized = NormalizeRouteLine(rawLine);
+                if (string.IsNullOrWhiteSpace(normalized) || IsNoiseLine(normalized, routeIgnoreTerms))
+                {
+                    continue;
+                }
+
+                var candidate = new RouteLineCandidate(
+                    rawLine.Trim(),
+                    normalized,
+                    artifact.SourceRegionName,
+                    artifact.ArtifactName,
+                    artifact.SourceArtifactKind,
+                    artifact.Confidence ?? 0d,
+                    ContainsAny(normalized, routeHeaderTerms),
+                    artifact.SourceRegionName is not null);
+
+                if (!deduplicated.TryGetValue(candidate.NormalizedLine, out var existing) || existing.Score < candidate.Score)
+                {
+                    deduplicated[candidate.NormalizedLine] = candidate;
+                }
+            }
+        }
+
+        return deduplicated.Values
+            .OrderByDescending(static candidate => candidate.Score)
+            .ThenBy(static candidate => candidate.NormalizedLine, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string? ExtractField(IReadOnlyList<RouteLineCandidate> lines, IReadOnlyList<string> prefixes)
+    {
+        foreach (var candidate in lines)
+        {
+            foreach (var prefix in prefixes)
+            {
+                var expression = $"^\\s*{Regex.Escape(prefix)}\\s*[:-]?\\s*(.+)$";
+                var match = Regex.Match(candidate.NormalizedLine, expression, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (!match.Success)
+                {
+                    continue;
+                }
+
+                var value = NormalizeWaypointLabel(match.Groups[1].Value);
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static double? ExtractProgress(IReadOnlyList<RouteLineCandidate> lines)
+    {
+        foreach (var candidate in lines)
+        {
+            if (!candidate.NormalizedLine.Contains('%'))
+            {
+                continue;
+            }
+
+            if (!SemanticParsing.ContainsAny(candidate.NormalizedLine, "progress", "route", "travel", "jumps", "jump"))
+            {
+                continue;
+            }
+
+            var match = Regex.Match(candidate.NormalizedLine, "(\\d{1,3})\\s*%", RegexOptions.CultureInvariant);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            if (double.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                return Math.Clamp(parsed, 0d, 100d);
+            }
+        }
+
+        return null;
+    }
+
+    private static string[] ExtractWaypoints(
+        IReadOnlyList<RouteLineCandidate> lines,
+        IReadOnlyList<string> routeHeaderTerms,
+        IReadOnlyList<string> routeIgnoreTerms,
+        string? destination,
+        string? nextWaypoint,
+        string? currentLocation)
+    {
+        var excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(destination))
+        {
+            excluded.Add(destination);
+        }
+
+        if (!string.IsNullOrWhiteSpace(nextWaypoint))
+        {
+            excluded.Add(nextWaypoint);
+        }
+
+        if (!string.IsNullOrWhiteSpace(currentLocation))
+        {
+            excluded.Add(currentLocation);
+        }
+
+        var waypoints = new List<string>();
+        foreach (var candidate in lines)
+        {
+            if (!candidate.HasRegionEvidence)
+            {
+                continue;
+            }
+
+            var label = NormalizeWaypointLabel(candidate.NormalizedLine);
+            if (!IsPotentialWaypointLabel(label, routeHeaderTerms, routeIgnoreTerms) || excluded.Contains(label))
+            {
+                continue;
+            }
+
+            waypoints.Add(label);
+            if (waypoints.Count == 25)
+            {
+                break;
+            }
+        }
+
+        return waypoints.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static int CountRouteSupportingTemplates(
+        SessionTemplateDetectionResult templates,
+        IReadOnlyList<string> routeRegions,
+        IReadOnlyList<string> routeHeaderTerms)
+    {
+        var regionSet = new HashSet<string>(routeRegions, StringComparer.OrdinalIgnoreCase);
+        var count = 0;
+
+        foreach (var artifact in templates.Artifacts)
+        {
+            foreach (var match in artifact.Matches)
+            {
+                if (match.SourceRegionName is not null && regionSet.Count > 0 && !regionSet.Contains(match.SourceRegionName))
+                {
+                    continue;
+                }
+
+                var searchable = string.Join(' ', new[]
+                {
+                    match.TemplateName,
+                    match.TemplateKind,
+                    artifact.ArtifactName,
+                    artifact.SourceArtifactKind
+                });
+
+                if (ContainsAny(searchable, routeHeaderTerms) ||
+                    SemanticParsing.ContainsAny(searchable, "autopilot", "jump", "stargate", "route"))
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private static bool IsPotentialWaypointLabel(string? label, IReadOnlyList<string> routeHeaderTerms, IReadOnlyList<string> routeIgnoreTerms)
+    {
+        if (string.IsNullOrWhiteSpace(label) || label.Length < 2 || label.Length > 48)
+        {
+            return false;
+        }
+
+        if (label.Contains(':') || label.Contains('%'))
+        {
+            return false;
+        }
+
+        if (ContainsAny(label, routeHeaderTerms) || ContainsAny(label, routeIgnoreTerms))
+        {
+            return false;
+        }
+
+        return Regex.IsMatch(label, "^[a-zA-Z0-9][a-zA-Z0-9 '\\-]+$", RegexOptions.CultureInvariant);
+    }
+
+    private static bool IsNoiseLine(string line, IReadOnlyList<string> routeIgnoreTerms)
+    {
+        if (line.Length <= 1 || line.All(static ch => char.IsPunctuation(ch) || char.IsWhiteSpace(ch)))
+        {
+            return true;
+        }
+
+        if (SemanticParsing.ContainsAny(line, "fps", "cpu", "gpu", "ms"))
+        {
+            return true;
+        }
+
+        return ContainsAny(line, routeIgnoreTerms);
+    }
+
+    private static bool ContainsAny(string? value, IReadOnlyList<string> terms)
+    {
+        if (string.IsNullOrWhiteSpace(value) || terms.Count == 0)
+        {
+            return false;
+        }
+
+        return terms.Any(term => !string.IsNullOrWhiteSpace(term) && value.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeRouteLine(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Trim();
+        normalized = Regex.Replace(normalized, "^[0-9]+[.)\\-\\s]+", string.Empty, RegexOptions.CultureInvariant);
+        normalized = Regex.Replace(normalized, "\\s+", " ", RegexOptions.CultureInvariant);
+        return normalized.Trim();
+    }
+
+    private static string NormalizeWaypointLabel(string? value)
+    {
+        var normalized = NormalizeRouteLine(value);
+        normalized = Regex.Replace(normalized, "^[>\\-\\*]+", string.Empty, RegexOptions.CultureInvariant).Trim();
+        return string.IsNullOrWhiteSpace(normalized)
+            ? string.Empty
+            : CultureInfo.InvariantCulture.TextInfo.ToTitleCase(normalized.ToLowerInvariant());
+    }
+
+    private sealed record RouteLineCandidate(
+        string RawLine,
+        string NormalizedLine,
+        string? RegionName,
+        string ArtifactName,
+        string SourceArtifactKind,
+        double Score,
+        bool IsHeader,
+        bool HasRegionEvidence);
 
     private LocalPresenceSnapshot ExtractPresence(TargetSemanticPackageContext context, IReadOnlyList<UiNode> visibleNodes, out List<string> warnings)
     {

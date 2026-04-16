@@ -124,7 +124,8 @@ Distinción importante:
 - Paquete semántico `EveLike`
   - interpreta presencia/local, ruta de viaje, overview, probe scanner, táctico y seguridad/hide desde el árbol UIA normalizado
   - alimenta candidaturas de riesgo y proyección de dominio sin introducir lógica de comportamiento
-  - no usa OCR, CV ni decisiones de combate/autopiloto; solo semántica derivada del UI tree y metadata
+  - para `ScreenCaptureDesktop` (Fase 10.1) agrega ruta de viaje (`TravelRouteSnapshot`) con evidencia visual desde stores de snapshot/regiones/preprocessing/OCR/templates; el resto de secciones se mantiene conservador
+  - no agrega decisiones de combate/autopiloto ni ejecución de acciones; solo semántica inspectable
 - `ITargetBehaviorPackResolver` y `ITargetBehaviorPack`
   - seleccionan behavior packs por metadata de perfil, por ejemplo `BehaviorPack = EveLikeTravelAutopilot`
   - consumen semántica, riesgo, dominio, policy control, recovery, actividad y memoria operacional
@@ -284,6 +285,16 @@ El primer paquete concreto es `EveLike`. Su objetivo es enriquecer la inspecció
 - probe scanner con tipo de firma y estado
 - snapshot táctico agregando objetos visibles y alertas de engagement
 - interpretación de seguridad/hide/dock
+
+Para `WindowsUiAutomationDesktop`, el paquete conserva la extracción basada en árbol UIA. Para `ScreenCaptureDesktop`, la Fase 10.1 agrega una ruta visual conservadora solo para `TravelRouteSnapshot`, usando OCR/template matching como evidencia y sin inferencias por título/root metadata.
+
+Metadata opcional de perfil para ajustar la ruta visual (`ScreenCaptureDesktop`):
+
+- `EveLike.RouteRegionSet`
+- `EveLike.RouteHeaderTerms`
+- `EveLike.RouteIgnoreTerms`
+- `EveLike.RouteMinWaypointsForActive`
+- `EveLike.RouteUseTemplateSupport`
 
 El resultado del paquete se expone en los endpoints semánticos existentes, via `UiSemanticExtractionResult` y sus DTOs. Esas señales luego alimentan `IRiskCandidateBuilder` e `ISessionDomainStateProjectionService` de manera aditiva. La fase 6.3 no agrega behavior packs ni toma decisiones de combate, navegación o autopiloto.
 
@@ -1686,7 +1697,7 @@ El adapter nuevo es `ScreenCaptureDesktopTargetAdapter`. Valida el proceso y la 
 - `targetWindowHandle`
 - `targetProcessId`
 
-En esta fase no hay OCR ni árbol sintético. Cuando el target usa `ScreenCaptureDesktop`, el refresh conserva `RawSnapshotJson`, permite `ProjectedTree=null` y completa el refresh igualmente. `/sessions/{id}/ui/raw` devuelve el payload visual raw; `/sessions/{id}/ui` puede quedar sin tree hasta que exista una capa semántica visual posterior.
+En 8.1 no había OCR ni árbol sintético. Desde fases posteriores (incluyendo 10.1), `ScreenCaptureDesktop` mantiene `ProjectedTree=null` para el estado UI proyectado, pero puede ejecutar capas visuales (preprocessing/OCR/templates) y paquetes semánticos sobre evidencia de stores visuales. `/sessions/{id}/ui/raw` sigue devolviendo el payload visual raw.
 
 Fase 8.2 agrega un store runtime first-class para snapshots visuales por sesión (`ISessionScreenSnapshotStore`). El refresh exitoso de `ScreenCaptureDesktop` sigue conservando `RawSnapshotJson` por compatibilidad, pero además actualiza el último snapshot visual con metadata resumida, tamaño de payload, backend de captura e historial acotado por sesión. Esto habilita inspección y depuración sin mezclar snapshots de pantalla con árboles UIA.
 
