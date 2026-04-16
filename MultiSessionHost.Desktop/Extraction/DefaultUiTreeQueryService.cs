@@ -7,16 +7,22 @@ public sealed class DefaultUiTreeQueryService : IUiTreeQueryService
     public IReadOnlyList<UiNode> Flatten(UiTree tree)
     {
         var nodes = new List<UiNode>();
+
+        if (tree?.Root is null)
+        {
+            return nodes;
+        }
+
         Visit(tree.Root, nodes);
         return nodes;
     }
 
     public IReadOnlyList<UiNode> EnumerateVisibleDescendants(UiNode node) =>
-        GetDescendants(node).Where(static descendant => descendant.Visible).ToArray();
+        GetDescendants(node).Where(static descendant => descendant is not null && descendant.Visible).ToArray();
 
     public IReadOnlyList<UiNode> FindByRole(UiTree tree, string role) =>
         Flatten(tree)
-            .Where(node => string.Equals(node.Role, role, StringComparison.OrdinalIgnoreCase))
+            .Where(node => string.Equals(node?.Role ?? string.Empty, role, StringComparison.OrdinalIgnoreCase))
             .ToArray();
 
     public IReadOnlyList<UiNode> FindByTextFragment(UiTree tree, string fragment) =>
@@ -30,16 +36,22 @@ public sealed class DefaultUiTreeQueryService : IUiTreeQueryService
             {
                 var attributeValue = GetAttribute(node, attributeName);
                 return attributeValue is not null &&
-                    (value is null || string.Equals(attributeValue, value, StringComparison.OrdinalIgnoreCase));
+                       (value is null || string.Equals(attributeValue, value, StringComparison.OrdinalIgnoreCase));
             })
             .ToArray();
 
     public UiNode? FindParent(UiTree tree, UiNode node) =>
-        FindParent(tree.Root, node.Id);
+        tree?.Root is null || node is null ? null : FindParent(tree.Root, node.Id);
 
     public IReadOnlyList<UiNode> GetAncestors(UiTree tree, UiNode node)
     {
         var ancestors = new List<UiNode>();
+
+        if (tree?.Root is null || node is null)
+        {
+            return ancestors;
+        }
+
         var current = node;
 
         while (FindParent(tree, current) is { } parent)
@@ -56,9 +68,17 @@ public sealed class DefaultUiTreeQueryService : IUiTreeQueryService
     {
         var nodes = new List<UiNode>();
 
-        foreach (var child in node.Children)
+        if (node is null)
         {
-            Visit(child, nodes);
+            return nodes;
+        }
+
+        foreach (var child in node.Children ?? Array.Empty<UiNode>())
+        {
+            if (child is not null)
+            {
+                Visit(child, nodes);
+            }
         }
 
         return nodes;
@@ -67,24 +87,32 @@ public sealed class DefaultUiTreeQueryService : IUiTreeQueryService
     public IReadOnlyList<UiNode> GetSiblings(UiTree tree, UiNode node)
     {
         var parent = FindParent(tree, node);
-        return parent is null ? [] : parent.Children.Where(child => child.Id != node.Id).ToArray();
+        return parent is null
+            ? []
+            : (parent.Children ?? Array.Empty<UiNode>()).Where(child => child is not null && child.Id != node.Id).ToArray();
     }
 
     public IReadOnlyList<string> ComputeNodePath(UiTree tree, UiNode node) =>
         GetAncestors(tree, node)
-            .Concat([node])
-            .Select(static pathNode => $"{pathNode.Role}:{pathNode.Id.Value}")
+            .Concat(node is null ? [] : [node])
+            .Select(pathNode => $"{pathNode.Role}:{pathNode.Id.Value}")
             .ToArray();
 
     public IReadOnlyList<string> GatherTextCandidates(UiNode node)
     {
         var values = new List<string>();
+
+        if (node is null)
+        {
+            return values;
+        }
+
         AddIfNotBlank(values, node.Name);
         AddIfNotBlank(values, node.Text);
 
-        foreach (var attribute in node.Attributes)
+        foreach (var attribute in node.Attributes ?? Array.Empty<UiAttribute>())
         {
-            if (IsTextLikeAttribute(attribute.Name))
+            if (attribute is not null && IsTextLikeAttribute(attribute.Name ?? string.Empty))
             {
                 AddIfNotBlank(values, attribute.Value);
             }
@@ -96,60 +124,86 @@ public sealed class DefaultUiTreeQueryService : IUiTreeQueryService
     public IReadOnlySet<string> DeriveRoleFamilies(UiNode node)
     {
         var families = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var role = node.Role;
+        var role = node?.Role ?? string.Empty;
 
         if (ContainsAny(role, "list", "grid", "table", "combo", "tree"))
-        {
             families.Add("list");
-        }
 
         if (ContainsAny(role, "button", "checkbox", "toggle", "menuitem", "link"))
-        {
             families.Add("action");
-        }
 
         if (ContainsAny(role, "progress", "status", "spinner"))
-        {
             families.Add("status");
-        }
 
         if (ContainsAny(role, "label", "text", "textbox"))
-        {
             families.Add("text");
-        }
 
         if (ContainsAny(role, "panel", "group", "form", "window"))
-        {
             families.Add("container");
-        }
 
         return families;
     }
 
-    public string? GetAttribute(UiNode node, string attributeName) =>
-        node.Attributes.FirstOrDefault(attribute => string.Equals(attribute.Name, attributeName, StringComparison.OrdinalIgnoreCase))?.Value;
+    public string? GetAttribute(UiNode node, string attributeName)
+    {
+        if (node is null || string.IsNullOrWhiteSpace(attributeName))
+        {
+            return null;
+        }
+
+        var attributes = node.Attributes;
+        if (attributes is null || attributes.Count == 0)
+        {
+            return null;
+        }
+
+        return attributes
+            .FirstOrDefault(attribute =>
+                attribute is not null &&
+                string.Equals(attribute.Name, attributeName, StringComparison.OrdinalIgnoreCase))
+            ?.Value;
+    }
 
     private static void Visit(UiNode node, ICollection<UiNode> nodes)
     {
+        if (node is null)
+        {
+            return;
+        }
+
         nodes.Add(node);
 
-        foreach (var child in node.Children)
+        foreach (var child in node.Children ?? Array.Empty<UiNode>())
         {
-            Visit(child, nodes);
+            if (child is not null)
+            {
+                Visit(child, nodes);
+            }
         }
     }
 
     private static UiNode? FindParent(UiNode current, UiNodeId childId)
     {
-        if (current.Children.Any(child => child.Id == childId))
+        if (current is null)
+        {
+            return null;
+        }
+
+        var children = current.Children ?? Array.Empty<UiNode>();
+
+        if (children.Any(child => child is not null && child.Id == childId))
         {
             return current;
         }
 
-        foreach (var child in current.Children)
+        foreach (var child in children)
         {
-            var parent = FindParent(child, childId);
+            if (child is null)
+            {
+                continue;
+            }
 
+            var parent = FindParent(child, childId);
             if (parent is not null)
             {
                 return parent;
@@ -160,7 +214,7 @@ public sealed class DefaultUiTreeQueryService : IUiTreeQueryService
     }
 
     private static bool IsTextLikeAttribute(string name) =>
-        ContainsAny(name, "label", "title", "text", "name", "value", "status", "message", "selectedItem", "items", "semanticRole");
+        ContainsAny(name ?? string.Empty, "label", "title", "text", "name", "value", "status", "message", "selectedItem", "items", "semanticRole");
 
     private static void AddIfNotBlank(ICollection<string> values, string? value)
     {
@@ -171,5 +225,5 @@ public sealed class DefaultUiTreeQueryService : IUiTreeQueryService
     }
 
     private static bool ContainsAny(string value, params string[] fragments) =>
-        fragments.Any(fragment => value.Contains(fragment, StringComparison.OrdinalIgnoreCase));
+        fragments.Any(fragment => (value ?? string.Empty).Contains(fragment, StringComparison.OrdinalIgnoreCase));
 }

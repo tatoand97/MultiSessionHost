@@ -8,7 +8,11 @@ public sealed record NativeUiAutomationCaptureOptions(
     int MaxChildrenPerNode,
     bool IncludeOffscreenNodes,
     string TreeView,
-    IReadOnlySet<string> AllowedFrameworkIds)
+    IReadOnlySet<string> AllowedFrameworkIds,
+    bool PreserveFrameworkFilterOnDiagnosticFallback = false,
+    bool EnablePointProbe = true,
+    int PointProbeInsetPixels = 24,
+    bool EnablePointProbeGrid = true)
 {
     public static NativeUiAutomationCaptureOptions FromMetadata(IReadOnlyDictionary<string, string?> metadata) =>
         new(
@@ -16,7 +20,11 @@ public sealed record NativeUiAutomationCaptureOptions(
             GetPositiveInt(metadata, "NativeUiAutomation.MaxChildrenPerNode", 200),
             GetBool(metadata, "NativeUiAutomation.IncludeOffscreenNodes", false),
             GetString(metadata, "NativeUiAutomation.TreeView", "Control"),
-            GetSet(metadata, "NativeUiAutomation.AllowedFrameworkIds"));
+            GetSet(metadata, "NativeUiAutomation.AllowedFrameworkIds"),
+            GetBool(metadata, "NativeUiAutomation.PreserveFrameworkFilterOnDiagnosticFallback", false),
+            GetBool(metadata, "NativeUiAutomation.EnablePointProbe", true),
+            GetPositiveInt(metadata, "NativeUiAutomation.PointProbeInsetPixels", 24),
+            GetBool(metadata, "NativeUiAutomation.EnablePointProbeGrid", true));
 
     private static int GetPositiveInt(IReadOnlyDictionary<string, string?> metadata, string key, int defaultValue) =>
         metadata.TryGetValue(key, out var value) &&

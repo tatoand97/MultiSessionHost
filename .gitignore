@@ -361,3 +361,4 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+MultiSessionHost.Worker/runtime-state/eve-alpha.runtime.json

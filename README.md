@@ -744,6 +744,13 @@ Metadata soportada por el capturador inicial:
 - `NativeUiAutomation.IncludeOffscreenNodes`: incluye nodos offscreen si es `true`.
 - `NativeUiAutomation.TreeView`: `Control` por defecto, o `Raw`.
 - `NativeUiAutomation.AllowedFrameworkIds`: lista separada por comas para filtrar frameworks UIA.
+- `NativeUiAutomation.PreserveFrameworkFilterOnDiagnosticFallback`: si es `true`, conserva `AllowedFrameworkIds` cuando el capturador hace fallback diagnostico de `Control` a `Raw`; por defecto ese fallback relaja el filtro.
+
+`WindowsUiAutomationReader` sigue intentando `ControlView` primero cuando `TreeView=Control`, pero ahora reintenta en `RawView` si la raiz no expone hijos en `ControlView` y si `RawView` si los expone. Ese fallback solo cambia la captura efectiva cuando mejora materialmente el arbol; en el intento diagnostico habilita nodos offscreen y, salvo que se pida lo contrario, no aplica filtros restrictivos de framework.
+
+La metadata de `/sessions/{id}/ui/raw` ahora incluye diagnosticos de captura como `requestedTreeView`, `effectiveTreeView`, `controlViewHasFirstChild`, `rawViewHasFirstChild`, `fallbackApplied`, `rootClassName`, `rootFrameworkId`, `rootLocalizedControlType`, `rootNativeWindowHandle`, `rootProcessId`, `rootScannedChildCount`, `rootIncludedChildCount`, `childrenFilteredByOffscreen`, `childrenFilteredByFramework` y `truncationReason`. Tambien agrega diagnostico de point-probe y opacidad (`pointProbeEnabled`, `pointProbeCount`, `pointProbeDistinctElementCount`, `pointProbeFoundDescendant`, `pointProbeReturnedOnlyRoot`, `pointProbeFrameworkIds`, `pointProbeClassNames`, `pointProbeControlTypes`, `observabilityMode`, `opaqueRoot`, `targetOpacityReasonCode`, `targetOpacityReason`). Esto permite diferenciar attach saludable de observabilidad insuficiente (UIA root-only) sin introducir logica especifica por aplicacion.
+
+Cuando `opaqueRoot=true`, la extraccion semantica sigue ejecutandose pero emite warnings explicitos y reduce confianza; los packs de comportamiento (por ejemplo travel/autopilot) evitan inferencias medias por titulo/root y priorizan estado de espera/no-op con razon `behavior.observability.insufficient`.
 
 ### Attachment no cooperativo
 

@@ -111,11 +111,43 @@ public sealed class EveLikeSemanticPackageTests
         Assert.Equal(3, dto.Packages[0].EveLike!.Presence.Entities.Count);
     }
 
-    private static (UiSemanticExtractionPipeline Pipeline, UiSemanticExtractionContext Context, InMemorySessionObservabilityStore Store, SessionSnapshot Snapshot) CreateHarness(bool withPackageMetadata, bool registerPackage)
+    [Fact]
+    public async Task Pipeline_OpaqueRootOnlyTarget_DegradesPackageConfidenceAndWarns()
+    {
+        var tree = new UiTree(
+            new UiSnapshotMetadata(
+                "eve-like",
+                "EveLikeFixture",
+                DateTimeOffset.UtcNow,
+                4242,
+                1001,
+                "EVE - Tatoand",
+                new Dictionary<string, string?>(StringComparer.Ordinal)
+                {
+                    ["opaqueRoot"] = bool.TrueString,
+                    ["observabilityMode"] = "RootOnly",
+                    ["targetOpacityReasonCode"] = "native.uia.root_only"
+                }),
+            Node("root", "Window", text: "EVE - Tatoand"));
+
+        var (pipeline, context, _, _) = CreateHarness(withPackageMetadata: true, registerPackage: true, treeOverride: tree);
+        var result = await pipeline.ExtractAsync(context, CancellationToken.None);
+
+        var package = Assert.Single(result.Packages);
+        Assert.True(package.Succeeded);
+        Assert.Equal(DetectionConfidence.Low, package.Confidence);
+        Assert.Contains(result.Warnings, warning => warning.Contains("insufficient observable structure", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(package.EveLike);
+        Assert.False(package.EveLike!.TravelRoute.RouteActive);
+        Assert.Equal(DetectionConfidence.Unknown, package.EveLike.TravelRoute.Confidence);
+        Assert.Contains(package.EveLike.Warnings, warning => warning.Contains("insufficient observable structure", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static (UiSemanticExtractionPipeline Pipeline, UiSemanticExtractionContext Context, InMemorySessionObservabilityStore Store, SessionSnapshot Snapshot) CreateHarness(bool withPackageMetadata, bool registerPackage, UiTree? treeOverride = null)
     {
         var sessionId = new SessionId("eve-like-session");
         var now = DateTimeOffset.Parse("2026-04-15T15:00:00Z");
-        var tree = CreateTree();
+        var tree = treeOverride ?? CreateTree();
         var definition = new SessionDefinition(
             sessionId,
             "Eve Like Session",

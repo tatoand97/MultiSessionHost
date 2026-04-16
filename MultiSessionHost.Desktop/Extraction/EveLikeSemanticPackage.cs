@@ -1,5 +1,4 @@
 using System.Globalization;
-using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.UiModel.Models;
 
 namespace MultiSessionHost.Desktop.Extraction;
@@ -26,6 +25,9 @@ public sealed class EveLikeSemanticPackage : ITargetSemanticPackage
             .Where(static node => node.Visible)
             .ToArray();
 
+        var insufficientObservabilityWarning = GetInsufficientObservabilityWarning(context.SemanticContext.UiTree);
+        var insufficientObservability = insufficientObservabilityWarning is not null;
+
         var presence = ExtractPresence(context, visibleNodes, out var presenceWarnings);
         var route = ExtractRoute(context, visibleNodes, out var routeWarnings);
         var overview = ExtractOverview(context, visibleNodes, out var overviewWarnings);
@@ -40,6 +42,26 @@ public sealed class EveLikeSemanticPackage : ITargetSemanticPackage
         warnings.AddRange(probeWarnings);
         warnings.AddRange(tacticalWarnings);
         warnings.AddRange(safetyWarnings);
+
+        if (insufficientObservabilityWarning is not null)
+        {
+            warnings.Add(insufficientObservabilityWarning);
+        }
+
+        if (insufficientObservability)
+        {
+            route = route with
+            {
+                RouteActive = false,
+                Confidence = DetectionConfidence.Unknown,
+                Reasons = route.Reasons.Append(insufficientObservabilityWarning!).Distinct(StringComparer.Ordinal).ToArray()
+            };
+            tactical = tactical with { Confidence = Downgrade(tactical.Confidence) };
+            safety = safety with { Confidence = Downgrade(safety.Confidence) };
+            presence = presence with { Confidence = Downgrade(presence.Confidence) };
+            overview = overview.Select(entry => entry with { Confidence = Downgrade(entry.Confidence) }).ToArray();
+            probes = probes.Select(entry => entry with { Confidence = Downgrade(entry.Confidence) }).ToArray();
+        }
 
         var confidenceSummary = new Dictionary<string, DetectionConfidence>(StringComparer.Ordinal)
         {
@@ -63,16 +85,19 @@ public sealed class EveLikeSemanticPackage : ITargetSemanticPackage
             warnings.Distinct(StringComparer.Ordinal).ToArray(),
             confidenceSummary);
 
+        var packageConfidence = insufficientObservability
+            ? Downgrade(SummarizeConfidence(confidenceSummary.Values))
+            : SummarizeConfidence(confidenceSummary.Values);
+
         return ValueTask.FromResult(new TargetSemanticPackageResult(
             PackageName,
             PackageVersion,
             true,
-            SummarizeConfidence(confidenceSummary.Values),
+            packageConfidence,
             package.Warnings,
             confidenceSummary,
             FailureReason: null,
-            EveLike: package));
-    }
+            EveLike: package));    }
 
     private LocalPresenceSnapshot ExtractPresence(TargetSemanticPackageContext context, IReadOnlyList<UiNode> visibleNodes, out List<string> warnings)
     {
@@ -147,9 +172,20 @@ public sealed class EveLikeSemanticPackage : ITargetSemanticPackage
         var currentLocation = FirstText(routePanel, "currentLocation", "currentSystem", "location", "system")
             ?? SemanticParsing.LabelFor(routePanel ?? visibleNodes.FirstOrDefault(), _query);
         var nextWaypoint = FirstText(routePanel, "nextWaypoint", "next", "waypoint");
-        var active = routePanel is not null || ContainsAny(destination, currentLocation, nextWaypoint, "route", "travel", "autopilot", "waypoint");
+        var hasStructuralRouteEvidence = routePanel is not null ||
+            waypoints.Length > 0 ||
+            !string.IsNullOrWhiteSpace(destination) ||
+            !string.IsNullOrWhiteSpace(nextWaypoint);
+        var titleOnlyRouteHint = !hasStructuralRouteEvidence &&
+            ContainsCue(currentLocation, "route", "travel", "autopilot", "waypoint");
+        var active = hasStructuralRouteEvidence;
         var progress = SemanticParsing.GetPercent(routePanel ?? visibleNodes.FirstOrDefault(), _query);
         var reasons = new List<string>();
+
+        if (titleOnlyRouteHint)
+        {
+            warnings.Add("Route activity was not asserted because only root/title hints were available.");
+        }
 
         if (routePanel is not null)
         {
@@ -327,9 +363,9 @@ public sealed class EveLikeSemanticPackage : ITargetSemanticPackage
 
         var safeNode = FindBestNode(visibleNodes, "safe", "hide", "dock", "station", "tether", "escape");
         var safeLabel = safeNode is null ? null : SemanticParsing.LabelFor(safeNode, _query);
-        var docked = ContainsAny(safeLabel, "dock", "station", "hangar") || ContainsAny(route.CurrentLocationLabel, "station", "dock", "hangar");
-        var tethered = ContainsAny(safeLabel, "tether") || overview.Any(entry => entry.Warnings.Any(warning => warning.Contains("tether", StringComparison.OrdinalIgnoreCase)));
-        var hideAvailable = ContainsAny(safeLabel, "hide", "safe", "cloak", "safe spot") || overview.Any(entry => ContainsAny(entry.Label, "safe", "hide"));
+        var docked = ContainsCue(safeLabel, "dock", "station", "hangar") || ContainsCue(route.CurrentLocationLabel, "station", "dock", "hangar");
+        var tethered = ContainsCue(safeLabel, "tether") || overview.Any(entry => entry.Warnings.Any(warning => warning.Contains("tether", StringComparison.OrdinalIgnoreCase)));
+        var hideAvailable = ContainsCue(safeLabel, "hide", "safe", "cloak", "safe spot") || overview.Any(entry => ContainsCue(entry.Label, "safe", "hide"));
         var escapeRoute = route.NextWaypointLabel ?? route.DestinationLabel;
         var isSafe = docked || tethered || hideAvailable;
         var reasons = new List<string>();
@@ -398,8 +434,8 @@ public sealed class EveLikeSemanticPackage : ITargetSemanticPackage
         return null;
     }
 
-    private static bool ContainsAny(params string?[] values) =>
-        values.Any(value => !string.IsNullOrWhiteSpace(value) && SemanticParsing.ContainsAny(value, "route", "travel", "autopilot", "waypoint", "safe", "hide", "dock", "station", "tether", "hostile", "threat"));
+    private static bool ContainsCue(string? value, params string[] keywords) =>
+        !string.IsNullOrWhiteSpace(value) && SemanticParsing.ContainsAny(value, keywords);
 
     private static string? InferStanding(string? label, IReadOnlyList<string> tags)
     {
@@ -484,6 +520,31 @@ public sealed class EveLikeSemanticPackage : ITargetSemanticPackage
 
         return null;
     }
+
+    private static string? GetInsufficientObservabilityWarning(UiTree tree)
+    {
+        var metadata = tree.Metadata.Properties;
+        if (!metadata.TryGetValue("opaqueRoot", out var opaqueRootValue) ||
+            !bool.TryParse(opaqueRootValue, out var opaqueRoot) ||
+            !opaqueRoot)
+        {
+            return null;
+        }
+
+        if (tree.Root.Children.Count > 0)
+        {
+            return null;
+        }
+
+        return "Native target is UIA root-only; semantic extraction is based on insufficient observable structure.";
+    }
+
+    private static DetectionConfidence Downgrade(DetectionConfidence confidence) =>
+        confidence switch
+        {
+            DetectionConfidence.High or DetectionConfidence.Medium => DetectionConfidence.Low,
+            _ => confidence
+        };
 
     private static double? ParseDistance(string? value)
     {

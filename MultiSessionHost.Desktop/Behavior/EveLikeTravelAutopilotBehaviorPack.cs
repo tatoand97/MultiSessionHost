@@ -50,6 +50,7 @@ public sealed class EveLikeTravelAutopilotBehaviorPack : ITargetBehaviorPack
 
         var route = package.TravelRoute;
         var routeFingerprint = ComputeRouteFingerprint(package);
+        var observabilityInsufficient = IsObservabilityInsufficient(context, package);
         var routeChanged = !string.Equals(memoryState.RouteFingerprint, routeFingerprint, StringComparison.Ordinal);
         var progressChanged = route.ProgressPercent is not null && !AreClose(route.ProgressPercent, memoryState.LastObservedProgressPercent);
         var transitionHints = context.SessionDomainState.Navigation.IsTransitioning || context.ActivitySnapshot?.CurrentState is SessionActivityStateKind.Traveling or SessionActivityStateKind.Arriving;
@@ -72,6 +73,14 @@ public sealed class EveLikeTravelAutopilotBehaviorPack : ITargetBehaviorPack
             reasonCodes.Add(BehaviorReasonCodes.BlockedRecovery);
             reasonMessages.Add("Recovery state is blocking travel progression.");
             return ValueTask.FromResult(BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.BlockedByRecovery, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.BlockedRecovery }, warnings, reasonCodes, reasonMessages));
+        }
+
+        if (observabilityInsufficient)
+        {
+            reasonCodes.Add(BehaviorReasonCodes.ObservabilityInsufficient);
+            reasonMessages.Add("Native target observability is insufficient (UIA root-only), so travel progression is blocked until a richer observation is available.");
+            warnings.Add("Behavior planning paused because semantic state was derived from an opaque root-only native target.");
+            return ValueTask.FromResult(BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.ObservabilityInsufficient, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.ObservabilityInsufficient }, warnings, reasonCodes, reasonMessages));
         }
 
         if (isArrived)
@@ -300,6 +309,27 @@ public sealed class EveLikeTravelAutopilotBehaviorPack : ITargetBehaviorPack
         };
 
         return new TargetBehaviorPlanningResult(PackName, status.ToString(), reasonCode, reason, decisionPlan, state, memoryMetadata, warnings.ToArray(), directiveMetadata);
+    }
+
+    private static bool IsObservabilityInsufficient(TargetBehaviorPlanningContext context, EveLikeSemanticPackageResult package)
+    {
+        var metadata = context.SessionUiState?.ProjectedTree?.Metadata.Properties;
+        if (metadata is not null &&
+            metadata.TryGetValue("opaqueRoot", out var opaqueRootValue) &&
+            bool.TryParse(opaqueRootValue, out var opaqueRoot) &&
+            opaqueRoot)
+        {
+            return true;
+        }
+
+        if (metadata is not null &&
+            metadata.TryGetValue("observabilityMode", out var mode) &&
+            string.Equals(mode, "RootOnly", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return package.Warnings.Any(static warning => warning.Contains("insufficient observable structure", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsRecoveryBlocked(SessionRecoverySnapshot recoverySnapshot) =>

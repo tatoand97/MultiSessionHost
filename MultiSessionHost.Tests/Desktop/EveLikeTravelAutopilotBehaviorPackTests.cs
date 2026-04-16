@@ -113,6 +113,16 @@ public sealed class EveLikeTravelAutopilotBehaviorPackTests
     }
 
     [Fact]
+    public async Task OpaqueRootObservability_BlocksTravelPlanningWithExplicitReason()
+    {
+        var result = await CreatePack().PlanAsync(CreatePlanningContext(opaqueRoot: true), CancellationToken.None);
+
+        Assert.Equal(TargetBehaviorPlanningStateKind.ObservabilityInsufficient, result.State.StateKind);
+        Assert.Empty(result.DecisionPlan.Directives);
+        Assert.Contains(result.DecisionPlan.Reasons, reason => reason.Code == "behavior.observability.insufficient");
+    }
+
+    [Fact]
     public async Task RecoveryBlocked_ProducesNoTravelAction()
     {
         var recovery = SessionRecoverySnapshot.Create(SessionId) with { IsAttachmentInvalid = true };
@@ -237,6 +247,7 @@ public sealed class EveLikeTravelAutopilotBehaviorPackTests
         SessionRecoverySnapshot? recoverySnapshot = null,
         RiskAssessmentResult? riskAssessment = null,
         bool policyPaused = false,
+        bool opaqueRoot = false,
         SessionOperationalMemorySnapshot? memorySnapshot = null,
         DateTimeOffset? now = null)
     {
@@ -244,7 +255,7 @@ public sealed class EveLikeTravelAutopilotBehaviorPackTests
         var definition = new SessionDefinition(SessionId, "Eve Travel", true, TimeSpan.FromSeconds(1), TimeSpan.Zero, 1, 3, TimeSpan.FromMilliseconds(100), ["test"]);
         var runtime = SessionRuntimeState.Create(definition, effectiveNow) with { CurrentStatus = SessionStatus.Running, DesiredStatus = SessionStatus.Running };
         var snapshot = new SessionSnapshot(definition, runtime, PendingWorkItems: 0);
-        var tree = CreateTree();
+        var tree = CreateTree(opaqueRoot);
         var package = CreatePackage(routeActive, destination, currentLocation, nextWaypoint, progressPercent);
         var semantic = new UiSemanticExtractionResult(
             SessionId,
@@ -302,9 +313,13 @@ public sealed class EveLikeTravelAutopilotBehaviorPackTests
         return new ResolvedDesktopTargetContext(SessionId, profile, binding, target, new Dictionary<string, string>());
     }
 
-    private static UiTree CreateTree() =>
+    private static UiTree CreateTree(bool opaqueRoot = false) =>
         new(
-            new UiSnapshotMetadata(SessionId.Value, "test", Now, 1, 1, "EVE", new Dictionary<string, string?>()),
+            new UiSnapshotMetadata(SessionId.Value, "test", Now, 1, 1, "EVE", new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                ["opaqueRoot"] = opaqueRoot.ToString(),
+                ["observabilityMode"] = opaqueRoot ? "RootOnly" : "ObservableTree"
+            }),
             Node("root", "Window", text: "EVE", children:
             [
                 Node("routePanel", "ListBox", name: "Route", attributes: [new UiAttribute("semanticRole", "route")], children:

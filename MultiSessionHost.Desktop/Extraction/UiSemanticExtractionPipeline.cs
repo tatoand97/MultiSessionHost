@@ -45,6 +45,11 @@ public sealed class UiSemanticExtractionPipeline : IUiSemanticExtractionPipeline
             warnings.AddRange(contribution.Warnings);
         }
 
+        if (TryBuildInsufficientObservabilityWarning(context, out var observabilityWarning))
+        {
+            warnings.Add(observabilityWarning);
+        }
+
         var genericResult = new UiSemanticExtractionResult(
             context.SessionId,
             context.Now,
@@ -204,5 +209,21 @@ public sealed class UiSemanticExtractionPipeline : IUiSemanticExtractionPipeline
         }
 
         return materialized.Max();
+    }
+
+    private static bool TryBuildInsufficientObservabilityWarning(UiSemanticExtractionContext context, out string warning)
+    {
+        warning = string.Empty;
+
+        var metadata = context.UiTree.Metadata.Properties;
+        if (!metadata.TryGetValue("opaqueRoot", out var opaqueRootValue) ||
+            !bool.TryParse(opaqueRootValue, out var opaqueRoot) ||
+            !opaqueRoot)
+        {
+            return false;
+        }
+
+        warning = "Native target is UIA root-only; semantic extraction is based on insufficient observable structure.";
+        return true;
     }
 }

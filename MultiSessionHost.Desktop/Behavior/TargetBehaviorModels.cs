@@ -24,7 +24,8 @@ public enum TargetBehaviorPlanningStateKind
     BlockedByPolicy = 8,
     BlockedByRecovery = 9,
     StaleSemanticState = 10,
-    RefreshRequired = 11
+    RefreshRequired = 11,
+    ObservabilityInsufficient = 12
 }
 
 public enum TravelAutopilotActionIntent

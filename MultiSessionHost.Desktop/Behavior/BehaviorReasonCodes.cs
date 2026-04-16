@@ -11,6 +11,7 @@ internal static class BehaviorReasonCodes
     public const string BlockedPolicy = "behavior.travel.blocked-policy";
     public const string BlockedRecovery = "behavior.travel.blocked-recovery";
     public const string BlockedRisk = "behavior.travel.blocked-risk";
+    public const string ObservabilityInsufficient = "behavior.observability.insufficient";
     public const string RefreshRequired = "behavior.travel.refresh-required";
     public const string PlanToggleAutopilot = "behavior.travel.plan-toggle-autopilot";
     public const string PlanSelectWaypoint = "behavior.travel.plan-next-waypoint";
