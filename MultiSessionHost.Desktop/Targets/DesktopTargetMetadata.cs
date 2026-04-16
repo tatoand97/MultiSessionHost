@@ -23,6 +23,12 @@ internal static class DesktopTargetMetadata
     public const string TemplatePreferredArtifactKinds = "TemplatePreferredArtifactKinds";
     public const string TemplateSet = "TemplateSet";
     public const string TemplateIncludeFullFrameFallback = "TemplateIncludeFullFrameFallback";
+    public const string ScreenTravelMinActionConfidence = "EveLike.ScreenTravelMinActionConfidence";
+    public const string ScreenTravelAllowRegionCenterFallback = "EveLike.ScreenTravelAllowRegionCenterFallback";
+    public const string ScreenTravelActionRegions = "EveLike.ScreenTravelActionRegions";
+    public const string ScreenTravelWaypointTerms = "EveLike.ScreenTravelWaypointTerms";
+    public const string ScreenTravelAutopilotToggleTerms = "EveLike.ScreenTravelAutopilotToggleTerms";
+    public const string ScreenTravelControlTerms = "EveLike.ScreenTravelControlTerms";
     public const string SemanticPackage = "SemanticPackage";
     public const string BehaviorPack = "BehaviorPack";
     public const string UiClickNodePathTemplate = "UiClickNodePathTemplate";

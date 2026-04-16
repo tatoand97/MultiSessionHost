@@ -191,6 +191,8 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<IUiNodeSelector, DefaultUiNodeSelector>();
         services.AddSingleton<IUiStateProjector, DefaultUiStateProjector>();
         services.AddSingleton<IUiActionResolver, DefaultUiActionResolver>();
+        services.AddSingleton<IScreenTravelInputDriver, WindowsScreenTravelInputDriver>();
+        services.AddSingleton<IScreenTravelCommandExecutor, ScreenTravelCommandExecutor>();
         services.AddSingleton<MultiSessionHost.Core.Interfaces.IUiCommandExecutor, UiCommandExecutor>();
         services.AddSingleton<NativeUiAutomationIdentityBuilder>();
         services.AddSingleton<INativeUiAutomationReader, WindowsUiAutomationReader>();

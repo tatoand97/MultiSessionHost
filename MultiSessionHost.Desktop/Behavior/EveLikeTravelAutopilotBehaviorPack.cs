@@ -30,7 +30,7 @@ public sealed class EveLikeTravelAutopilotBehaviorPack : ITargetBehaviorPack
 
     public string PackVersion => BehaviorPackVersion;
 
-    public ValueTask<TargetBehaviorPlanningResult> PlanAsync(TargetBehaviorPlanningContext context, CancellationToken cancellationToken)
+    public async ValueTask<TargetBehaviorPlanningResult> PlanAsync(TargetBehaviorPlanningContext context, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -45,7 +45,7 @@ public sealed class EveLikeTravelAutopilotBehaviorPack : ITargetBehaviorPack
         {
             reasonCodes.Add(BehaviorReasonCodes.NoBehaviorPack);
             reasonMessages.Add("The selected target behavior pack is unavailable because the EveLike semantic package did not produce output.");
-            return ValueTask.FromResult(BuildPlan(context, packageName: PackName, TargetBehaviorPlanningStateKind.StaleSemanticState, TravelAutopilotActionIntent.RefreshUi, null, null, memoryState, warnings, reasonCodes, reasonMessages));
+            return BuildPlan(context, packageName: PackName, TargetBehaviorPlanningStateKind.StaleSemanticState, TravelAutopilotActionIntent.RefreshUi, null, null, memoryState, warnings, reasonCodes, reasonMessages);
         }
 
         var route = package.TravelRoute;
@@ -65,14 +65,14 @@ public sealed class EveLikeTravelAutopilotBehaviorPack : ITargetBehaviorPack
         {
             reasonCodes.Add(BehaviorReasonCodes.BlockedPolicy);
             reasonMessages.Add(policyPaused ? "Policy control is paused; travel progression remains blocked." : "The current policy decision plan blocks travel progression.");
-            return ValueTask.FromResult(BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.BlockedByPolicy, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.BlockedPolicy }, warnings, reasonCodes, reasonMessages));
+            return BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.BlockedByPolicy, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.BlockedPolicy }, warnings, reasonCodes, reasonMessages);
         }
 
         if (recoveryBlocked)
         {
             reasonCodes.Add(BehaviorReasonCodes.BlockedRecovery);
             reasonMessages.Add("Recovery state is blocking travel progression.");
-            return ValueTask.FromResult(BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.BlockedByRecovery, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.BlockedRecovery }, warnings, reasonCodes, reasonMessages));
+            return BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.BlockedByRecovery, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.BlockedRecovery }, warnings, reasonCodes, reasonMessages);
         }
 
         if (observabilityInsufficient)
@@ -80,38 +80,38 @@ public sealed class EveLikeTravelAutopilotBehaviorPack : ITargetBehaviorPack
             reasonCodes.Add(BehaviorReasonCodes.ObservabilityInsufficient);
             reasonMessages.Add("Native target observability is insufficient (UIA root-only), so travel progression is blocked until a richer observation is available.");
             warnings.Add("Behavior planning paused because semantic state was derived from an opaque root-only native target.");
-            return ValueTask.FromResult(BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.ObservabilityInsufficient, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.ObservabilityInsufficient }, warnings, reasonCodes, reasonMessages));
+            return BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.ObservabilityInsufficient, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.ObservabilityInsufficient }, warnings, reasonCodes, reasonMessages);
         }
 
         if (isArrived)
         {
             reasonCodes.Add(BehaviorReasonCodes.Arrived);
             reasonMessages.Add("The route appears complete or the destination was reached.");
-            return ValueTask.FromResult(BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.Arrived, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastArrivalDetectedAtUtc = context.Now, LastOutcomeCode = BehaviorReasonCodes.Arrived }, warnings, reasonCodes, reasonMessages));
+            return BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.Arrived, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastArrivalDetectedAtUtc = context.Now, LastOutcomeCode = BehaviorReasonCodes.Arrived }, warnings, reasonCodes, reasonMessages);
         }
 
         if (!route.RouteActive && string.IsNullOrWhiteSpace(route.DestinationLabel) && string.IsNullOrWhiteSpace(route.NextWaypointLabel))
         {
             reasonCodes.Add(BehaviorReasonCodes.NoRoute);
             reasonMessages.Add("No active travel route was available.");
-            return ValueTask.FromResult(BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.NoRoute, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.NoRoute }, warnings, reasonCodes, reasonMessages));
+            return BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.NoRoute, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.NoRoute }, warnings, reasonCodes, reasonMessages);
         }
 
         if (riskBlocked)
         {
             reasonCodes.Add(BehaviorReasonCodes.BlockedRisk);
             reasonMessages.Add("Unsafe or high-threat context blocks travel progression.");
-            return ValueTask.FromResult(BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.BlockedByRisk, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.BlockedRisk }, warnings, reasonCodes, reasonMessages));
+            return BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.BlockedByRisk, TravelAutopilotActionIntent.None, null, null, memoryState with { RouteFingerprint = routeFingerprint, LastOutcomeCode = BehaviorReasonCodes.BlockedRisk }, warnings, reasonCodes, reasonMessages);
         }
 
         if (recoveryRequiresRefresh || context.SessionUiState?.ProjectedTree is null)
         {
             reasonCodes.Add(BehaviorReasonCodes.RefreshRequired);
             reasonMessages.Add("The snapshot is stale or the projected UI tree is unavailable; a refresh is required.");
-            var refreshSelection = _actionSelector.SelectAction(context, package, memoryState with { RouteFingerprint = routeFingerprint }, TravelAutopilotActionIntent.RefreshUi)
+            var refreshSelection = await _actionSelector.SelectActionAsync(context, package, memoryState with { RouteFingerprint = routeFingerprint }, TravelAutopilotActionIntent.RefreshUi, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException("Refresh UI selection could not be resolved.");
 
-            return ValueTask.FromResult(BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.RefreshRequired, TravelAutopilotActionIntent.RefreshUi, package, refreshSelection, memoryState with { RouteFingerprint = routeFingerprint, LastObservedProgressPercent = route.ProgressPercent, LastOutcomeCode = BehaviorReasonCodes.RefreshRequired }, warnings, reasonCodes, reasonMessages));
+            return BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.RefreshRequired, TravelAutopilotActionIntent.RefreshUi, package, refreshSelection, memoryState with { RouteFingerprint = routeFingerprint, LastObservedProgressPercent = route.ProgressPercent, LastOutcomeCode = BehaviorReasonCodes.RefreshRequired }, warnings, reasonCodes, reasonMessages);
         }
 
         if (transitionHints || (memoryState.LastActionAtUtc is not null && context.Now - memoryState.LastActionAtUtc.Value < TimeSpan.FromMilliseconds(_options.DecisionExecution.RepeatSuppressionWindowMs)))
@@ -139,7 +139,7 @@ public sealed class EveLikeTravelAutopilotBehaviorPack : ITargetBehaviorPack
                 reasonCodes,
                 reasonMessages);
 
-            return ValueTask.FromResult(waitPlan);
+            return waitPlan;
         }
 
         var actionIntent = route.RouteActive
@@ -148,12 +148,14 @@ public sealed class EveLikeTravelAutopilotBehaviorPack : ITargetBehaviorPack
                 : TravelAutopilotActionIntent.ToggleAutopilot
             : TravelAutopilotActionIntent.RefreshUi;
 
-        var actionSelection = _actionSelector.SelectAction(context, package, memoryState with { RouteFingerprint = routeFingerprint }, actionIntent);
+        var actionSelection = await _actionSelector.SelectActionAsync(context, package, memoryState with { RouteFingerprint = routeFingerprint }, actionIntent, cancellationToken).ConfigureAwait(false);
         if (actionSelection is null)
         {
             reasonCodes.Add(BehaviorReasonCodes.AwaitingProgress);
-            reasonMessages.Add("Travel is active but no progress action could be resolved from the projected UI tree.");
-            return ValueTask.FromResult(BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.AwaitingRouteProgress, TravelAutopilotActionIntent.None, package, null, memoryState with { RouteFingerprint = routeFingerprint, LastObservedProgressPercent = route.ProgressPercent, UnchangedRouteTickCount = memoryState.UnchangedRouteTickCount + 1, LastOutcomeCode = BehaviorReasonCodes.AwaitingProgress }, warnings, reasonCodes, reasonMessages));
+            reasonMessages.Add(context.TargetContext.Target.Kind == DesktopTargetKind.ScreenCaptureDesktop
+                ? "Travel is active but no progress action could be resolved from the latest screen evidence."
+                : "Travel is active but no progress action could be resolved from the projected UI tree.");
+            return BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.AwaitingRouteProgress, TravelAutopilotActionIntent.None, package, null, memoryState with { RouteFingerprint = routeFingerprint, LastObservedProgressPercent = route.ProgressPercent, UnchangedRouteTickCount = memoryState.UnchangedRouteTickCount + 1, LastOutcomeCode = BehaviorReasonCodes.AwaitingProgress }, warnings, reasonCodes, reasonMessages);
         }
 
         var suppressedForSpam = memoryState.RouteFingerprint is not null &&
@@ -166,12 +168,12 @@ public sealed class EveLikeTravelAutopilotBehaviorPack : ITargetBehaviorPack
         {
             reasonCodes.Add(BehaviorReasonCodes.AwaitingTransition);
             reasonMessages.Add("The same travel action was recently issued for the current route state, so it was suppressed.");
-            return ValueTask.FromResult(BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.AwaitingRouteProgress, TravelAutopilotActionIntent.None, package, null, memoryState with { RouteFingerprint = routeFingerprint, LastObservedProgressPercent = route.ProgressPercent, UnchangedRouteTickCount = memoryState.UnchangedRouteTickCount + 1, LastOutcomeCode = BehaviorReasonCodes.AwaitingTransition }, warnings, reasonCodes, reasonMessages));
+            return BuildPlan(context, PackName, TargetBehaviorPlanningStateKind.AwaitingRouteProgress, TravelAutopilotActionIntent.None, package, null, memoryState with { RouteFingerprint = routeFingerprint, LastObservedProgressPercent = route.ProgressPercent, UnchangedRouteTickCount = memoryState.UnchangedRouteTickCount + 1, LastOutcomeCode = BehaviorReasonCodes.AwaitingTransition }, warnings, reasonCodes, reasonMessages);
         }
 
         reasonCodes.Add(actionSelection.ReasonCode);
         reasonMessages.Add(actionSelection.Reason);
-        return ValueTask.FromResult(BuildPlan(context, PackName, route.RouteActive ? TargetBehaviorPlanningStateKind.RouteReady : TargetBehaviorPlanningStateKind.StaleSemanticState, actionSelection.Intent, package, actionSelection, memoryState with
+        return BuildPlan(context, PackName, route.RouteActive ? TargetBehaviorPlanningStateKind.RouteReady : TargetBehaviorPlanningStateKind.StaleSemanticState, actionSelection.Intent, package, actionSelection, memoryState with
         {
             RouteFingerprint = routeFingerprint,
             LastDestinationLabel = route.DestinationLabel,
@@ -182,7 +184,7 @@ public sealed class EveLikeTravelAutopilotBehaviorPack : ITargetBehaviorPack
             LastObservedProgressPercent = route.ProgressPercent,
             UnchangedRouteTickCount = routeChanged || progressChanged ? 0 : memoryState.UnchangedRouteTickCount + 1,
             LastOutcomeCode = actionSelection.ReasonCode
-        }, warnings, reasonCodes, reasonMessages));
+        }, warnings, reasonCodes, reasonMessages);
     }
 
     private TargetBehaviorPlanningResult BuildPlan(

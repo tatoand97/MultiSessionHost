@@ -75,6 +75,8 @@ public sealed class NavigateDirectiveHandler : IDecisionDirectiveHandler
             throw new InvalidOperationException($"Navigate directive '{directive.DirectiveId}' does not define a valid UI command kind.");
         }
 
+        var isScreenTravelCommand = directive.Metadata.ContainsKey("screenTravelIntent") || directive.Metadata.ContainsKey("screenActionKind");
+
         UiNodeId? nodeId = null;
         if (directive.Metadata.TryGetValue("uiNodeId", out var nodeIdValue) && !string.IsNullOrWhiteSpace(nodeIdValue))
         {
@@ -99,6 +101,11 @@ public sealed class NavigateDirectiveHandler : IDecisionDirectiveHandler
         return commandKind switch
         {
             UiCommandKind.RefreshUi => UiCommand.RefreshUi(sessionId, metadata: metadata),
+            UiCommandKind.ClickNode when isScreenTravelCommand => new UiCommand(sessionId, null, commandKind, actionName, textValue, boolValue, selectedValue, metadata),
+            UiCommandKind.InvokeNodeAction when isScreenTravelCommand => new UiCommand(sessionId, null, commandKind, actionName, textValue, boolValue, selectedValue, metadata),
+            UiCommandKind.SetText when isScreenTravelCommand => new UiCommand(sessionId, null, commandKind, actionName, textValue, boolValue, selectedValue, metadata),
+            UiCommandKind.SelectItem when isScreenTravelCommand => new UiCommand(sessionId, null, commandKind, actionName, textValue, boolValue, selectedValue, metadata),
+            UiCommandKind.ToggleNode when isScreenTravelCommand => new UiCommand(sessionId, null, commandKind, actionName, textValue, boolValue, selectedValue, metadata),
             UiCommandKind.ClickNode => UiCommand.ClickNode(sessionId, nodeId ?? throw new InvalidOperationException("Navigate directive is missing a node id."), metadata),
             UiCommandKind.InvokeNodeAction => UiCommand.InvokeNodeAction(sessionId, nodeId ?? throw new InvalidOperationException("Navigate directive is missing a node id."), actionName, metadata),
             UiCommandKind.SetText => UiCommand.SetText(sessionId, nodeId ?? throw new InvalidOperationException("Navigate directive is missing a node id."), textValue, metadata),

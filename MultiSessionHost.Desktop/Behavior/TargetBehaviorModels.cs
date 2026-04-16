@@ -180,7 +180,24 @@ public sealed record TravelAutopilotActionSelection(
     string ActionCode,
     string ReasonCode,
     string Reason,
-    IReadOnlyDictionary<string, string> Metadata);
+    IReadOnlyDictionary<string, string> Metadata,
+    ScreenTravelActionTarget? ScreenTarget = null);
+
+public sealed record ScreenActionAnchor(
+    string? SourceRegionName,
+    string? SourceArtifactName,
+    string? CandidateLabel,
+    UiBounds RelativeBounds,
+    long SourceSnapshotSequence,
+    double Confidence,
+    string EvidenceSource,
+    string Explanation,
+    IReadOnlyDictionary<string, string> Diagnostics);
+
+public sealed record ScreenTravelActionTarget(
+    TravelAutopilotActionIntent Intent,
+    string ActionKind,
+    ScreenActionAnchor Anchor);
 
 public sealed record TargetBehaviorPlanningState(
     string PackName,
@@ -234,11 +251,12 @@ public interface ITargetBehaviorPackResolver
 
 public interface ITravelAutopilotActionSelector
 {
-    TravelAutopilotActionSelection? SelectAction(
+    ValueTask<TravelAutopilotActionSelection?> SelectActionAsync(
         TargetBehaviorPlanningContext context,
         EveLikeSemanticPackageResult package,
         TravelAutopilotMemoryState memoryState,
-        TravelAutopilotActionIntent intent);
+        TravelAutopilotActionIntent intent,
+        CancellationToken cancellationToken);
 }
 
 public interface ITargetBehaviorPackPlanner

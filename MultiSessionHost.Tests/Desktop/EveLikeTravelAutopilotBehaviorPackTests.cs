@@ -2,6 +2,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Ocr;
+using MultiSessionHost.Desktop.Preprocessing;
+using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Extraction;
@@ -12,6 +15,7 @@ using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Snapshots;
+using MultiSessionHost.Desktop.Templates;
 using MultiSessionHost.Infrastructure.Queues;
 using MultiSessionHost.Infrastructure.Registry;
 using MultiSessionHost.Infrastructure.State;
@@ -27,7 +31,7 @@ public sealed class EveLikeTravelAutopilotBehaviorPackTests
     {
         var pack = CreatePack();
         var resolver = new DefaultTargetBehaviorPackResolver([pack]);
-        var context = CreateTargetContext(new Dictionary<string, string?> { ["BehaviorPack"] = EveLikeTravelAutopilotBehaviorPack.BehaviorPackName });
+        var context = CreateTargetContext(metadata: new Dictionary<string, string?> { ["BehaviorPack"] = EveLikeTravelAutopilotBehaviorPack.BehaviorPackName });
 
         var selection = resolver.ResolveSelection(context);
 
@@ -48,7 +52,7 @@ public sealed class EveLikeTravelAutopilotBehaviorPackTests
     public void Resolver_UnknownPackIsSafeToInspect()
     {
         var resolver = new DefaultTargetBehaviorPackResolver([]);
-        var context = CreateTargetContext(new Dictionary<string, string?> { ["BehaviorPack"] = "MissingPack" });
+        var context = CreateTargetContext(metadata: new Dictionary<string, string?> { ["BehaviorPack"] = "MissingPack" });
 
         var selection = resolver.ResolveSelection(context);
 
@@ -203,7 +207,7 @@ public sealed class EveLikeTravelAutopilotBehaviorPackTests
             registry,
             runtimeStore,
             queue,
-            new FixedTargetProfileResolver(CreateTargetContext(new Dictionary<string, string?> { ["BehaviorPack"] = EveLikeTravelAutopilotBehaviorPack.BehaviorPackName })),
+            new FixedTargetProfileResolver(CreateTargetContext(metadata: new Dictionary<string, string?> { ["BehaviorPack"] = EveLikeTravelAutopilotBehaviorPack.BehaviorPackName })),
             uiStore,
             domainStore,
             semanticStore,
@@ -228,6 +232,49 @@ public sealed class EveLikeTravelAutopilotBehaviorPackTests
         Assert.Contains(recorder.DecisionReasons, reason => reason.ReasonCode == "behavior.travel.plan-next-waypoint");
     }
 
+    [Fact]
+    public async Task ScreenCapture_SelectWaypoint_UsesOcrEvidenceAndEmitsScreenMetadata()
+    {
+        var selector = CreateScreenSelector();
+        var context = CreateScreenPlanningContext();
+
+        var selection = await selector.SelectActionAsync(context, context.SemanticExtraction!.Packages[0].EveLike!, TravelAutopilotMemoryState.Empty, TravelAutopilotActionIntent.SelectWaypoint, CancellationToken.None);
+
+        Assert.NotNull(selection);
+        Assert.Equal(TravelAutopilotActionIntent.SelectWaypoint, selection!.Intent);
+        Assert.Equal("ocr-line-click", selection.ScreenTarget!.ActionKind);
+        Assert.Equal("Perimeter", selection.Command.SelectedValue);
+        Assert.Equal("ocr", selection.Command.Metadata["screenEvidenceSource"]);
+        Assert.Equal("waypoint", selection.Command.Metadata["screenDiagnostic.matchType"]);
+        Assert.Contains("screenRelativeBounds", selection.Command.Metadata.Keys);
+    }
+
+    [Fact]
+    public async Task ScreenCapture_ToggleAutopilot_UsesTemplateEvidence()
+    {
+        var selector = CreateScreenSelector(includeAutopilotTemplate: true);
+        var context = CreateScreenPlanningContext();
+
+        var selection = await selector.SelectActionAsync(context, context.SemanticExtraction!.Packages[0].EveLike!, TravelAutopilotMemoryState.Empty, TravelAutopilotActionIntent.ToggleAutopilot, CancellationToken.None);
+
+        Assert.NotNull(selection);
+        Assert.Equal(TravelAutopilotActionIntent.ToggleAutopilot, selection!.Intent);
+        Assert.Equal("template-click", selection.ScreenTarget!.ActionKind);
+        Assert.Equal("template", selection.Command.Metadata["screenEvidenceSource"]);
+        Assert.Equal("ToggleNode", selection.Command.Metadata["uiCommandKind"]);
+    }
+
+    [Fact]
+    public async Task ScreenCapture_WeakEvidence_DoesNotProduceAction()
+    {
+        var selector = CreateScreenSelector(includeWaypointLine: false, includeAutopilotTemplate: false);
+        var context = CreateScreenPlanningContext();
+
+        var selection = await selector.SelectActionAsync(context, context.SemanticExtraction!.Packages[0].EveLike!, TravelAutopilotMemoryState.Empty, TravelAutopilotActionIntent.SelectWaypoint, CancellationToken.None);
+
+        Assert.Null(selection);
+    }
+
     private static readonly SessionId SessionId = new("eve-travel");
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-04-15T15:00:00Z");
 
@@ -235,6 +282,211 @@ public sealed class EveLikeTravelAutopilotBehaviorPackTests
         new(
             new SessionHostOptions { DecisionExecution = new DecisionExecutionOptions { RepeatSuppressionWindowMs = 1_000 } },
             new TravelAutopilotActionSelector(new DefaultUiTreeQueryService()));
+
+    private static ScreenTravelActionSelector CreateScreenSelector(bool includeWaypointLine = true, bool includeAutopilotTemplate = true)
+    {
+        var sessionId = SessionId;
+        var screenSnapshotStore = new InMemorySessionScreenSnapshotStore(new SessionHostOptions { ScreenSnapshots = new ScreenSnapshotStoreOptions { MaxHistoryEntriesPerSession = 5 } });
+        var preprocessingStore = new InMemorySessionFramePreprocessingStore();
+        var ocrStore = new InMemorySessionOcrExtractionStore();
+        var templateStore = new InMemorySessionTemplateDetectionStore();
+
+        var screenSnapshot = CreateScreenSnapshot(sessionId);
+        screenSnapshotStore.UpsertLatestAsync(sessionId, screenSnapshot, CancellationToken.None).GetAwaiter().GetResult();
+
+        var preprocessing = CreatePreprocessingResult(sessionId, screenSnapshot.Sequence);
+        preprocessingStore.UpsertLatestAsync(sessionId, preprocessing, CancellationToken.None).GetAwaiter().GetResult();
+
+        var ocr = CreateOcrResult(sessionId, screenSnapshot.Sequence, includeWaypointLine);
+        ocrStore.UpsertLatestAsync(sessionId, ocr, CancellationToken.None).GetAwaiter().GetResult();
+
+        var templates = CreateTemplateResult(sessionId, screenSnapshot.Sequence, includeAutopilotTemplate);
+        templateStore.UpsertLatestAsync(sessionId, templates, CancellationToken.None).GetAwaiter().GetResult();
+
+        return new ScreenTravelActionSelector(new InMemorySessionScreenRegionStoreWithLatest(CreateRegionResolution(sessionId, screenSnapshot.Sequence)), preprocessingStore, ocrStore, templateStore);
+    }
+
+    private static TargetBehaviorPlanningContext CreateScreenPlanningContext()
+    {
+        var now = Now;
+        var definition = new SessionDefinition(SessionId, "Eve Travel", true, TimeSpan.FromSeconds(1), TimeSpan.Zero, 1, 3, TimeSpan.FromMilliseconds(100), ["test"]);
+        var runtime = SessionRuntimeState.Create(definition, now) with { CurrentStatus = SessionStatus.Running, DesiredStatus = SessionStatus.Running };
+        var snapshot = new SessionSnapshot(definition, runtime, PendingWorkItems: 0);
+        var semantic = new UiSemanticExtractionResult(
+            SessionId,
+            now,
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [new TargetSemanticPackageResult(EveLikeSemanticPackage.SemanticPackageName, EveLikeSemanticPackage.SemanticPackageVersion, true, DetectionConfidence.High, [], new Dictionary<string, DetectionConfidence>(), null, CreatePackage(true, "Jita", "Amarr", "Perimeter", 40))],
+            [],
+            new Dictionary<string, DetectionConfidence>());
+
+        return new TargetBehaviorPlanningContext(
+            snapshot,
+            SessionUiState.Create(SessionId),
+            CreateDomainState(),
+            null,
+            semantic,
+            RiskAssessmentResult.Empty(SessionId, now),
+            SessionRecoverySnapshot.Create(SessionId),
+            SessionActivitySnapshot.CreateBootstrap(SessionId, now),
+            null,
+            SessionPolicyControlState.Create(SessionId),
+            CreateTargetContext(DesktopTargetKind.ScreenCaptureDesktop, new Dictionary<string, string?>
+            {
+                ["BehaviorPack"] = EveLikeTravelAutopilotBehaviorPack.BehaviorPackName,
+                ["SemanticPackage"] = EveLikeSemanticPackage.SemanticPackageName,
+                ["EveLike.ScreenTravelMinActionConfidence"] = "0.50"
+            }),
+            now);
+    }
+
+    private static SessionScreenSnapshot CreateScreenSnapshot(SessionId sessionId) =>
+        new(
+            sessionId,
+            Sequence: 7,
+            CapturedAtUtc: Now,
+            ProcessId: 1234,
+            ProcessName: "Eve",
+            WindowHandle: 999,
+            WindowTitle: "EVE",
+            new UiBounds(100, 200, 800, 600),
+            ImageWidth: 800,
+            ImageHeight: 600,
+            ImageFormat: "image/png",
+            PixelFormat: "Format32bppArgb",
+            ImageBytes: [1, 2, 3],
+            PayloadByteLength: 3,
+            DesktopTargetKind.ScreenCaptureDesktop,
+            "ScreenCapture",
+            "ScreenCapture",
+            "FakeCapture",
+            1.0d,
+            "LiveRefresh",
+            new Dictionary<string, string?>(StringComparer.Ordinal));
+
+    private static SessionFramePreprocessingResult CreatePreprocessingResult(SessionId sessionId, long sequence) =>
+        new(
+            sessionId,
+            Now,
+            sequence,
+            Now,
+            sequence,
+            Now,
+            DesktopTargetKind.ScreenCaptureDesktop,
+            "ScreenCapture",
+            "FakeCapture",
+            "DefaultFramePreprocessing",
+            1,
+            1,
+            0,
+            [new ProcessedFrameArtifact("region:window.right.threshold", "threshold", sequence, "window.right", 800, 600, "image/png", 3, ["crop"], [], [], new Dictionary<string, string?>(StringComparer.Ordinal), [1, 2, 3])],
+            [],
+            [],
+            new Dictionary<string, string?>(StringComparer.Ordinal));
+
+    private static SessionOcrExtractionResult CreateOcrResult(SessionId sessionId, long sequence, bool includeWaypointLine)
+    {
+        IReadOnlyList<OcrTextLine> lines = includeWaypointLine
+            ? [new OcrTextLine("Perimeter", "Perimeter", 0.97d, new UiBounds(40, 120, 160, 22), "region:window.right.threshold", "window.right")]
+            : Array.Empty<OcrTextLine>();
+
+        return new SessionOcrExtractionResult(
+            sessionId,
+            Now,
+            sequence,
+            Now,
+            sequence,
+            Now,
+            Now,
+            DesktopTargetKind.ScreenCaptureDesktop,
+            "ScreenCapture",
+            "FakeCapture",
+            "DefaultRegionOcr",
+            "FakeOcr",
+            "FakeBackend",
+            1,
+            lines.Count,
+            0,
+            [new OcrArtifactResult("region:window.right.threshold", "window.right", "threshold", ["crop"], string.Join(' ', lines.Select(line => line.Text)), string.Join(' ', lines.Select(line => line.NormalizedText)), 0.97d, lines.Count, lines.Count, "DefaultRegionAwareOcrSelectionV1", false, [], lines, [], [], new Dictionary<string, string?>(StringComparer.Ordinal))],
+            [],
+            [],
+            new Dictionary<string, string?>(StringComparer.Ordinal));
+    }
+
+    private static SessionTemplateDetectionResult CreateTemplateResult(SessionId sessionId, long sequence, bool includeAutopilotTemplate) =>
+        new(
+            sessionId,
+            Now,
+            sequence,
+            Now,
+            sequence,
+            Now,
+            Now,
+            Now,
+            DesktopTargetKind.ScreenCaptureDesktop,
+            "ScreenCapture",
+            "FakeCapture",
+            "DefaultTemplateDetection",
+            "DefaultTemplateSet",
+            "DeterministicTemplateMatcher",
+            "FakeBackend",
+            1,
+            1,
+            1,
+            0,
+            [new TemplateArtifactResult("region:window.right.threshold", "window.right", "threshold", "match", false, 1, includeAutopilotTemplate ? 1 : 0, includeAutopilotTemplate ? [new TemplateMatch("autopilot-toggle", "toggle", 0.96d, new UiBounds(200, 40, 100, 30), "region:window.right.threshold", "window.right", 0.96d, 0.90d, new Dictionary<string, string?>(StringComparer.Ordinal))] : [], [], [], new Dictionary<string, string?>(StringComparer.Ordinal))],
+            [],
+            [],
+            new Dictionary<string, string?>(StringComparer.Ordinal));
+
+    private static SessionScreenRegionResolution CreateRegionResolution(SessionId sessionId, long sequence) =>
+        new(
+            sessionId,
+            Now,
+            sequence,
+            Now,
+            DesktopTargetKind.ScreenCaptureDesktop,
+            "ScreenCapture",
+            "FakeCapture",
+            "screen-profile",
+            "DefaultDesktopGrid",
+            "DefaultDesktopGridRegionLocator",
+            "DefaultDesktopGridRegionLocator",
+            800,
+            600,
+            1,
+            1,
+            0,
+            [new ScreenRegionMatch("window.right", "panel", new UiBounds(0, 0, 200, 600), 0.95d, "DefaultDesktopGridRegionLocator", "Derived from layout", ScreenRegionMatchState.Matched, null, 800, 600, new Dictionary<string, string?>(StringComparer.Ordinal))],
+            [],
+            [],
+            new Dictionary<string, string?>(StringComparer.Ordinal));
+
+    private sealed class InMemorySessionScreenRegionStoreWithLatest : ISessionScreenRegionStore
+    {
+        private readonly SessionScreenRegionResolution _resolution;
+
+        public InMemorySessionScreenRegionStoreWithLatest(SessionScreenRegionResolution resolution)
+        {
+            _resolution = resolution;
+        }
+
+        public ValueTask<SessionScreenRegionResolution> UpsertLatestAsync(SessionId sessionId, SessionScreenRegionResolution resolution, CancellationToken cancellationToken) => ValueTask.FromResult(resolution);
+
+        public ValueTask<SessionScreenRegionResolution?> GetLatestAsync(SessionId sessionId, CancellationToken cancellationToken) => ValueTask.FromResult<SessionScreenRegionResolution?>(_resolution);
+
+        public ValueTask<IReadOnlyCollection<SessionScreenRegionResolution>> GetAllLatestAsync(CancellationToken cancellationToken) => ValueTask.FromResult<IReadOnlyCollection<SessionScreenRegionResolution>>([_resolution]);
+
+        public ValueTask<SessionScreenRegionSummary?> GetLatestSummaryAsync(SessionId sessionId, CancellationToken cancellationToken) => ValueTask.FromResult<SessionScreenRegionSummary?>(_resolution.ToSummary());
+
+        public ValueTask<IReadOnlyCollection<SessionScreenRegionSummary>> GetAllLatestSummariesAsync(CancellationToken cancellationToken) => ValueTask.FromResult<IReadOnlyCollection<SessionScreenRegionSummary>>([_resolution.ToSummary()]);
+    }
 
     private static TargetBehaviorPlanningContext CreatePlanningContext(
         bool routeActive = true,
@@ -282,7 +534,7 @@ public sealed class EveLikeTravelAutopilotBehaviorPackTests
             activitySnapshot ?? SessionActivitySnapshot.CreateBootstrap(SessionId, effectiveNow),
             memorySnapshot,
             SessionPolicyControlState.Create(SessionId) with { IsPolicyPaused = policyPaused },
-            CreateTargetContext(new Dictionary<string, string?> { ["BehaviorPack"] = EveLikeTravelAutopilotBehaviorPack.BehaviorPackName, ["SemanticPackage"] = EveLikeSemanticPackage.SemanticPackageName }),
+            CreateTargetContext(metadata: new Dictionary<string, string?> { ["BehaviorPack"] = EveLikeTravelAutopilotBehaviorPack.BehaviorPackName, ["SemanticPackage"] = EveLikeSemanticPackage.SemanticPackageName }),
             effectiveNow);
     }
 
@@ -305,9 +557,9 @@ public sealed class EveLikeTravelAutopilotBehaviorPackTests
             [],
             new Dictionary<string, DetectionConfidence>());
 
-    private static ResolvedDesktopTargetContext CreateTargetContext(IReadOnlyDictionary<string, string?>? metadata = null)
+    private static ResolvedDesktopTargetContext CreateTargetContext(DesktopTargetKind kind = DesktopTargetKind.WindowsUiAutomationDesktop, IReadOnlyDictionary<string, string?>? metadata = null)
     {
-        var profile = new DesktopTargetProfile("eve", DesktopTargetKind.WindowsUiAutomationDesktop, "EveExe", "EVE", null, null, DesktopSessionMatchingMode.WindowTitle, metadata ?? new Dictionary<string, string?>(), true, false);
+        var profile = new DesktopTargetProfile("eve", kind, "EveExe", "EVE", null, null, DesktopSessionMatchingMode.WindowTitle, metadata ?? new Dictionary<string, string?>(), true, false);
         var binding = new SessionTargetBinding(SessionId, profile.ProfileName, new Dictionary<string, string>(), Overrides: null);
         var target = new DesktopSessionTarget(SessionId, profile.ProfileName, profile.Kind, profile.MatchingMode, profile.ProcessName, profile.WindowTitleFragment, null, null, profile.Metadata);
         return new ResolvedDesktopTargetContext(SessionId, profile, binding, target, new Dictionary<string, string>());

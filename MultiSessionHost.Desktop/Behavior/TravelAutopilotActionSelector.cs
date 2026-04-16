@@ -1,6 +1,10 @@
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Extraction;
+using MultiSessionHost.Desktop.Ocr;
+using MultiSessionHost.Desktop.Preprocessing;
+using MultiSessionHost.Desktop.Regions;
+using MultiSessionHost.Desktop.Templates;
 using MultiSessionHost.UiModel.Extensions;
 using MultiSessionHost.UiModel.Models;
 
@@ -9,18 +13,42 @@ namespace MultiSessionHost.Desktop.Behavior;
 public sealed class TravelAutopilotActionSelector : ITravelAutopilotActionSelector
 {
     private readonly IUiTreeQueryService _query;
+    private readonly ScreenTravelActionSelector? _screenSelector;
 
     public TravelAutopilotActionSelector(IUiTreeQueryService query)
+        : this(query, null, null, null, null)
     {
-        _query = query;
     }
 
-    public TravelAutopilotActionSelection? SelectAction(
+    public TravelAutopilotActionSelector(
+        IUiTreeQueryService query,
+        ISessionScreenRegionStore? screenRegionStore,
+        ISessionFramePreprocessingStore? preprocessingStore,
+        ISessionOcrExtractionStore? ocrStore,
+        ISessionTemplateDetectionStore? templateStore)
+    {
+        _query = query;
+        _screenSelector = screenRegionStore is null || preprocessingStore is null || ocrStore is null || templateStore is null
+            ? null
+            : new ScreenTravelActionSelector(screenRegionStore, preprocessingStore, ocrStore, templateStore);
+    }
+
+    public async ValueTask<TravelAutopilotActionSelection?> SelectActionAsync(
         TargetBehaviorPlanningContext context,
         EveLikeSemanticPackageResult package,
         TravelAutopilotMemoryState memoryState,
-        TravelAutopilotActionIntent intent)
+        TravelAutopilotActionIntent intent,
+        CancellationToken cancellationToken)
     {
+        if (context.TargetContext.Target.Kind == DesktopTargetKind.ScreenCaptureDesktop && intent != TravelAutopilotActionIntent.RefreshUi && _screenSelector is not null)
+        {
+            var screenSelection = await _screenSelector.SelectActionAsync(context, package, memoryState, intent, cancellationToken).ConfigureAwait(false);
+            if (screenSelection is not null)
+            {
+                return screenSelection;
+            }
+        }
+
         var tree = context.SessionUiState?.ProjectedTree;
         if (tree is null)
         {
@@ -52,7 +80,8 @@ public sealed class TravelAutopilotActionSelector : ITravelAutopilotActionSelect
             BehaviorReasonCodes.RefreshRequired,
             BehaviorReasonCodes.RefreshRequired,
             "Travel planning needs a fresh UI snapshot.",
-            metadata);
+            metadata,
+            null);
     }
 
     private TravelAutopilotActionSelection? SelectToggleAutopilot(
@@ -89,7 +118,8 @@ public sealed class TravelAutopilotActionSelector : ITravelAutopilotActionSelect
             BehaviorReasonCodes.PlanToggleAutopilot,
             BehaviorReasonCodes.PlanToggleAutopilot,
             $"Selected autopilot control '{candidate.Id.Value}'.",
-            metadata);
+            metadata,
+            null);
     }
 
     private TravelAutopilotActionSelection? SelectWaypoint(
@@ -122,7 +152,8 @@ public sealed class TravelAutopilotActionSelector : ITravelAutopilotActionSelect
             BehaviorReasonCodes.PlanSelectWaypoint,
             BehaviorReasonCodes.PlanSelectWaypoint,
             $"Selected next waypoint '{nextWaypoint}' from route panel '{routePanel.Id.Value}'.",
-            metadata);
+            metadata,
+            null);
     }
 
     private TravelAutopilotActionSelection? SelectTravelControl(
@@ -156,7 +187,8 @@ public sealed class TravelAutopilotActionSelector : ITravelAutopilotActionSelect
             BehaviorReasonCodes.PlanProgressAction,
             BehaviorReasonCodes.PlanProgressAction,
             $"Selected travel control '{candidate.Id.Value}'.",
-            metadata);
+            metadata,
+            null);
     }
 
     private static UiCommand BuildCommand(

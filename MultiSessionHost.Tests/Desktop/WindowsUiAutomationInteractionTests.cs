@@ -228,6 +228,7 @@ public sealed class WindowsUiAutomationInteractionTests
             new MultiSessionHost.Desktop.Targets.DefaultExecutionResourceResolver(options, clock),
             refresh,
             new DefaultUiActionResolver(),
+            new NoOpScreenTravelCommandExecutor(),
             [CreateAdapter(root)],
             new RecordingObservabilityRecorder(),
             clock,
@@ -696,5 +697,11 @@ public sealed class WindowsUiAutomationInteractionTests
             AdapterErrors.Add(operation);
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class NoOpScreenTravelCommandExecutor : IScreenTravelCommandExecutor
+    {
+        public Task<UiInteractionResult> ExecuteAsync(ResolvedDesktopTargetContext context, DesktopSessionAttachment attachment, UiCommand command, CancellationToken cancellationToken) =>
+            Task.FromResult(UiInteractionResult.Failure("Screen travel execution should not be used in this UIA-only test.", UiCommandFailureCodes.InteractionFailed, DateTimeOffset.UtcNow));
     }
 }

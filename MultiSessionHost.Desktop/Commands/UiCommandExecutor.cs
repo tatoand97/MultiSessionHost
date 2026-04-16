@@ -18,6 +18,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
     private readonly IExecutionResourceResolver _executionResourceResolver;
     private readonly ISessionUiRefreshService _uiRefreshService;
     private readonly IUiActionResolver _actionResolver;
+    private readonly IScreenTravelCommandExecutor _screenTravelCommandExecutor;
     private readonly IReadOnlyDictionary<DesktopTargetKind, IUiInteractionAdapter> _interactionAdapters;
     private readonly IObservabilityRecorder _observabilityRecorder;
     private readonly IClock _clock;
@@ -31,6 +32,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
         IExecutionResourceResolver executionResourceResolver,
         ISessionUiRefreshService uiRefreshService,
         IUiActionResolver actionResolver,
+        IScreenTravelCommandExecutor screenTravelCommandExecutor,
         IEnumerable<IUiInteractionAdapter> interactionAdapters,
         IObservabilityRecorder observabilityRecorder,
         IClock clock,
@@ -43,6 +45,7 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
         _executionResourceResolver = executionResourceResolver;
         _uiRefreshService = uiRefreshService;
         _actionResolver = actionResolver;
+        _screenTravelCommandExecutor = screenTravelCommandExecutor;
         _observabilityRecorder = observabilityRecorder;
         _clock = clock;
         _logger = logger;
@@ -82,6 +85,28 @@ public sealed class UiCommandExecutor : IUiCommandExecutor
                 var refreshResult = await RefreshUiAsync(command, session, context, attachment, cancellationToken).ConfigureAwait(false);
                 await _observabilityRecorder.RecordCommandExecutionAsync(command, refreshResult, _clock.UtcNow - startedAt, context.Profile.ProfileName, nameof(UiCommandExecutor), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
                 return refreshResult;
+            }
+
+            if (context.Profile.Kind == DesktopTargetKind.ScreenCaptureDesktop && ScreenTravelCommandMetadata.TryParse(command.Metadata, out _, out _))
+            {
+                var screenTravelResult = await _screenTravelCommandExecutor.ExecuteAsync(context, attachment, command, cancellationToken).ConfigureAwait(false);
+                if (!screenTravelResult.Succeeded)
+                {
+                    var failure = UiCommandResult.Failure(
+                        command.SessionId,
+                        command.NodeId,
+                        command.Kind,
+                        screenTravelResult.Message,
+                        screenTravelResult.ExecutedAtUtc,
+                        screenTravelResult.FailureCode ?? UiCommandFailureCodes.InteractionFailed);
+
+                    await _observabilityRecorder.RecordCommandExecutionAsync(command, failure, _clock.UtcNow - startedAt, context.Profile.ProfileName, nameof(UiCommandExecutor), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+                    return failure;
+                }
+
+                var screenSuccess = await RefreshUiAfterSuccessAsync(command, session, context, attachment, UiInteractionResult.Success(screenTravelResult.Message, screenTravelResult.ExecutedAtUtc), cancellationToken).ConfigureAwait(false);
+                await _observabilityRecorder.RecordCommandExecutionAsync(command, screenSuccess, _clock.UtcNow - startedAt, context.Profile.ProfileName, nameof(UiCommandExecutor), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+                return screenSuccess;
             }
 
             var uiState = _sessionCoordinator.GetSessionUiState(command.SessionId);
