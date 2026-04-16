@@ -250,6 +250,28 @@ Metadata de target soportada para OCR:
 
 La salida se mantiene genérica (texto reconocido, texto normalizado, confianza y metadatos diagnósticos por artefacto) y no realiza interpretación semántica específica de EVE.
 
+### Template detection (Fase 9.3)
+
+Para targets `ScreenCaptureDesktop`, el refresh puede ejecutar una capa genérica de template matching/icon detection sobre artefactos ya preprocesados (no sobre snapshot raw directo). Esta capa consume el último `SessionFramePreprocessingResult`, aplica selección determinística de artefactos (priorizando región y tipos `threshold`, `high-contrast`, `grayscale`, `raw`), evalúa templates mediante un matcher pluggable y persiste el último resultado por sesión en un store dedicado.
+
+Endpoints administrativos:
+
+- `GET /sessions/{id}/templates`
+- `GET /sessions/{id}/templates/summary`
+- `GET /templates`
+- `GET /templates/summaries`
+
+Metadata de target soportada para template detection:
+
+- `EnableTemplateDetection`
+- `TemplateDetectionProfile`
+- `TemplateRegionSet`
+- `TemplatePreferredArtifactKinds`
+- `TemplateSet`
+- `TemplateIncludeFullFrameFallback`
+
+La salida se mantiene genérica (matches con `confidence`, `bounds`, score y diagnósticos por artefacto). Esta fase no traduce matches a semántica EVE-like ni ejecuta acciones sobre ellos.
+
 ### Paquetes semánticos por target
 
 La Fase 6.3 introduce una capa de paquetes semánticos target-specific sobre el pipeline genérico. La selección es determinística y sale de la metadata del perfil de target, usando la clave `SemanticPackage`. Si no hay paquete configurado, el pipeline genérico sigue funcionando sin cambios.

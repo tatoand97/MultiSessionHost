@@ -19,6 +19,7 @@ using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Preprocessing;
 using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
+using MultiSessionHost.Desktop.Templates;
 
 namespace MultiSessionHost.AdminApi.Mapping;
 
@@ -383,6 +384,97 @@ public static class DtoMappingExtensions
             summary.OcrEngineName,
             summary.OcrEngineBackend,
             summary.TotalArtifactCount,
+            summary.SuccessfulArtifactCount,
+            summary.FailedArtifactCount,
+            summary.Artifacts.Select(static artifact => artifact.ToDto()).ToArray(),
+            summary.Warnings,
+            summary.Errors,
+            summary.Metadata);
+
+    public static TemplateMatchDto ToDto(this TemplateMatch match) =>
+        new(
+            match.TemplateName,
+            match.TemplateKind,
+            match.Confidence,
+            match.Bounds,
+            match.SourceArtifactName,
+            match.SourceRegionName,
+            match.MatchScore,
+            match.Threshold,
+            match.Metadata);
+
+    public static TemplateArtifactResultDto ToDto(this TemplateArtifactResult artifact) =>
+        new(
+            artifact.ArtifactName,
+            artifact.SourceRegionName,
+            artifact.SourceArtifactKind,
+            artifact.SelectionStrategy,
+            artifact.UsedFullFrameFallback,
+            artifact.EvaluatedTemplateCount,
+            artifact.MatchedTemplateCount,
+            artifact.Matches.Select(static match => match.ToDto()).ToArray(),
+            artifact.Warnings,
+            artifact.Errors,
+            artifact.Metadata);
+
+    public static TemplateArtifactResultSummaryDto ToDto(this TemplateArtifactResultSummary artifact) =>
+        new(
+            artifact.ArtifactName,
+            artifact.SourceRegionName,
+            artifact.SourceArtifactKind,
+            artifact.SelectionStrategy,
+            artifact.UsedFullFrameFallback,
+            artifact.EvaluatedTemplateCount,
+            artifact.MatchedTemplateCount,
+            artifact.Warnings,
+            artifact.Errors,
+            artifact.Metadata);
+
+    public static SessionTemplateDetectionResultDto ToDto(this SessionTemplateDetectionResult result) =>
+        new(
+            result.SessionId.Value,
+            result.DetectedAtUtc,
+            result.SourceSnapshotSequence,
+            result.SourceSnapshotCapturedAtUtc,
+            result.SourceRegionResolutionSequence,
+            result.SourceRegionResolutionResolvedAtUtc,
+            result.SourcePreprocessingProcessedAtUtc,
+            result.SourceOcrExtractedAtUtc,
+            result.TargetKind.ToString(),
+            result.ObservabilityBackend,
+            result.CaptureBackend,
+            result.DetectionProfileName,
+            result.TemplateSetName,
+            result.MatcherName,
+            result.MatcherBackend,
+            result.TotalArtifactCount,
+            result.TotalTemplatesEvaluated,
+            result.SuccessfulArtifactCount,
+            result.FailedArtifactCount,
+            result.Artifacts.Select(static artifact => artifact.ToDto()).ToArray(),
+            result.Warnings,
+            result.Errors,
+            result.Metadata);
+
+    public static SessionTemplateDetectionSummaryDto ToDto(this SessionTemplateDetectionSummary summary) =>
+        new(
+            summary.SessionId.Value,
+            summary.DetectedAtUtc,
+            summary.SourceSnapshotSequence,
+            summary.SourceSnapshotCapturedAtUtc,
+            summary.SourceRegionResolutionSequence,
+            summary.SourceRegionResolutionResolvedAtUtc,
+            summary.SourcePreprocessingProcessedAtUtc,
+            summary.SourceOcrExtractedAtUtc,
+            summary.TargetKind.ToString(),
+            summary.ObservabilityBackend,
+            summary.CaptureBackend,
+            summary.DetectionProfileName,
+            summary.TemplateSetName,
+            summary.MatcherName,
+            summary.MatcherBackend,
+            summary.TotalArtifactCount,
+            summary.TotalTemplatesEvaluated,
             summary.SuccessfulArtifactCount,
             summary.FailedArtifactCount,
             summary.Artifacts.Select(static artifact => artifact.ToDto()).ToArray(),

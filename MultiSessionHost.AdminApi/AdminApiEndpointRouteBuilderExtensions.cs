@@ -23,6 +23,7 @@ using MultiSessionHost.Desktop.Ocr;
 using MultiSessionHost.Desktop.Preprocessing;
 using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
+using MultiSessionHost.Desktop.Templates;
 using MultiSessionHost.UiModel.Models;
 
 namespace MultiSessionHost.AdminApi;
@@ -640,6 +641,98 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 }
 
                 var summaries = await ocrStore.GetAllLatestSummariesAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(summaries.Select(static summary => summary.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/templates",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionTemplateDetectionStore templateStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var result = await templateStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return result is null ? Results.NotFound() : Results.Ok(result.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/templates/summary",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionTemplateDetectionStore templateStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var summary = await templateStore.GetLatestSummaryAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return summary is null ? Results.NotFound() : Results.Ok(summary.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/templates",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionTemplateDetectionStore templateStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var results = await templateStore.GetAllLatestAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(results.Select(static result => result.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/templates/summaries",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionTemplateDetectionStore templateStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var summaries = await templateStore.GetAllLatestSummariesAsync(cancellationToken).ConfigureAwait(false);
                 return Results.Ok(summaries.Select(static summary => summary.ToDto()).ToArray());
             });
 

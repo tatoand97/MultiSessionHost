@@ -17,6 +17,12 @@ internal static class DesktopTargetMetadata
     public const string OcrRegionSet = "OcrRegionSet";
     public const string OcrPreferredArtifactKinds = "OcrPreferredArtifactKinds";
     public const string OcrIncludeFullFrameFallback = "OcrIncludeFullFrameFallback";
+    public const string EnableTemplateDetection = "EnableTemplateDetection";
+    public const string TemplateDetectionProfile = "TemplateDetectionProfile";
+    public const string TemplateRegionSet = "TemplateRegionSet";
+    public const string TemplatePreferredArtifactKinds = "TemplatePreferredArtifactKinds";
+    public const string TemplateSet = "TemplateSet";
+    public const string TemplateIncludeFullFrameFallback = "TemplateIncludeFullFrameFallback";
     public const string SemanticPackage = "SemanticPackage";
     public const string BehaviorPack = "BehaviorPack";
     public const string UiClickNodePathTemplate = "UiClickNodePathTemplate";

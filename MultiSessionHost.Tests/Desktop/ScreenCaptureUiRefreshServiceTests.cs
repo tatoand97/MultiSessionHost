@@ -10,6 +10,7 @@ using MultiSessionHost.Desktop.Ocr;
 using MultiSessionHost.Desktop.Preprocessing;
 using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
+using MultiSessionHost.Desktop.Templates;
 using MultiSessionHost.Infrastructure.DependencyInjection;
 using MultiSessionHost.Tests.Common;
 using MultiSessionHost.UiModel.Models;
@@ -332,6 +333,111 @@ public sealed class ScreenCaptureUiRefreshServiceTests
         Assert.Equal(1, preprocessing!.SourceSnapshotSequence);
     }
 
+    [Fact]
+    public async Task RefreshAsync_StoresLatestTemplateDetectionResult_ForScreenCaptureTargets()
+    {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var options = CreateOptions();
+        options.DesktopTargets[0].Metadata["EnableTemplateDetection"] = true.ToString();
+        var process = new DesktopProcessInfo(321, "ScreenApp", null, 456);
+        var window = new DesktopWindowInfo(456, 321, "Screen Fixture", true);
+        var capture = new WindowFrameCaptureResult(
+            new UiBounds(50, 60, 800, 600),
+            800,
+            600,
+            "image/png",
+            "Format32bppArgb",
+            [10, 20, 30],
+            "FakeCapture");
+
+        var services = new ServiceCollection();
+        services.AddSingleton(options);
+        services.AddMultiSessionHostRuntime();
+        services.AddSingleton<IClock>(clock);
+        services.AddSingleton<IProcessLocator>(new StubProcessLocator(process));
+        services.AddSingleton<IWindowLocator>(new StubWindowLocator(window));
+        services.AddSingleton<IWindowFrameCapture>(new StubWindowFrameCapture(capture));
+        await using var provider = services.BuildServiceProvider();
+
+        var coordinator = provider.GetRequiredService<ISessionCoordinator>();
+        await coordinator.InitializeAsync(CancellationToken.None);
+
+        var sessionId = new SessionId("alpha");
+        var snapshot = coordinator.GetSession(sessionId)!;
+        var context = provider.GetRequiredService<IDesktopTargetProfileResolver>().Resolve(snapshot);
+        var attachment = new DesktopSessionAttachment(sessionId, context.Target, process, window, null, clock.UtcNow);
+        var refreshService = provider.GetRequiredService<ISessionUiRefreshService>();
+        var templateStore = provider.GetRequiredService<ISessionTemplateDetectionStore>();
+
+        _ = await refreshService.RefreshAsync(snapshot, context, attachment, CancellationToken.None);
+        var detection = await templateStore.GetLatestAsync(sessionId, CancellationToken.None);
+        var summary = await templateStore.GetLatestSummaryAsync(sessionId, CancellationToken.None);
+
+        Assert.NotNull(detection);
+        Assert.NotNull(summary);
+        Assert.Equal("DefaultRegionTemplateDetection", detection!.DetectionProfileName);
+        Assert.False(string.IsNullOrWhiteSpace(detection.MatcherName));
+        Assert.Equal(detection.SourceSnapshotSequence, summary!.SourceSnapshotSequence);
+        Assert.Equal(detection.TotalArtifactCount, summary.TotalArtifactCount);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_TemplateDetectionFailure_DoesNotCorruptSnapshotRegionPreprocessingOrOcrState()
+    {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var options = CreateOptions();
+        options.DesktopTargets[0].Metadata["EnableTemplateDetection"] = true.ToString();
+        var process = new DesktopProcessInfo(321, "ScreenApp", null, 456);
+        var window = new DesktopWindowInfo(456, 321, "Screen Fixture", true);
+        var capture = new WindowFrameCaptureResult(
+            new UiBounds(50, 60, 800, 600),
+            800,
+            600,
+            "image/png",
+            "Format32bppArgb",
+            [10, 20, 30],
+            "FakeCapture");
+
+        var services = new ServiceCollection();
+        services.AddSingleton(options);
+        services.AddMultiSessionHostRuntime();
+        services.AddSingleton<IClock>(clock);
+        services.AddSingleton<IProcessLocator>(new StubProcessLocator(process));
+        services.AddSingleton<IWindowLocator>(new StubWindowLocator(window));
+        services.AddSingleton<IWindowFrameCapture>(new StubWindowFrameCapture(capture));
+        services.AddSingleton<ITemplateDetectionService, ThrowingTemplateDetectionService>();
+        await using var provider = services.BuildServiceProvider();
+
+        var coordinator = provider.GetRequiredService<ISessionCoordinator>();
+        await coordinator.InitializeAsync(CancellationToken.None);
+
+        var sessionId = new SessionId("alpha");
+        var snapshot = coordinator.GetSession(sessionId)!;
+        var context = provider.GetRequiredService<IDesktopTargetProfileResolver>().Resolve(snapshot);
+        var attachment = new DesktopSessionAttachment(sessionId, context.Target, process, window, null, clock.UtcNow);
+        var refreshService = provider.GetRequiredService<ISessionUiRefreshService>();
+        var snapshotStore = provider.GetRequiredService<ISessionScreenSnapshotStore>();
+        var regionStore = provider.GetRequiredService<ISessionScreenRegionStore>();
+        var preprocessingStore = provider.GetRequiredService<ISessionFramePreprocessingStore>();
+        var ocrStore = provider.GetRequiredService<ISessionOcrExtractionStore>();
+
+        var state = await refreshService.RefreshAsync(snapshot, context, attachment, CancellationToken.None);
+        var storedSnapshot = await snapshotStore.GetLatestAsync(sessionId, CancellationToken.None);
+        var regionResolution = await regionStore.GetLatestAsync(sessionId, CancellationToken.None);
+        var preprocessing = await preprocessingStore.GetLatestAsync(sessionId, CancellationToken.None);
+        var ocr = await ocrStore.GetLatestAsync(sessionId, CancellationToken.None);
+
+        Assert.NotNull(state.LastRefreshCompletedAtUtc);
+        Assert.NotNull(storedSnapshot);
+        Assert.NotNull(regionResolution);
+        Assert.NotNull(preprocessing);
+        Assert.NotNull(ocr);
+        Assert.Equal(1, storedSnapshot!.Sequence);
+        Assert.Equal(1, regionResolution!.SourceSnapshotSequence);
+        Assert.Equal(1, preprocessing!.SourceSnapshotSequence);
+        Assert.Equal(1, ocr!.SourceSnapshotSequence);
+    }
+
 
     private static SessionHostOptions CreateOptions() =>
         new()
@@ -450,5 +556,11 @@ public sealed class ScreenCaptureUiRefreshServiceTests
     {
         public ValueTask<SessionOcrExtractionResult?> ExtractLatestAsync(SessionId sessionId, ResolvedDesktopTargetContext context, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("OCR extraction failed deterministically.");
+    }
+
+    private sealed class ThrowingTemplateDetectionService : ITemplateDetectionService
+    {
+        public ValueTask<SessionTemplateDetectionResult?> DetectLatestAsync(SessionId sessionId, ResolvedDesktopTargetContext context, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Template detection failed deterministically.");
     }
 }

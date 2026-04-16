@@ -19,6 +19,7 @@ using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Regions;
+using MultiSessionHost.Desktop.Templates;
 using MultiSessionHost.Desktop.Targets;
 using MultiSessionHost.UiModel.Interfaces;
 using MultiSessionHost.UiModel.Models;
@@ -55,6 +56,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly IScreenRegionResolutionService _screenRegionResolutionService;
     private readonly IFramePreprocessingService _framePreprocessingService;
     private readonly IOcrExtractionService _ocrExtractionService;
+    private readonly ITemplateDetectionService _templateDetectionService;
     private readonly IObservabilityRecorder _observabilityRecorder;
     private readonly IServiceProvider _serviceProvider;
     private readonly IClock _clock;
@@ -87,6 +89,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         IScreenRegionResolutionService screenRegionResolutionService,
         IFramePreprocessingService framePreprocessingService,
         IOcrExtractionService ocrExtractionService,
+        ITemplateDetectionService templateDetectionService,
         IObservabilityRecorder observabilityRecorder,
         IServiceProvider serviceProvider,
         IClock clock,
@@ -118,6 +121,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _screenRegionResolutionService = screenRegionResolutionService;
         _framePreprocessingService = framePreprocessingService;
         _ocrExtractionService = ocrExtractionService;
+        _templateDetectionService = templateDetectionService;
         _observabilityRecorder = observabilityRecorder;
         _serviceProvider = serviceProvider;
         _clock = clock;
@@ -196,6 +200,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 await _screenRegionResolutionService.ResolveLatestAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
                 await RunFramePreprocessingIfNeededAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
                 await RunOcrIfNeededAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
+                await RunTemplateDetectionIfNeededAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
             }
 
             return updatedUiState;
@@ -291,6 +296,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     await _screenRegionResolutionService.ResolveLatestAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
                     await RunFramePreprocessingIfNeededAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
                     await RunOcrIfNeededAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
+                    await RunTemplateDetectionIfNeededAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
                 }
             }
             else
@@ -671,6 +677,42 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         catch (Exception exception)
         {
             _logger.LogError(exception, "OCR extraction failed for session '{SessionId}' but UI refresh will continue.", sessionId);
+        }
+    }
+
+    private async ValueTask RunTemplateDetectionIfNeededAsync(
+        SessionId sessionId,
+        ResolvedDesktopTargetContext context,
+        CancellationToken cancellationToken)
+    {
+        if (context.Target.Kind != DesktopTargetKind.ScreenCaptureDesktop)
+        {
+            return;
+        }
+
+        var templateDetectionEnabled = context.Target.Metadata.TryGetValue(DesktopTargetMetadata.EnableTemplateDetection, out var rawValue)
+            && string.Equals(rawValue, bool.TrueString, StringComparison.OrdinalIgnoreCase);
+
+        if (!templateDetectionEnabled)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = await _templateDetectionService.DetectLatestAsync(sessionId, context, cancellationToken).ConfigureAwait(false);
+
+            if (result is not null && result.FailedArtifactCount > 0)
+            {
+                _logger.LogWarning(
+                    "Template detection completed with failures for session '{SessionId}'. Failed artifacts: {FailedArtifactCount}.",
+                    sessionId,
+                    result.FailedArtifactCount);
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Template detection failed for session '{SessionId}' but UI refresh will continue.", sessionId);
         }
     }
 

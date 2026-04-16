@@ -23,6 +23,7 @@ using MultiSessionHost.Desktop.Processes;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
+using MultiSessionHost.Desktop.Templates;
 using MultiSessionHost.Desktop.Targets;
 using MultiSessionHost.Desktop.Windows;
 using MultiSessionHost.UiModel.Interfaces;
@@ -78,6 +79,10 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionOcrExtractionStore, InMemorySessionOcrExtractionStore>();
         services.AddSingleton<IOcrEngine, NoOpOcrEngine>();
         services.AddSingleton<IOcrExtractionService, DefaultOcrExtractionService>();
+        services.AddSingleton<ISessionTemplateDetectionStore, InMemorySessionTemplateDetectionStore>();
+        services.AddSingleton<ITemplateMatcher, DeterministicTemplateMatcher>();
+        services.AddSingleton<IVisualTemplateRegistry, DefaultVisualTemplateRegistry>();
+        services.AddSingleton<ITemplateDetectionService, DefaultTemplateDetectionService>();
         services.AddSingleton<IObservabilityRecorder, DefaultObservabilityRecorder>();
         services.AddSingleton<IUiSnapshotSerializer, JsonUiSnapshotSerializer>();
         services.AddSingleton<IUiSnapshotProvider, SelfHostedHttpUiSnapshotProvider>();

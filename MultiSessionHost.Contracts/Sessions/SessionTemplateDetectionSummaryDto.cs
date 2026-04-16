@@ -1,0 +1,26 @@
+namespace MultiSessionHost.Contracts.Sessions;
+
+public sealed record SessionTemplateDetectionSummaryDto(
+    string SessionId,
+    DateTimeOffset DetectedAtUtc,
+    long SourceSnapshotSequence,
+    DateTimeOffset SourceSnapshotCapturedAtUtc,
+    long? SourceRegionResolutionSequence,
+    DateTimeOffset? SourceRegionResolutionResolvedAtUtc,
+    DateTimeOffset? SourcePreprocessingProcessedAtUtc,
+    DateTimeOffset? SourceOcrExtractedAtUtc,
+    string TargetKind,
+    string ObservabilityBackend,
+    string? CaptureBackend,
+    string DetectionProfileName,
+    string TemplateSetName,
+    string MatcherName,
+    string MatcherBackend,
+    int TotalArtifactCount,
+    int TotalTemplatesEvaluated,
+    int SuccessfulArtifactCount,
+    int FailedArtifactCount,
+    IReadOnlyList<TemplateArtifactResultSummaryDto> Artifacts,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<string> Errors,
+    IReadOnlyDictionary<string, string?> Metadata);
