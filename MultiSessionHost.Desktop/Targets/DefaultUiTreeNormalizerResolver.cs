@@ -10,13 +10,16 @@ public sealed class DefaultUiTreeNormalizerResolver : IUiTreeNormalizerResolver
 {
     private readonly SelfHostedHttpUiTreeNormalizer _selfHostedHttpUiTreeNormalizer;
     private readonly TestAppUiTreeNormalizer _testAppUiTreeNormalizer;
+    private readonly WindowsUiAutomationUiTreeNormalizer _windowsUiAutomationUiTreeNormalizer;
 
     public DefaultUiTreeNormalizerResolver(
         SelfHostedHttpUiTreeNormalizer selfHostedHttpUiTreeNormalizer,
-        TestAppUiTreeNormalizer testAppUiTreeNormalizer)
+        TestAppUiTreeNormalizer testAppUiTreeNormalizer,
+        WindowsUiAutomationUiTreeNormalizer windowsUiAutomationUiTreeNormalizer)
     {
         _selfHostedHttpUiTreeNormalizer = selfHostedHttpUiTreeNormalizer;
         _testAppUiTreeNormalizer = testAppUiTreeNormalizer;
+        _windowsUiAutomationUiTreeNormalizer = windowsUiAutomationUiTreeNormalizer;
     }
 
     public IUiTreeNormalizer Resolve(ResolvedDesktopTargetContext context) =>
@@ -24,6 +27,7 @@ public sealed class DefaultUiTreeNormalizerResolver : IUiTreeNormalizerResolver
         {
             DesktopTargetKind.SelfHostedHttpDesktop => _selfHostedHttpUiTreeNormalizer,
             DesktopTargetKind.DesktopTestApp => _testAppUiTreeNormalizer,
+            DesktopTargetKind.WindowsUiAutomationDesktop => _windowsUiAutomationUiTreeNormalizer,
             _ => throw new InvalidOperationException($"Desktop target kind '{context.Profile.Kind}' is not supported.")
         };
 }

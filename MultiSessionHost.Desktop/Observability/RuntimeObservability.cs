@@ -49,4 +49,10 @@ public static class RuntimeObservability
     public static readonly Histogram<double> PersistenceRehydrateDuration = Meter.CreateHistogram<double>("persistence.rehydrate.duration.ms");
     public static readonly Histogram<double> AttachmentResolveDuration = Meter.CreateHistogram<double>("attachment.resolve.duration.ms");
     public static readonly Histogram<double> AttachmentRefreshDuration = Meter.CreateHistogram<double>("attachment.refresh.duration.ms");
+    public static readonly Counter<long> NativeAttachTotal = Meter.CreateCounter<long>("native_attach_total");
+    public static readonly Counter<long> NativeAttachFailureTotal = Meter.CreateCounter<long>("native_attach_failure_total");
+    public static readonly Counter<long> NativeCaptureTotal = Meter.CreateCounter<long>("native_capture_total");
+    public static readonly Counter<long> NativeCaptureFailureTotal = Meter.CreateCounter<long>("native_capture_failure_total");
+    public static readonly Histogram<double> NativeCaptureDuration = Meter.CreateHistogram<double>("native_capture_duration_ms");
+    public static readonly Counter<long> NativeIdentityFallbackTotal = Meter.CreateCounter<long>("native_identity_fallback_total");
 }

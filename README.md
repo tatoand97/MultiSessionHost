@@ -640,6 +640,139 @@ Métricas nuevas:
 - `recovery.reattach.duration.ms`
 - conteos de historiales persistidos.
 
+## Fase 6.1: adapter real de escritorio Windows
+
+Fase 6.1 agrega el primer target no cooperativo: `WindowsUiAutomationDesktop`. El runtime sigue siendo Worker-first, genérico y basado en `IDesktopTargetAdapter`; no se agregan endpoints HTTP al target, no se reconstruye AdminDesktop y no se reemplazan observabilidad, recovery ni el pipeline de refresh.
+
+### Target kind
+
+`DesktopTargetKind.WindowsUiAutomationDesktop` representa un target Windows inspeccionado con UI Automation. Usa las mismas piezas de binding existentes:
+
+- `ProcessName`
+- `WindowTitleFragment`
+- `CommandLineFragmentTemplate`
+- `MatchingMode`
+- `Metadata`
+- `SupportsUiSnapshots=true`
+- `SupportsStateEndpoint=false`
+
+No requiere `BaseAddressTemplate`, porque la captura no llama endpoints cooperativos.
+
+Ejemplo:
+
+```json
+{
+  "ProfileName": "native-notepad",
+  "Kind": "WindowsUiAutomationDesktop",
+  "ProcessName": "notepad",
+  "WindowTitleFragment": "Untitled",
+  "MatchingMode": "WindowTitle",
+  "SupportsUiSnapshots": true,
+  "SupportsStateEndpoint": false,
+  "Metadata": {
+    "UiSource": "WindowsUiAutomation",
+    "NativeUiAutomation.MaxDepth": "8",
+    "NativeUiAutomation.MaxChildrenPerNode": "200",
+    "NativeUiAutomation.IncludeOffscreenNodes": "false",
+    "NativeUiAutomation.TreeView": "Control"
+  }
+}
+```
+
+Metadata soportada por el capturador inicial:
+
+- `NativeUiAutomation.MaxDepth`: profundidad maxima de arbol.
+- `NativeUiAutomation.MaxChildrenPerNode`: limite de hijos por nodo.
+- `NativeUiAutomation.IncludeOffscreenNodes`: incluye nodos offscreen si es `true`.
+- `NativeUiAutomation.TreeView`: `Control` por defecto, o `Raw`.
+- `NativeUiAutomation.AllowedFrameworkIds`: lista separada por comas para filtrar frameworks UIA.
+
+### Attachment no cooperativo
+
+`DefaultSessionAttachmentResolver` sigue resolviendo proceso y ventana con `Win32ProcessLocator`, `Win32WindowLocator` y `DefaultDesktopTargetMatcher`. El nuevo `WindowsUiAutomationDesktopTargetAdapter` valida que:
+
+- el kind del target sea `WindowsUiAutomationDesktop`;
+- el proceso adjunto siga vivo;
+- la ventana adjunta siga existiendo;
+- la ventana siga perteneciendo al proceso esperado;
+- la ventana siga visible.
+
+`AttachAsync` y `ValidateAttachmentAsync` no dependen de `BaseAddress` ni de `/state`. `DetachAsync` no persiste handles nativos ni deja recursos durables.
+
+### Ingestion UIA
+
+La captura vive en `MultiSessionHost.Desktop/Automation`:
+
+- `INativeUiAutomationReader`
+- `WindowsUiAutomationReader`
+- `NativeUiAutomationCaptureOptions`
+- `NativeUiAutomationIdentityBuilder`
+
+El reader parte desde `AutomationElement.FromHandle(windowHandle)`, recorre `ControlView` o `RawView`, aplica limites de profundidad/hijos/filtros y produce un raw tree serializable dentro de `UiSnapshotEnvelope.Root`. El envelope conserva los campos existentes: `SessionId`, `CapturedAtUtc`, `Process`, `Window`, `Root` y `Metadata`.
+
+El raw snapshot incluye role/control type, name, automation id, runtime id, framework id, class name, enabled/offscreen/focus/selection, value/range/toggle cuando existe, bounds como metadata debil e identidad calculada.
+
+### Normalizacion e identidad
+
+`WindowsUiAutomationUiTreeNormalizer` mapea el raw tree nativo al `UiTree` generico existente:
+
+- `Role` viene del `ControlType`.
+- `Name` y `Text` vienen de `Name`/`Value`.
+- `Visible` se calcula como `!IsOffscreen`.
+- `Enabled`, `Selected` y focus se preservan como estado/attributes.
+- automation id, runtime id, framework id, class name, localized control type y process/native window metadata quedan en `UiAttribute`.
+
+Los node ids se generan antes de normalizar:
+
+- fuerte por `AutomationId + ancestor`;
+- fuerte por `RuntimeId + ancestor`;
+- compuesto por atributos semanticos, ancestor y ocurrencia;
+- fallback estructural por path/role/ocurrencia.
+
+Cada nodo expone `identityQuality` e `identityBasis`, de modo que `/sessions/{id}/ui/raw` y el arbol proyectado dejan ver si una identidad es fuerte, compuesta o fallback. Bounds no son la base principal de identidad; solo quedan como metadata util para inspeccion futura.
+
+### Refresh, recovery y observabilidad
+
+El adapter se registra en `DesktopTargetAdapterRegistry`, se enruta por `IUiTreeNormalizerResolver` y reutiliza `DefaultSessionUiRefreshService`. Los fallos de captura siguen entrando por el camino existente de refresh/recovery (`SnapshotCaptureFailed` / `RefreshProjectionFailure`) y los fallos de attach/validate reutilizan `DefaultSessionAttachmentOperations`.
+
+Eventos nativos emitidos por el recorder existente:
+
+- `native.attach.started`
+- `native.attach.succeeded`
+- `native.attach.failed`
+- `native.validate.failed`
+- `native.capture.started`
+- `native.capture.succeeded`
+- `native.capture.failed`
+- `native.identity.fallback_used`
+
+Metricas nativas nuevas en `RuntimeObservability`:
+
+- `native_attach_total`
+- `native_attach_failure_total`
+- `native_capture_total`
+- `native_capture_failure_total`
+- `native_capture_duration_ms`
+- `native_identity_fallback_total`
+
+### Inspeccion Admin API
+
+No se agregan endpoints nuevos para 6.1. Las superficies existentes siguen siendo la fuente de inspeccion:
+
+- `GET /targets`
+- `GET /targets/{profileName}`
+- `GET /sessions/{id}/target`
+- `GET /sessions/{id}/ui`
+- `GET /sessions/{id}/ui/raw`
+- `POST /sessions/{id}/ui/refresh`
+- endpoints existentes de observabilidad y recovery
+
+`/sessions/{id}/target` muestra `AdapterKind=WindowsUiAutomationDesktop`, el tipo de adapter y el proceso/ventana adjuntos. `/sessions/{id}/ui/raw` muestra el raw tree UIA con metadata de captura e identidad.
+
+### Limites
+
+6.1 solo cubre attach, validate, ingestion y mapping de identidad. No implementa clicks, teclado, menus, OCR, CV, image matching, screen scraping por coordenadas, semantic packs por app ni behavior packs. La implementacion inicial es Windows-only y depende de la informacion que cada aplicacion exponga por UI Automation.
+
 ## Modelo de dominio por sesión
 
 `SessionDomainState` es un snapshot inmutable, genérico y orientado a actividad. Existe para que las capas futuras puedan tomar decisiones sobre la sesión sin acoplarse al shape técnico de la UI proyectada. El estado se crea durante el bootstrap de cada sesión con `Source=Bootstrap`, valores seguros (`Unknown`, `Idle`, `None`, `null`) y timestamps iniciales.

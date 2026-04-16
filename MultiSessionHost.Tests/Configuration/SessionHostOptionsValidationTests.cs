@@ -91,6 +91,83 @@ public sealed class SessionHostOptionsValidationTests
     }
 
     [Fact]
+    public void TryValidate_AcceptsWindowsUiAutomationDesktopTargetWithoutBaseAddress()
+    {
+        var options = new SessionHostOptions
+        {
+            DriverMode = DriverMode.DesktopTargetAdapter,
+            EnableUiSnapshots = true,
+            DesktopTargets =
+            [
+                new DesktopTargetProfileOptions
+                {
+                    ProfileName = "native-app",
+                    Kind = DesktopTargetKind.WindowsUiAutomationDesktop,
+                    ProcessName = "notepad",
+                    WindowTitleFragment = "Untitled",
+                    MatchingMode = DesktopSessionMatchingMode.WindowTitle,
+                    SupportsUiSnapshots = true,
+                    SupportsStateEndpoint = false,
+                    Metadata =
+                    {
+                        ["NativeUiAutomation.MaxDepth"] = "5",
+                        ["NativeUiAutomation.IncludeOffscreenNodes"] = "false"
+                    }
+                }
+            ],
+            SessionTargetBindings =
+            [
+                new SessionTargetBindingOptions
+                {
+                    SessionId = "alpha",
+                    TargetProfileName = "native-app"
+                }
+            ],
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.True(valid, error);
+    }
+
+    [Fact]
+    public void TryValidate_FailsWhenWindowsUiAutomationTargetDisablesSnapshots()
+    {
+        var options = new SessionHostOptions
+        {
+            DriverMode = DriverMode.DesktopTargetAdapter,
+            EnableUiSnapshots = true,
+            DesktopTargets =
+            [
+                new DesktopTargetProfileOptions
+                {
+                    ProfileName = "native-app",
+                    Kind = DesktopTargetKind.WindowsUiAutomationDesktop,
+                    ProcessName = "notepad",
+                    WindowTitleFragment = "Untitled",
+                    MatchingMode = DesktopSessionMatchingMode.WindowTitle,
+                    SupportsUiSnapshots = false
+                }
+            ],
+            SessionTargetBindings =
+            [
+                new SessionTargetBindingOptions
+                {
+                    SessionId = "alpha",
+                    TargetProfileName = "native-app"
+                }
+            ],
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.False(valid);
+        Assert.Contains("SupportsUiSnapshots", error);
+    }
+
+    [Fact]
     public void TryValidate_FailsWhenABindingReferencesAnUnknownProfile()
     {
         var options = new SessionHostOptions

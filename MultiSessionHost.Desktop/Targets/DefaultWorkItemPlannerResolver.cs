@@ -24,6 +24,7 @@ public sealed class DefaultWorkItemPlannerResolver : IWorkItemPlannerResolver
         {
             DesktopTargetKind.SelfHostedHttpDesktop => _defaultButtonWorkItemPlanner,
             DesktopTargetKind.DesktopTestApp => _testAppWorkItemPlanner,
+            DesktopTargetKind.WindowsUiAutomationDesktop => _defaultButtonWorkItemPlanner,
             _ => throw new InvalidOperationException($"Desktop target kind '{context.Profile.Kind}' is not supported.")
         };
 }

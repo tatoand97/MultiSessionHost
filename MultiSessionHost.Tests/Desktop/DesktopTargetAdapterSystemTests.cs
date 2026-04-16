@@ -27,6 +27,7 @@ public sealed class DesktopTargetAdapterSystemTests
     {
         var services = new ServiceCollection();
         services.AddSingleton(TestOptionsFactory.Create(TestOptionsFactory.Session("alpha")));
+        services.AddSingleton<IClock>(new FakeClock(DateTimeOffset.UtcNow));
         services.AddDesktopSessionServices();
         using var provider = services.BuildServiceProvider();
 
@@ -34,6 +35,7 @@ public sealed class DesktopTargetAdapterSystemTests
 
         Assert.IsType<SelfHostedHttpDesktopTargetAdapter>(registry.Resolve(DesktopTargetKind.SelfHostedHttpDesktop));
         Assert.IsType<DesktopTestAppTargetAdapter>(registry.Resolve(DesktopTargetKind.DesktopTestApp));
+        Assert.IsType<WindowsUiAutomationDesktopTargetAdapter>(registry.Resolve(DesktopTargetKind.WindowsUiAutomationDesktop));
     }
 
     [Fact]

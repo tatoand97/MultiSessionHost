@@ -3,6 +3,7 @@ using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Adapters;
+using MultiSessionHost.Desktop.Automation;
 using MultiSessionHost.Desktop.Attachments;
 using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Bindings;
@@ -156,6 +157,7 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionUiRefreshService, DefaultSessionUiRefreshService>();
         services.AddSingleton<SelfHostedHttpUiTreeNormalizer>();
         services.AddSingleton<TestAppUiTreeNormalizer>();
+        services.AddSingleton<WindowsUiAutomationUiTreeNormalizer>();
         services.AddSingleton<IUiTreeNormalizerResolver, DefaultUiTreeNormalizerResolver>();
         services.AddSingleton<DefaultButtonWorkItemPlanner>();
         services.AddSingleton<TestAppWorkItemPlanner>();
@@ -164,8 +166,11 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<IUiStateProjector, DefaultUiStateProjector>();
         services.AddSingleton<IUiActionResolver, DefaultUiActionResolver>();
         services.AddSingleton<MultiSessionHost.Core.Interfaces.IUiCommandExecutor, UiCommandExecutor>();
+        services.AddSingleton<NativeUiAutomationIdentityBuilder>();
+        services.AddSingleton<INativeUiAutomationReader, WindowsUiAutomationReader>();
         services.AddSingleton<IDesktopTargetAdapter, SelfHostedHttpDesktopTargetAdapter>();
         services.AddSingleton<IDesktopTargetAdapter, DesktopTestAppTargetAdapter>();
+        services.AddSingleton<IDesktopTargetAdapter, WindowsUiAutomationDesktopTargetAdapter>();
         services.AddSingleton<IDesktopTargetAdapterRegistry, DesktopTargetAdapterRegistry>();
         services.AddSingleton<IUiInteractionAdapter, TestDesktopAppUiInteractionAdapter>();
         services.AddSingleton<DesktopTargetSessionDriver>();

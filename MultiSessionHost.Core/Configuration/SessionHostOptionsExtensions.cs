@@ -516,6 +516,11 @@ public static class SessionHostOptionsExtensions
                 return false;
             }
 
+            if (!TryValidateNativeDesktopProfile(profileName, profile.Kind, profile.SupportsUiSnapshots, profile.SupportsStateEndpoint, out error))
+            {
+                return false;
+            }
+
             if (!RequiresHttpBaseAddress(profile.Kind))
             {
                 continue;
@@ -582,6 +587,8 @@ public static class SessionHostOptionsExtensions
             var effectiveMatchingMode = binding.Overrides?.MatchingMode ?? profile.MatchingMode;
             var effectiveBaseAddressTemplate = binding.Overrides?.BaseAddressTemplate ?? profile.BaseAddressTemplate;
             var effectiveProcessName = binding.Overrides?.ProcessName ?? profile.ProcessName;
+            var effectiveSupportsUiSnapshots = binding.Overrides?.SupportsUiSnapshots ?? profile.SupportsUiSnapshots;
+            var effectiveSupportsStateEndpoint = binding.Overrides?.SupportsStateEndpoint ?? profile.SupportsStateEndpoint;
 
             if (string.IsNullOrWhiteSpace(effectiveProcessName))
             {
@@ -595,6 +602,11 @@ public static class SessionHostOptionsExtensions
                     effectiveCommandLineFragment,
                     effectiveMatchingMode,
                     out error))
+            {
+                return false;
+            }
+
+            if (!TryValidateNativeDesktopProfile($"binding '{sessionId}'", profile.Kind, effectiveSupportsUiSnapshots, effectiveSupportsStateEndpoint, out error))
             {
                 return false;
             }
@@ -764,6 +776,35 @@ public static class SessionHostOptionsExtensions
 
     private static bool RequiresHttpBaseAddress(DesktopTargetKind kind) =>
         kind is DesktopTargetKind.SelfHostedHttpDesktop or DesktopTargetKind.DesktopTestApp;
+
+    private static bool TryValidateNativeDesktopProfile(
+        string scope,
+        DesktopTargetKind kind,
+        bool supportsUiSnapshots,
+        bool supportsStateEndpoint,
+        out string? error)
+    {
+        if (kind != DesktopTargetKind.WindowsUiAutomationDesktop)
+        {
+            error = null;
+            return true;
+        }
+
+        if (!supportsUiSnapshots)
+        {
+            error = $"{scope} must set SupportsUiSnapshots=true when Kind=WindowsUiAutomationDesktop.";
+            return false;
+        }
+
+        if (supportsStateEndpoint)
+        {
+            error = $"{scope} cannot set SupportsStateEndpoint=true when Kind=WindowsUiAutomationDesktop because native attachment is non-cooperative.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
 
     private static bool TryValidateExecutionCoordination(
         ExecutionCoordinationOptions options,
