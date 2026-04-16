@@ -143,6 +143,40 @@ public sealed class EveLikeSemanticPackageTests
         Assert.Contains(package.EveLike.Warnings, warning => warning.Contains("insufficient observable structure", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task Pipeline_RejectedPointProbeCandidates_StaysDegradedWithInactiveRoute()
+    {
+        var tree = new UiTree(
+            new UiSnapshotMetadata(
+                "eve-like",
+                "EveLikeFixture",
+                DateTimeOffset.UtcNow,
+                4242,
+                1001,
+                "EVE - Tatoand",
+                new Dictionary<string, string?>(StringComparer.Ordinal)
+                {
+                    ["opaqueRoot"] = bool.TrueString,
+                    ["observabilityMode"] = "RootOnly",
+                    ["targetOpacityReasonCode"] = "native.uia.root_only",
+                    ["pointProbeRawDistinctElementCount"] = "3",
+                    ["pointProbeValidatedDistinctElementCount"] = "0",
+                    ["pointProbeRejectedExternalCount"] = "2"
+                }),
+            Node("root", "Window", text: "EVE - Tatoand"));
+
+        var (pipeline, context, _, _) = CreateHarness(withPackageMetadata: true, registerPackage: true, treeOverride: tree);
+        var result = await pipeline.ExtractAsync(context, CancellationToken.None);
+
+        var package = Assert.Single(result.Packages);
+        Assert.True(package.Succeeded);
+        Assert.NotNull(package.EveLike);
+        Assert.Equal(DetectionConfidence.Low, package.Confidence);
+        Assert.False(package.EveLike!.TravelRoute.RouteActive);
+        Assert.Equal(DetectionConfidence.Unknown, package.EveLike.TravelRoute.Confidence);
+        Assert.Contains(result.Warnings, warning => warning.Contains("insufficient observable structure", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static (UiSemanticExtractionPipeline Pipeline, UiSemanticExtractionContext Context, InMemorySessionObservabilityStore Store, SessionSnapshot Snapshot) CreateHarness(bool withPackageMetadata, bool registerPackage, UiTree? treeOverride = null)
     {
         var sessionId = new SessionId("eve-like-session");

@@ -12,6 +12,8 @@ internal interface IWindowsUiAutomationReaderPlatform
 
     IWindowsUiAutomationElement? GetNextSibling(IWindowsUiAutomationElement element, string treeView);
 
+    IWindowsUiAutomationElement? GetParent(IWindowsUiAutomationElement element, string? treeView = null);
+
     IWindowsUiAutomationElement? GetElementFromPoint(double x, double y);
 }
 
@@ -70,6 +72,26 @@ internal sealed class WindowsUiAutomationReaderPlatform : IWindowsUiAutomationRe
     {
         var sibling = GetWalker(treeView).GetNextSibling(Unwrap(element));
         return sibling is null ? null : new WindowsUiAutomationReaderElement(sibling);
+    }
+
+    public IWindowsUiAutomationElement? GetParent(IWindowsUiAutomationElement element, string? treeView = null)
+    {
+        try
+        {
+            var walker = string.IsNullOrWhiteSpace(treeView)
+                ? TreeWalker.RawViewWalker
+                : GetWalker(treeView);
+            var parent = walker.GetParent(Unwrap(element));
+            return parent is null ? null : new WindowsUiAutomationReaderElement(parent);
+        }
+        catch (ElementNotAvailableException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     public IWindowsUiAutomationElement? GetElementFromPoint(double x, double y)

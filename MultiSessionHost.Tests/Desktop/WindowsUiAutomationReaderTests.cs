@@ -77,6 +77,7 @@ public sealed class WindowsUiAutomationReaderTests
     {
         var root = CreateElement("Window", frameworkId: "Win32", className: "RootWindow");
         var descendant = CreateElement("Pane", name: "Overlay", frameworkId: "CustomNative", className: "OverlayClass");
+        descendant.SetParent(root);
         var reader = CreateReader(root, new Dictionary<string, FakeElement>(StringComparer.Ordinal)
         {
             ["50:10"] = descendant
@@ -90,9 +91,77 @@ public sealed class WindowsUiAutomationReaderTests
         Assert.Equal(bool.TrueString, snapshot.Metadata["pointProbeFoundDescendant"]);
         Assert.Equal(bool.FalseString, snapshot.Metadata["pointProbeReturnedOnlyRoot"]);
         Assert.Equal("2", snapshot.Metadata["pointProbeDistinctElementCount"]);
+        Assert.Equal("1", snapshot.Metadata["pointProbeValidatedDistinctElementCount"]);
+        Assert.Equal("0", snapshot.Metadata["pointProbeRejectedExternalCount"]);
         Assert.Equal("PointProbeOnly", snapshot.Metadata["observabilityMode"]);
         Assert.Equal(bool.FalseString, snapshot.Metadata["opaqueRoot"]);
         Assert.Null(snapshot.Metadata["targetOpacityReasonCode"]);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_PointProbeRejectsDescendantFromDifferentProcess()
+    {
+        var root = CreateElement("Window", frameworkId: "Win32", className: "RootWindow", processId: 4242, nativeWindowHandle: 1001);
+        var external = CreateElement("Pane", name: "External", frameworkId: "Gecko", className: "MozillaWindowClass", processId: 9000, nativeWindowHandle: 8001);
+        external.SetParent(root);
+        var reader = CreateReader(root, new Dictionary<string, FakeElement>(StringComparer.Ordinal)
+        {
+            ["50:10"] = external
+        });
+
+        var snapshot = await reader.CaptureAsync(CreateAttachment(), CreateOptions(), CancellationToken.None);
+
+        Assert.Equal(bool.FalseString, snapshot.Metadata["pointProbeFoundDescendant"]);
+        Assert.Equal("2", snapshot.Metadata["pointProbeDistinctElementCount"]);
+        Assert.Equal("0", snapshot.Metadata["pointProbeValidatedDistinctElementCount"]);
+        Assert.Equal("1", snapshot.Metadata["pointProbeRejectedExternalCount"]);
+        Assert.Equal("SameIdentityAsRoot:1,DifferentProcess:1", snapshot.Metadata["pointProbeRejectedReasonSummary"]);
+        Assert.Equal("RootOnly", snapshot.Metadata["observabilityMode"]);
+        Assert.Equal(bool.TrueString, snapshot.Metadata["opaqueRoot"]);
+        Assert.Equal("native.uia.root_only", snapshot.Metadata["targetOpacityReasonCode"]);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_PointProbeRejectsSameProcessElementWithDifferentRootAncestry()
+    {
+        var root = CreateElement("Window", frameworkId: "Win32", className: "RootWindow", processId: 4242, nativeWindowHandle: 1001);
+        var otherRoot = CreateElement("Window", frameworkId: "Win32", className: "OtherRoot", processId: 4242, nativeWindowHandle: 1009);
+        var siblingWindowElement = CreateElement("Pane", name: "OtherOverlay", frameworkId: "Win32", className: "OtherOverlayClass", processId: 4242, nativeWindowHandle: 1009);
+        siblingWindowElement.SetParent(otherRoot);
+        var reader = CreateReader(root, new Dictionary<string, FakeElement>(StringComparer.Ordinal)
+        {
+            ["50:10"] = siblingWindowElement
+        });
+
+        var snapshot = await reader.CaptureAsync(CreateAttachment(), CreateOptions(), CancellationToken.None);
+
+        Assert.Equal(bool.FalseString, snapshot.Metadata["pointProbeFoundDescendant"]);
+        Assert.Equal("0", snapshot.Metadata["pointProbeValidatedDistinctElementCount"]);
+        Assert.Equal("1", snapshot.Metadata["pointProbeRejectedExternalCount"]);
+        Assert.Equal("SameIdentityAsRoot:1,DifferentRootAncestry:1", snapshot.Metadata["pointProbeRejectedReasonSummary"]);
+        Assert.Equal("RootOnly", snapshot.Metadata["observabilityMode"]);
+        Assert.Equal(bool.TrueString, snapshot.Metadata["opaqueRoot"]);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_PointProbeAcceptsSameProcessElementWithSameRootAncestry()
+    {
+        var root = CreateElement("Window", frameworkId: "Win32", className: "RootWindow", processId: 4242, nativeWindowHandle: 1001);
+        var descendant = CreateElement("Pane", name: "Overlay", frameworkId: "CustomNative", className: "OverlayClass", processId: 4242, nativeWindowHandle: 1001);
+        descendant.SetParent(root);
+        var reader = CreateReader(root, new Dictionary<string, FakeElement>(StringComparer.Ordinal)
+        {
+            ["50:10"] = descendant
+        });
+
+        var snapshot = await reader.CaptureAsync(CreateAttachment(), CreateOptions(), CancellationToken.None);
+
+        Assert.Equal(bool.TrueString, snapshot.Metadata["pointProbeFoundDescendant"]);
+        Assert.Equal("1", snapshot.Metadata["pointProbeValidatedDistinctElementCount"]);
+        Assert.Equal("0", snapshot.Metadata["pointProbeRejectedExternalCount"]);
+        Assert.Equal("SameIdentityAsRoot:1", snapshot.Metadata["pointProbeRejectedReasonSummary"]);
+        Assert.Equal("PointProbeOnly", snapshot.Metadata["observabilityMode"]);
+        Assert.Equal(bool.FalseString, snapshot.Metadata["opaqueRoot"]);
     }
 
     [Fact]
@@ -228,8 +297,10 @@ public sealed class WindowsUiAutomationReaderTests
         string? automationId = null,
         string? frameworkId = "Win32",
         string? className = "NativeClass",
-        bool isOffscreen = false) =>
-        new(role, name, automationId, frameworkId, className, isOffscreen);
+        bool isOffscreen = false,
+        int processId = 4242,
+        int nativeWindowHandle = 1001) =>
+        new(role, name, automationId, frameworkId, className, isOffscreen, processId, nativeWindowHandle);
 
     private sealed class FakePlatform : IWindowsUiAutomationReaderPlatform
     {
@@ -274,6 +345,9 @@ public sealed class WindowsUiAutomationReaderTests
                 : _root;
         }
 
+        public IWindowsUiAutomationElement? GetParent(IWindowsUiAutomationElement element, string? treeView = null) =>
+            ((FakeElement)element).Parent;
+
         private static IReadOnlyList<FakeElement> GetChildren(FakeElement element, string treeView) =>
             string.Equals(treeView, "Raw", StringComparison.OrdinalIgnoreCase)
                 ? element.RawChildren
@@ -288,7 +362,9 @@ public sealed class WindowsUiAutomationReaderTests
             string? automationId,
             string? frameworkId,
             string? className,
-            bool isOffscreen)
+            bool isOffscreen,
+            int processId,
+            int nativeWindowHandle)
         {
             Role = role;
             Name = name;
@@ -298,8 +374,8 @@ public sealed class WindowsUiAutomationReaderTests
             IsOffscreen = isOffscreen;
             RuntimeId = Guid.NewGuid().ToString("N");
             LocalizedControlType = role.ToLowerInvariant();
-            NativeWindowHandle = 1001;
-            ProcessId = 4242;
+            NativeWindowHandle = nativeWindowHandle;
+            ProcessId = processId;
         }
 
         public List<FakeElement> ControlChildren { get; } = [];
@@ -350,6 +426,11 @@ public sealed class WindowsUiAutomationReaderTests
         {
             child.Parent = this;
             RawChildren.Add(child);
+        }
+
+        public void SetParent(FakeElement parent)
+        {
+            Parent = parent;
         }
     }
 }

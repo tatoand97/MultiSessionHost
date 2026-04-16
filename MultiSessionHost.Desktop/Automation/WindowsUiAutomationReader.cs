@@ -6,6 +6,8 @@ namespace MultiSessionHost.Desktop.Automation;
 
 public sealed class WindowsUiAutomationReader : INativeUiAutomationReader
 {
+    private const int ParentTraversalLimit = 128;
+
     private static readonly IReadOnlySet<string> EmptyFrameworkFilter = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     private readonly NativeUiAutomationIdentityBuilder _identityBuilder;
@@ -58,8 +60,10 @@ public sealed class WindowsUiAutomationReader : INativeUiAutomationReader
 
         var pointProbe = RunPointProbe(rootElement, effectiveOptions, cancellationToken);
         var rootKey = BuildElementIdentityKey(rootElement);
-        var pointProbeFoundDescendant = pointProbe.DistinctElements.Keys.Any(key => !string.Equals(key, rootKey, StringComparison.Ordinal));
-        var pointProbeReturnedOnlyRoot = pointProbe.DistinctElements.Count > 0 && !pointProbeFoundDescendant;
+        var pointProbeValidation = ValidatePointProbeCandidates(rootElement, rootKey, pointProbe.DistinctElements, cancellationToken);
+        var pointProbeRawFoundDescendant = pointProbe.DistinctElements.Keys.Any(key => !string.Equals(key, rootKey, StringComparison.Ordinal));
+        var pointProbeFoundDescendant = pointProbeValidation.ValidatedElements.Count > 0;
+        var pointProbeReturnedOnlyRoot = pointProbe.DistinctElements.Count > 0 && !pointProbeRawFoundDescendant;
 
         var stats = new CaptureStats();
         var rawRoot = CaptureElement(rootElement, effectiveOptions, depth: 0, isRoot: true, stats, cancellationToken);
@@ -107,12 +111,21 @@ public sealed class WindowsUiAutomationReader : INativeUiAutomationReader
             ["childrenFilteredByFramework"] = stats.ChildrenFilteredByFramework.ToString(CultureInfo.InvariantCulture),
             ["pointProbeEnabled"] = pointProbe.Enabled.ToString(),
             ["pointProbeCount"] = pointProbe.PointCount.ToString(CultureInfo.InvariantCulture),
+            ["pointProbeRawDistinctElementCount"] = pointProbe.DistinctElements.Count.ToString(CultureInfo.InvariantCulture),
             ["pointProbeDistinctElementCount"] = pointProbe.DistinctElements.Count.ToString(CultureInfo.InvariantCulture),
+            ["pointProbeValidatedDistinctElementCount"] = pointProbeValidation.ValidatedElements.Count.ToString(CultureInfo.InvariantCulture),
+            ["pointProbeRejectedExternalCount"] = pointProbeValidation.GetRejectedExternalCount().ToString(CultureInfo.InvariantCulture),
+            ["pointProbeRejectedReasonSummary"] = pointProbeValidation.GetRejectedReasonSummary(),
             ["pointProbeFoundDescendant"] = pointProbeFoundDescendant.ToString(),
             ["pointProbeReturnedOnlyRoot"] = pointProbeReturnedOnlyRoot.ToString(),
             ["pointProbeFrameworkIds"] = JoinDistinct(pointProbe.DistinctElements.Values.Select(static element => element.FrameworkId)),
             ["pointProbeClassNames"] = JoinDistinct(pointProbe.DistinctElements.Values.Select(static element => element.ClassName)),
             ["pointProbeControlTypes"] = JoinDistinct(pointProbe.DistinctElements.Values.Select(static element => element.Role)),
+            ["pointProbeValidatedFrameworkIds"] = JoinDistinct(pointProbeValidation.ValidatedElements.Values.Select(static element => element.FrameworkId)),
+            ["pointProbeValidatedClassNames"] = JoinDistinct(pointProbeValidation.ValidatedElements.Values.Select(static element => element.ClassName)),
+            ["pointProbeValidatedControlTypes"] = JoinDistinct(pointProbeValidation.ValidatedElements.Values.Select(static element => element.Role)),
+            ["pointProbeExternalFrameworkIds"] = JoinDistinct(pointProbeValidation.RejectedElements.Select(static rejected => rejected.Element.FrameworkId)),
+            ["pointProbeExternalClassNames"] = JoinDistinct(pointProbeValidation.RejectedElements.Select(static rejected => rejected.Element.ClassName)),
             ["observabilityMode"] = observabilityMode,
             ["opaqueRoot"] = opaqueRoot.ToString(),
             ["targetOpacityReasonCode"] = opacityReasonCode,
@@ -159,6 +172,105 @@ public sealed class WindowsUiAutomationReader : INativeUiAutomationReader
 
         return new PointProbeDiagnostics(true, points.Count, distinctElements);
     }
+
+    private PointProbeValidationDiagnostics ValidatePointProbeCandidates(
+        IWindowsUiAutomationElement rootElement,
+        string rootKey,
+        IReadOnlyDictionary<string, IWindowsUiAutomationElement> distinctElements,
+        CancellationToken cancellationToken)
+    {
+        var validatedElements = new Dictionary<string, IWindowsUiAutomationElement>(StringComparer.Ordinal);
+        var rejectedElements = new List<RejectedPointProbeElement>();
+
+        foreach (var (identityKey, candidate) in distinctElements)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var rejectionReason = GetPointProbeRejectionReason(rootElement, rootKey, identityKey, candidate);
+
+            if (rejectionReason is null)
+            {
+                validatedElements[identityKey] = candidate;
+            }
+            else
+            {
+                rejectedElements.Add(new RejectedPointProbeElement(candidate, rejectionReason.Value));
+            }
+        }
+
+        return new PointProbeValidationDiagnostics(validatedElements, rejectedElements);
+    }
+
+    private PointProbeRejectionReason? GetPointProbeRejectionReason(
+        IWindowsUiAutomationElement rootElement,
+        string rootKey,
+        string candidateKey,
+        IWindowsUiAutomationElement candidate)
+    {
+        if (string.Equals(candidateKey, rootKey, StringComparison.Ordinal))
+        {
+            return PointProbeRejectionReason.SameIdentityAsRoot;
+        }
+
+        if (!BelongsToSameProcess(rootElement, candidate))
+        {
+            return PointProbeRejectionReason.DifferentProcess;
+        }
+
+        if (HasAncestorPathToRoot(rootKey, candidate))
+        {
+            return null;
+        }
+
+        // Same native window handle is the strongest fallback signal when ancestor traversal cannot prove ownership.
+        if (HasSameNativeWindow(rootElement, candidate))
+        {
+            return null;
+        }
+
+        return PointProbeRejectionReason.DifferentRootAncestry;
+    }
+
+    private bool HasAncestorPathToRoot(
+        string rootKey,
+        IWindowsUiAutomationElement candidate)
+    {
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var current = candidate;
+
+        for (var depth = 0; depth < ParentTraversalLimit; depth++)
+        {
+            var parent = _platform.GetParent(current);
+            if (parent is null)
+            {
+                return false;
+            }
+
+            var parentKey = BuildElementIdentityKey(parent);
+            if (string.Equals(parentKey, rootKey, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (!visited.Add(parentKey))
+            {
+                return false;
+            }
+
+            current = parent;
+        }
+
+        return false;
+    }
+
+    private static bool BelongsToSameProcess(IWindowsUiAutomationElement rootElement, IWindowsUiAutomationElement candidate) =>
+        rootElement.ProcessId is not null &&
+        candidate.ProcessId is not null &&
+        rootElement.ProcessId.Value == candidate.ProcessId.Value;
+
+    private static bool HasSameNativeWindow(IWindowsUiAutomationElement rootElement, IWindowsUiAutomationElement candidate) =>
+        rootElement.NativeWindowHandle is not null &&
+        candidate.NativeWindowHandle is not null &&
+        rootElement.NativeWindowHandle.Value == candidate.NativeWindowHandle.Value;
 
     private static List<ProbePoint> BuildProbePoints(UiBounds? bounds, int insetPixels, bool includeGrid)
     {
@@ -380,6 +492,36 @@ public sealed class WindowsUiAutomationReader : INativeUiAutomationReader
     {
         public static PointProbeDiagnostics Disabled { get; } =
             new(false, 0, new Dictionary<string, IWindowsUiAutomationElement>(StringComparer.Ordinal));
+    }
+
+    private sealed record PointProbeValidationDiagnostics(
+        IReadOnlyDictionary<string, IWindowsUiAutomationElement> ValidatedElements,
+        IReadOnlyList<RejectedPointProbeElement> RejectedElements)
+    {
+        public int GetRejectedExternalCount() =>
+            RejectedElements.Count(element => element.Reason is not PointProbeRejectionReason.SameIdentityAsRoot);
+
+        public string? GetRejectedReasonSummary()
+        {
+            var summary = RejectedElements
+                .GroupBy(static element => element.Reason)
+                .OrderBy(static group => group.Key)
+                .Select(static group => $"{group.Key}:{group.Count()}")
+                .ToArray();
+
+            return summary.Length == 0 ? null : string.Join(",", summary);
+        }
+    }
+
+    private sealed record RejectedPointProbeElement(
+        IWindowsUiAutomationElement Element,
+        PointProbeRejectionReason Reason);
+
+    private enum PointProbeRejectionReason
+    {
+        SameIdentityAsRoot,
+        DifferentProcess,
+        DifferentRootAncestry
     }
 
     private sealed class CaptureStats
