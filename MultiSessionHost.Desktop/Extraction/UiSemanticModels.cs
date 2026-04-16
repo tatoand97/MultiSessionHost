@@ -171,11 +171,12 @@ public sealed record UiSemanticExtractionResult(
     IReadOnlyList<DetectedResource> Resources,
     IReadOnlyList<DetectedCapability> Capabilities,
     IReadOnlyList<DetectedPresenceEntity> PresenceEntities,
+    IReadOnlyList<TargetSemanticPackageResult> Packages,
     IReadOnlyList<string> Warnings,
     IReadOnlyDictionary<string, DetectionConfidence> ConfidenceSummary)
 {
     public static UiSemanticExtractionResult Empty(SessionId sessionId, DateTimeOffset now) =>
-        new(sessionId, now, [], [], [], [], [], [], [], [], new Dictionary<string, DetectionConfidence>());
+        new(sessionId, now, [], [], [], [], [], [], [], [], [], new Dictionary<string, DetectionConfidence>());
 }
 
 public sealed record UiSemanticExtractionContext(

@@ -187,6 +187,7 @@ public sealed class RiskClassificationTests
             [
                 new DetectedPresenceEntity("presence-1", "unknown presence", Count: 2, Membership: ["unknown"], PresenceEntityKind.Person, Status: "unknown", DetectionConfidence.Medium)
             ],
+            Packages: [],
             Warnings: [],
             ConfidenceSummary: new Dictionary<string, DetectionConfidence>());
 

@@ -79,6 +79,8 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<IUiSemanticExtractor, TransitStateDetectorExtractor>();
         services.AddSingleton<IUiSemanticExtractor, ResourceCapabilityDetectorExtractor>();
         services.AddSingleton<IUiSemanticExtractor, PresenceEntityDetectorExtractor>();
+        services.AddSingleton<ITargetSemanticPackage, EveLikeSemanticPackage>();
+        services.AddSingleton<ITargetSemanticPackageResolver, DefaultTargetSemanticPackageResolver>();
         services.AddSingleton<IUiSemanticExtractionPipeline, UiSemanticExtractionPipeline>();
         services.AddSingleton<ISessionSemanticExtractionStore, InMemorySessionSemanticExtractionStore>();
         services.AddSingleton<IRiskRuleProvider, ConfiguredRiskRuleProvider>();

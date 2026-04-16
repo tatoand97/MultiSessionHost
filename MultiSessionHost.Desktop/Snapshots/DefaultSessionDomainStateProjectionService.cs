@@ -45,6 +45,7 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
             .OrderByDescending(static alert => alert.Severity)
             .ThenByDescending(static alert => alert.Confidence)
             .FirstOrDefault();
+        var eveLikePackage = semanticExtraction?.Packages.FirstOrDefault(static package => package.EveLike is not null)?.EveLike;
         var strongestThreat = riskAssessment?.Entities
             .Where(static entity => entity.Disposition == RiskDisposition.Threat)
             .OrderByDescending(static entity => entity.Severity)
@@ -68,6 +69,14 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
             .Where(static list => !string.IsNullOrWhiteSpace(list.Label))
             .OrderByDescending(static list => list.Confidence)
             .FirstOrDefault(static list => list.Kind is ListKind.Presence or ListKind.Navigation)?.Label;
+        var packageRoute = eveLikePackage?.TravelRoute;
+        var packageSafety = eveLikePackage?.Safety;
+        var packagePresence = eveLikePackage?.Presence;
+        var packageTactical = eveLikePackage?.Tactical;
+        var packageOverviewPrimary = eveLikePackage?.OverviewEntries
+            .Where(static entry => entry.Selected || entry.Targeted || !string.IsNullOrWhiteSpace(entry.Disposition))
+            .OrderByDescending(static entry => entry.Confidence)
+            .FirstOrDefault();
 
         return current with
         {
@@ -77,12 +86,15 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
             Source = DomainSnapshotSource.UiProjection,
             Navigation = current.Navigation with
             {
-                Status = semanticTransit?.Status == TransitStatus.Blocked
+                Status = packageRoute?.RouteActive == true || semanticTransit?.Status == TransitStatus.InProgress
+                    ? NavigationStatus.InProgress
+                    : semanticTransit?.Status == TransitStatus.Blocked
                     ? NavigationStatus.Blocked
                     : isTransitioning ? NavigationStatus.InProgress : NavigationStatus.Idle,
-                IsTransitioning = isTransitioning,
-                DestinationLabel = semanticTransit?.Label ?? current.Navigation.DestinationLabel,
-                ProgressPercent = semanticTransit?.ProgressPercent,
+                IsTransitioning = isTransitioning || packageRoute?.RouteActive == true,
+                DestinationLabel = packageRoute?.DestinationLabel ?? semanticTransit?.Label ?? current.Navigation.DestinationLabel,
+                RouteLabel = packageRoute?.CurrentLocationLabel ?? packageRoute?.NextWaypointLabel ?? current.Navigation.RouteLabel,
+                ProgressPercent = packageRoute?.ProgressPercent ?? semanticTransit?.ProgressPercent,
                 UpdatedAtUtc = now
             },
             Combat = current.Combat with
@@ -94,38 +106,42 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
             },
             Threat = current.Threat with
             {
-                Severity = MapThreatSeverity(strongestThreat?.Severity, semanticAlert?.Severity),
-                UnknownCount = riskAssessment?.Summary.UnknownCount ?? presence?.Count,
+                Severity = MapThreatSeverity(strongestThreat?.Severity, semanticAlert?.Severity, packageTactical?.HostileCandidateCount),
+                UnknownCount = riskAssessment?.Summary.UnknownCount ?? packagePresence?.VisibleEntityCount ?? presence?.Count,
                 NeutralCount = riskAssessment?.Summary.SafeCount ?? current.Threat.NeutralCount,
                 HostileCount = riskAssessment?.Summary.ThreatCount ?? current.Threat.HostileCount,
                 IsSafe = riskAssessment is not null
                     ? riskAssessment.Summary.ThreatCount == 0 && riskAssessment.Summary.UnknownCount == 0
-                    : semanticAlert is null && (semanticExtraction?.Alerts.Count ?? 0) == 0 ? true : null,
+                    : packageSafety?.IsSafeLocation == true
+                        ? true
+                        : semanticAlert is null && (semanticExtraction?.Alerts.Count ?? 0) == 0 && (packageTactical?.HostileCandidateCount ?? 0) == 0 ? true : null,
                 LastThreatChangedAtUtc = strongestThreat is not null || semanticAlert is not null ? now : current.Threat.LastThreatChangedAtUtc,
-                Signals = BuildThreatSignals(warnings, semanticAlert, semanticExtraction, riskAssessment),
+                Signals = BuildThreatSignals(warnings, semanticAlert, semanticExtraction, riskAssessment, eveLikePackage),
                 TopSuggestedPolicy = topRiskEntity?.SuggestedPolicy.ToString(),
                 TopEntityLabel = topRiskEntity?.Name,
                 TopEntityType = topRiskEntity?.Type
             },
             Target = current.Target with
             {
-                HasActiveTarget = primaryTarget is not null,
+                HasActiveTarget = primaryTarget is not null || packageOverviewPrimary is not null || packageTactical?.SelectedTargetLabels.Count > 0,
                 PrimaryTargetId = primaryTarget?.NodeId,
-                PrimaryTargetLabel = primaryTarget?.Label,
-                TrackedTargetCount = semanticExtraction?.Targets.Count,
-                LockedTargetCount = semanticExtraction?.Targets.Count(static target => target.Active),
-                SelectedTargetCount = semanticExtraction?.Targets.Count(static target => target.Selected),
+                PrimaryTargetLabel = primaryTarget?.Label ?? packageOverviewPrimary?.Label ?? packageTactical?.SelectedTargetLabels.FirstOrDefault(),
+                TrackedTargetCount = semanticExtraction?.Targets.Count ?? eveLikePackage?.OverviewEntries.Count,
+                LockedTargetCount = semanticExtraction?.Targets.Count(static target => target.Active) ?? eveLikePackage?.OverviewEntries.Count(static entry => entry.Targeted),
+                SelectedTargetCount = semanticExtraction?.Targets.Count(static target => target.Selected) ?? eveLikePackage?.OverviewEntries.Count(static entry => entry.Selected),
                 Status = primaryTarget is null
-                    ? TargetingStatus.None
+                    ? packageOverviewPrimary is not null || packageTactical?.SelectedTargetLabels.Count > 0
+                        ? TargetingStatus.Active
+                        : TargetingStatus.None
                     : primaryTarget.Active || primaryTarget.Selected ? TargetingStatus.Active : TargetingStatus.Acquiring,
                 LastTargetChangedAtUtc = primaryTarget is not null ? now : current.Target.LastTargetChangedAtUtc,
                 UpdatedAtUtc = now
             },
             Companions = current.Companions with
             {
-                Status = presence?.Count > 0 ? CompanionStatus.Active : CompanionStatus.Unknown,
-                AreAvailable = presence?.Count > 0 ? true : null,
-                ActiveCount = presence?.Count,
+                Status = packagePresence?.VisibleEntityCount > 0 || presence?.Count > 0 ? CompanionStatus.Active : CompanionStatus.Unknown,
+                AreAvailable = packagePresence?.VisibleEntityCount > 0 || presence?.Count > 0 ? true : null,
+                ActiveCount = packagePresence?.VisibleEntityCount ?? presence?.Count,
                 UpdatedAtUtc = now
             },
             Resources = current.Resources with
@@ -140,10 +156,10 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
             },
             Location = current.Location with
             {
-                ContextLabel = contextLabel,
-                SubLocationLabel = semanticContextLabel ?? presence?.Label,
-                IsUnknown = string.IsNullOrWhiteSpace(contextLabel),
-                Confidence = GetLocationConfidence(semanticContextLabel, contextLabel),
+                ContextLabel = packageSafety?.SafeLocationLabel ?? contextLabel,
+                SubLocationLabel = packageRoute?.CurrentLocationLabel ?? packageSafety?.EscapeRouteLabel ?? semanticContextLabel ?? presence?.Label,
+                IsUnknown = string.IsNullOrWhiteSpace(packageSafety?.SafeLocationLabel ?? contextLabel),
+                Confidence = GetLocationConfidence(packageSafety, semanticContextLabel, contextLabel),
                 UpdatedAtUtc = now
             },
             Warnings = warnings
@@ -234,6 +250,14 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
         else
         {
             warnings.AddRange(semanticExtraction.Warnings);
+            if (semanticExtraction.Packages.Count == 0)
+            {
+                warnings.Add("No target-specific semantic package was selected.");
+            }
+            else
+            {
+                warnings.AddRange(semanticExtraction.Packages.Select(package => $"Package {package.PackageName} {package.PackageVersion}: {(package.Succeeded ? "succeeded" : "failed")}"));
+            }
         }
 
         if (riskAssessment is null)
@@ -252,7 +276,8 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
         IReadOnlyList<string> warnings,
         DetectedAlert? alert,
         UiSemanticExtractionResult? semanticExtraction,
-        RiskAssessmentResult? riskAssessment)
+        RiskAssessmentResult? riskAssessment,
+        EveLikeSemanticPackageResult? package)
     {
         var signals = new List<string>(warnings);
 
@@ -271,6 +296,19 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
             signals.Add($"Risk summary: safe={summary.SafeCount}, unknown={summary.UnknownCount}, threat={summary.ThreatCount}, highest={summary.HighestSeverity}, priority={summary.HighestPriority}, policy={summary.TopSuggestedPolicy}.");
         }
 
+        if (package is not null)
+        {
+            signals.AddRange(package.Safety.Reasons);
+            signals.AddRange(package.TravelRoute.Reasons);
+            signals.AddRange(package.Tactical.EngagementAlerts);
+            signals.Add($"Package overview entries: {package.OverviewEntries.Count}.");
+            signals.Add($"Package probe entries: {package.ProbeScannerEntries.Count}.");
+            if (package.Presence.Entities.Count > 0)
+            {
+                signals.Add($"Package presence entities: {package.Presence.Entities.Count}.");
+            }
+        }
+
         foreach (var entity in riskAssessment?.Entities.Take(3) ?? [])
         {
             if (!string.IsNullOrWhiteSpace(entity.MatchedRuleName))
@@ -287,15 +325,15 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
         return signals.Distinct(StringComparer.Ordinal).ToArray();
     }
 
-    private static ThreatSeverity MapThreatSeverity(RiskSeverity? riskSeverity, AlertSeverity? alertSeverity) =>
+    private static ThreatSeverity MapThreatSeverity(RiskSeverity? riskSeverity, AlertSeverity? alertSeverity, int? hostileCandidateCount) =>
         riskSeverity switch
         {
             RiskSeverity.Low => ThreatSeverity.Low,
             RiskSeverity.Moderate => ThreatSeverity.Moderate,
             RiskSeverity.High => ThreatSeverity.High,
             RiskSeverity.Critical => ThreatSeverity.Critical,
-            RiskSeverity.Unknown => MapThreatSeverity(alertSeverity),
-            _ => MapThreatSeverity(alertSeverity)
+            RiskSeverity.Unknown => hostileCandidateCount is > 0 ? ThreatSeverity.High : MapThreatSeverity(alertSeverity),
+            _ => hostileCandidateCount is > 0 ? ThreatSeverity.High : MapThreatSeverity(alertSeverity)
         };
 
     private static ThreatSeverity MapThreatSeverity(AlertSeverity? alertSeverity) =>
@@ -326,8 +364,13 @@ public sealed class DefaultSessionDomainStateProjectionService : ISessionDomainS
         return value is null ? null : Convert.ToInt32(value.Value);
     }
 
-    private static LocationConfidence GetLocationConfidence(string? semanticContextLabel, string? fallbackContextLabel)
+    private static LocationConfidence GetLocationConfidence(SafetyLocationSemantic? safety, string? semanticContextLabel, string? fallbackContextLabel)
     {
+        if (safety?.IsSafeLocation == true)
+        {
+            return LocationConfidence.High;
+        }
+
         if (!string.IsNullOrWhiteSpace(semanticContextLabel))
         {
             return LocationConfidence.Medium;

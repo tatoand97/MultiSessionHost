@@ -329,6 +329,7 @@ public static class DtoMappingExtensions
             result.Resources.Select(static item => item.ToDto()).ToArray(),
             result.Capabilities.Select(static item => item.ToDto()).ToArray(),
             result.PresenceEntities.Select(static item => item.ToDto()).ToArray(),
+            result.Packages.Select(static item => item.ToDto()).ToArray(),
             result.Warnings,
             result.ConfidenceSummary.ToDictionary(static pair => pair.Key, static pair => pair.Value.ToString(), StringComparer.Ordinal));
 
@@ -343,8 +344,110 @@ public static class DtoMappingExtensions
             result.Resources.Count,
             result.Capabilities.Count,
             result.PresenceEntities.Count,
+            result.Packages.Count,
+            result.Packages.Select(static package => package.PackageName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
             result.Warnings,
             result.ConfidenceSummary.ToDictionary(static pair => pair.Key, static pair => pair.Value.ToString(), StringComparer.Ordinal));
+
+    public static TargetSemanticPackageResultDto ToDto(this TargetSemanticPackageResult result) =>
+        new(
+            result.PackageName,
+            result.PackageVersion,
+            result.Succeeded,
+            result.Confidence.ToString(),
+            result.Warnings,
+            result.ConfidenceSummary.ToDictionary(static pair => pair.Key, static pair => pair.Value.ToString(), StringComparer.Ordinal),
+            result.FailureReason,
+            result.EveLike is null ? null : result.EveLike.ToDto());
+
+    public static EveLikeSemanticPackageResultDto ToDto(this EveLikeSemanticPackageResult result) =>
+        new(
+            result.PackageName,
+            result.PackageVersion,
+            result.Presence.ToDto(),
+            result.TravelRoute.ToDto(),
+            result.OverviewEntries.Select(static item => item.ToDto()).ToArray(),
+            result.ProbeScannerEntries.Select(static item => item.ToDto()).ToArray(),
+            result.Tactical.ToDto(),
+            result.Safety.ToDto(),
+            result.Warnings,
+            result.ConfidenceSummary.ToDictionary(static pair => pair.Key, static pair => pair.Value.ToString(), StringComparer.Ordinal));
+
+    public static LocalPresenceSnapshotDto ToDto(this LocalPresenceSnapshot result) =>
+        new(
+            result.IsVisible,
+            result.PanelLabel,
+            result.VisibleEntityCount,
+            result.TotalEntityCount,
+            result.Entities.Select(static item => item.ToDto()).ToArray(),
+            result.Confidence.ToString(),
+            result.Warnings);
+
+    public static PresenceEntitySemanticDto ToDto(this PresenceEntitySemantic result) =>
+        new(
+            result.Label,
+            result.Standing,
+            result.Tags,
+            result.SourceNodeIds,
+            result.Count,
+            result.Confidence.ToString());
+
+    public static TravelRouteSnapshotDto ToDto(this TravelRouteSnapshot result) =>
+        new(
+            result.RouteActive,
+            result.DestinationLabel,
+            result.CurrentLocationLabel,
+            result.NextWaypointLabel,
+            result.WaypointCount,
+            result.VisibleWaypoints,
+            result.ProgressPercent,
+            result.Confidence.ToString(),
+            result.Reasons);
+
+    public static OverviewEntrySemanticDto ToDto(this OverviewEntrySemantic result) =>
+        new(
+            result.Label,
+            result.Category,
+            result.DistanceText,
+            result.DistanceValue,
+            result.Selected,
+            result.Targeted,
+            result.Disposition,
+            result.SourceNodeIds,
+            result.Confidence.ToString(),
+            result.Warnings);
+
+    public static ProbeScannerEntrySemanticDto ToDto(this ProbeScannerEntrySemantic result) =>
+        new(
+            result.Label,
+            result.SignatureType,
+            result.Status,
+            result.DistanceText,
+            result.DistanceValue,
+            result.SourceNodeIds,
+            result.Confidence.ToString(),
+            result.Warnings);
+
+    public static TacticalSnapshotDto ToDto(this TacticalSnapshot result) =>
+        new(
+            result.PrimaryVisibleObjects.Select(static item => item.ToDto()).ToArray(),
+            result.HostileCandidateCount,
+            result.SelectedTargetLabels,
+            result.NearbyObjectHints,
+            result.EngagementAlerts,
+            result.Confidence.ToString(),
+            result.Warnings);
+
+    public static SafetyLocationSemanticDto ToDto(this SafetyLocationSemantic result) =>
+        new(
+            result.IsSafeLocation,
+            result.SafeLocationLabel,
+            result.HideAvailable,
+            result.DockedHint,
+            result.TetheredHint,
+            result.EscapeRouteLabel,
+            result.Confidence.ToString(),
+            result.Reasons);
 
     public static RiskAssessmentResultDto ToDto(this RiskAssessmentResult result) =>
         new(

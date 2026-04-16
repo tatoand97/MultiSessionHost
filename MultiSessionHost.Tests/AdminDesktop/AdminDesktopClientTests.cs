@@ -273,12 +273,12 @@ public sealed class AdminDesktopViewModelTests
 
         if (method == HttpMethod.Get && path == "/sessions/alpha/semantic")
         {
-            return Json(new UiSemanticExtractionResultDto("alpha", DateTimeOffset.UtcNow, new[] { new DetectedListDto("node-1", "List", 1, 0, new[] { "Item" }, false, "List", "High") }, new[] { new DetectedTargetDto("node-2", "Target", true, false, false, 1, 0, "Target", "High") }, new[] { new DetectedAlertDto("node-3", "Alert", "Medium", true, null, "High") }, new[] { new DetectedTransitStateDto("Transit", new[] { "node-4" }, "Transit", 0.5, new[] { "Reason" }, "High") }, new[] { new DetectedResourceDto("node-5", "Energy", "Resource", 0.7, 10, false, false, "High") }, new[] { new DetectedCapabilityDto("node-6", "Act", "Enabled", true, true, false, "High") }, new[] { new DetectedPresenceEntityDto("node-7", "Presence", 1, new[] { "Membership" }, "Presence", "Active", "High") }, Array.Empty<string>(), new Dictionary<string, string> { ["confidence"] = "High" }));
+            return Json(new UiSemanticExtractionResultDto("alpha", DateTimeOffset.UtcNow, new[] { new DetectedListDto("node-1", "List", 1, 0, new[] { "Item" }, false, "List", "High") }, new[] { new DetectedTargetDto("node-2", "Target", true, false, false, 1, 0, "Target", "High") }, new[] { new DetectedAlertDto("node-3", "Alert", "Medium", true, null, "High") }, new[] { new DetectedTransitStateDto("Transit", new[] { "node-4" }, "Transit", 0.5, new[] { "Reason" }, "High") }, new[] { new DetectedResourceDto("node-5", "Energy", "Resource", 0.7, 10, false, false, "High") }, new[] { new DetectedCapabilityDto("node-6", "Act", "Enabled", true, true, false, "High") }, new[] { new DetectedPresenceEntityDto("node-7", "Presence", 1, new[] { "Membership" }, "Presence", "Active", "High") }, Array.Empty<TargetSemanticPackageResultDto>(), Array.Empty<string>(), new Dictionary<string, string> { ["confidence"] = "High" }));
         }
 
         if (method == HttpMethod.Get && path == "/sessions/alpha/semantic/summary")
         {
-            return Json(new SemanticSummaryDto("alpha", DateTimeOffset.UtcNow, 1, 1, 1, 1, 1, 1, 1, Array.Empty<string>(), new Dictionary<string, string> { ["confidence"] = "High" }));
+            return Json(new SemanticSummaryDto("alpha", DateTimeOffset.UtcNow, 1, 1, 1, 1, 1, 1, 1, 0, Array.Empty<string>(), Array.Empty<string>(), new Dictionary<string, string> { ["confidence"] = "High" }));
         }
 
         if (method == HttpMethod.Get && path == "/sessions/alpha/domain")

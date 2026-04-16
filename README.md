@@ -117,6 +117,14 @@ Distinción importante:
 - `ISessionSemanticExtractionStore`
   - mantiene el último resultado semántico por `SessionId`
   - permite inspección Admin API separada del estado de dominio final
+- `ITargetSemanticPackageResolver` y `ITargetSemanticPackage`
+  - seleccionan paquetes semánticos por metadata de perfil, por ejemplo `SemanticPackage = EveLike`
+  - mantienen el pipeline genérico como base y agregan resultados específicos del target encima
+  - exponen paquetes y warnings de forma inspectable en `UiSemanticExtractionResult` y en los DTOs de Admin API
+- Paquete semántico `EveLike`
+  - interpreta presencia/local, ruta de viaje, overview, probe scanner, táctico y seguridad/hide desde el árbol UIA normalizado
+  - alimenta candidaturas de riesgo y proyección de dominio sin introducir lógica de comportamiento
+  - no usa OCR, CV ni decisiones de combate/autopiloto; solo semántica derivada del UI tree y metadata
 - `IRiskClassificationPipeline`
   - capa dedicada encima de la extracción semántica
   - construye candidatos de riesgo, aplica reglas configuradas y persiste `RiskAssessmentResult`
@@ -175,6 +183,8 @@ Worker session
   -> semantic classifier
   -> detector extractors
   -> UiSemanticExtractionResult
+  -> target semantic package resolver
+  -> target semantic package result
   -> semantic extraction store
   -> risk candidate builder
   -> risk rules
@@ -198,6 +208,23 @@ Worker session
   -> SessionOperationalMemoryStore
   -> Admin API inspection
 ```
+
+### Paquetes semánticos por target
+
+La Fase 6.3 introduce una capa de paquetes semánticos target-specific sobre el pipeline genérico. La selección es determinística y sale de la metadata del perfil de target, usando la clave `SemanticPackage`. Si no hay paquete configurado, el pipeline genérico sigue funcionando sin cambios.
+
+El primer paquete concreto es `EveLike`. Su objetivo es enriquecer la inspección semántica y las capas derivadas con señales más específicas de un target tipo EVE-like:
+
+- presencia/local y roster visible
+- ruta de viaje y waypoint actual
+- overview con categoría, distancia, estado y selección
+- probe scanner con tipo de firma y estado
+- snapshot táctico agregando objetos visibles y alertas de engagement
+- interpretación de seguridad/hide/dock
+
+El resultado del paquete se expone en los endpoints semánticos existentes, via `UiSemanticExtractionResult` y sus DTOs. Esas señales luego alimentan `IRiskCandidateBuilder` e `ISessionDomainStateProjectionService` de manera aditiva. La fase 6.3 no agrega behavior packs ni toma decisiones de combate, navegación o autopiloto.
+
+La observabilidad reutiliza `RuntimeObservability` y `IObservabilityRecorder` para registrar selección, inicio, éxito, fallo y contadores del paquete semántico.
 
 ## DecisionPlan execution bridge (Fase 2.4)
 

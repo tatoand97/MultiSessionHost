@@ -18,6 +18,7 @@ public sealed class DefaultRiskCandidateBuilder : IRiskCandidateBuilder
         candidates.AddRange(semanticExtraction.TransitStates.Select((state, index) => FromTransit(semanticExtraction, state, index)));
         candidates.AddRange(semanticExtraction.Resources.Select(resource => FromResource(semanticExtraction, resource)));
         candidates.AddRange(semanticExtraction.Capabilities.Select(capability => FromCapability(semanticExtraction, capability)));
+        candidates.AddRange(semanticExtraction.Packages.SelectMany(package => FromPackage(semanticExtraction, package)));
 
         return candidates
             .Where(static candidate => !string.IsNullOrWhiteSpace(candidate.Name))
@@ -222,4 +223,186 @@ public sealed class DefaultRiskCandidateBuilder : IRiskCandidateBuilder
         values
             .Where(static pair => !string.IsNullOrWhiteSpace(pair.Value))
             .ToDictionary(static pair => pair.Key, static pair => pair.Value!, StringComparer.OrdinalIgnoreCase);
+
+    private static IEnumerable<RiskCandidate> FromPackage(UiSemanticExtractionResult result, TargetSemanticPackageResult package)
+    {
+        if (!package.Succeeded || package.EveLike is null)
+        {
+            yield break;
+        }
+
+        yield return FromPackagePresence(result, package, package.EveLike.Presence);
+        yield return FromPackageRoute(result, package, package.EveLike.TravelRoute);
+
+        foreach (var overview in package.EveLike.OverviewEntries)
+        {
+            yield return FromOverviewEntry(result, package, overview);
+        }
+
+        foreach (var probe in package.EveLike.ProbeScannerEntries)
+        {
+            yield return FromProbeEntry(result, package, probe);
+        }
+
+        yield return FromSafety(result, package, package.EveLike.Safety);
+        yield return FromTactical(result, package, package.EveLike.Tactical);
+    }
+
+    private static RiskCandidate FromPackagePresence(UiSemanticExtractionResult result, TargetSemanticPackageResult package, LocalPresenceSnapshot presence)
+    {
+        var first = presence.Entities.FirstOrDefault();
+        var tags = new List<string> { "package", package.PackageName, "presence" };
+        tags.AddRange(presence.Entities.SelectMany(static entity => entity.Tags));
+
+        return new RiskCandidate(
+            $"package:{package.PackageName}:presence",
+            result.SessionId,
+            RiskEntitySource.Presence,
+            first?.Label ?? presence.PanelLabel ?? $"{package.PackageName} presence",
+            first?.Standing ?? "Presence",
+            Normalize(tags),
+            presence.Warnings,
+            ToScore(presence.Confidence),
+            BuildMetadata(
+                ("packageName", package.PackageName),
+                ("panelLabel", presence.PanelLabel),
+                ("visibleEntityCount", presence.VisibleEntityCount.ToString(CultureInfo.InvariantCulture)),
+                ("totalEntityCount", presence.TotalEntityCount?.ToString(CultureInfo.InvariantCulture))));
+    }
+
+    private static RiskCandidate FromPackageRoute(UiSemanticExtractionResult result, TargetSemanticPackageResult package, TravelRouteSnapshot route)
+    {
+        var tags = new List<string> { "package", package.PackageName, "route" };
+
+        if (route.RouteActive)
+        {
+            tags.Add("active");
+        }
+
+        return new RiskCandidate(
+            $"package:{package.PackageName}:route",
+            result.SessionId,
+            RiskEntitySource.Transit,
+            route.DestinationLabel ?? route.CurrentLocationLabel ?? $"{package.PackageName} route",
+            "Route",
+            Normalize(tags),
+            route.Reasons,
+            ToScore(route.Confidence),
+            BuildMetadata(
+                ("packageName", package.PackageName),
+                ("destination", route.DestinationLabel),
+                ("currentLocation", route.CurrentLocationLabel),
+                ("nextWaypoint", route.NextWaypointLabel),
+                ("waypointCount", route.WaypointCount.ToString(CultureInfo.InvariantCulture)),
+                ("progressPercent", route.ProgressPercent?.ToString(CultureInfo.InvariantCulture))));
+    }
+
+    private static RiskCandidate FromOverviewEntry(UiSemanticExtractionResult result, TargetSemanticPackageResult package, OverviewEntrySemantic overview)
+    {
+        var tags = new List<string> { "package", package.PackageName, "overview" };
+
+        if (overview.Selected)
+        {
+            tags.Add("selected");
+        }
+
+        if (overview.Targeted)
+        {
+            tags.Add("targeted");
+        }
+
+        tags.AddRange(new[] { overview.Category, overview.Disposition });
+
+        return new RiskCandidate(
+            $"package:{package.PackageName}:overview:{string.Join('-', overview.SourceNodeIds)}",
+            result.SessionId,
+            RiskEntitySource.Target,
+            overview.Label ?? overview.Category ?? "Overview Entry",
+            overview.Category ?? "Overview",
+            Normalize(tags),
+            overview.Warnings,
+            ToScore(overview.Confidence),
+            BuildMetadata(
+                ("packageName", package.PackageName),
+                ("distanceText", overview.DistanceText),
+                ("distanceValue", overview.DistanceValue?.ToString(CultureInfo.InvariantCulture)),
+                ("selected", overview.Selected.ToString(CultureInfo.InvariantCulture)),
+                ("targeted", overview.Targeted.ToString(CultureInfo.InvariantCulture))));
+    }
+
+    private static RiskCandidate FromProbeEntry(UiSemanticExtractionResult result, TargetSemanticPackageResult package, ProbeScannerEntrySemantic probe)
+    {
+        var tags = new List<string> { "package", package.PackageName, "probe-scanner" };
+        tags.AddRange(new[] { probe.SignatureType, probe.Status });
+
+        return new RiskCandidate(
+            $"package:{package.PackageName}:probe:{string.Join('-', probe.SourceNodeIds)}",
+            result.SessionId,
+            RiskEntitySource.Target,
+            probe.Label ?? probe.SignatureType ?? "Probe Scanner Entry",
+            probe.SignatureType ?? "ProbeScanner",
+            Normalize(tags),
+            probe.Warnings,
+            ToScore(probe.Confidence),
+            BuildMetadata(
+                ("packageName", package.PackageName),
+                ("distanceText", probe.DistanceText),
+                ("distanceValue", probe.DistanceValue?.ToString(CultureInfo.InvariantCulture)),
+                ("status", probe.Status)));
+    }
+
+    private static RiskCandidate FromSafety(UiSemanticExtractionResult result, TargetSemanticPackageResult package, SafetyLocationSemantic safety)
+    {
+        var tags = new List<string> { "package", package.PackageName, "safety" };
+
+        if (safety.IsSafeLocation)
+        {
+            tags.Add("safe");
+        }
+
+        if (safety.HideAvailable)
+        {
+            tags.Add("hide");
+        }
+
+        return new RiskCandidate(
+            $"package:{package.PackageName}:safety",
+            result.SessionId,
+            RiskEntitySource.Target,
+            safety.SafeLocationLabel ?? $"{package.PackageName} safety",
+            "Safety",
+            Normalize(tags),
+            safety.Reasons,
+            ToScore(safety.Confidence),
+            BuildMetadata(
+                ("packageName", package.PackageName),
+                ("isSafeLocation", safety.IsSafeLocation.ToString(CultureInfo.InvariantCulture)),
+                ("hideAvailable", safety.HideAvailable.ToString(CultureInfo.InvariantCulture)),
+                ("dockedHint", safety.DockedHint.ToString(CultureInfo.InvariantCulture)),
+                ("tetheredHint", safety.TetheredHint.ToString(CultureInfo.InvariantCulture))));
+    }
+
+    private static RiskCandidate FromTactical(UiSemanticExtractionResult result, TargetSemanticPackageResult package, TacticalSnapshot tactical)
+    {
+        var tags = new List<string> { "package", package.PackageName, "tactical" };
+
+        if (tactical.HostileCandidateCount > 0)
+        {
+            tags.Add("hostile");
+        }
+
+        return new RiskCandidate(
+            $"package:{package.PackageName}:tactical",
+            result.SessionId,
+            RiskEntitySource.Target,
+            tactical.SelectedTargetLabels.FirstOrDefault() ?? $"{package.PackageName} tactical",
+            "Tactical",
+            Normalize(tags),
+            tactical.EngagementAlerts.Concat(tactical.Warnings).ToArray(),
+            ToScore(tactical.Confidence),
+            BuildMetadata(
+                ("packageName", package.PackageName),
+                ("hostileCandidateCount", tactical.HostileCandidateCount.ToString(CultureInfo.InvariantCulture)),
+                ("selectedTargetCount", tactical.SelectedTargetLabels.Count.ToString(CultureInfo.InvariantCulture))));
+    }
 }
