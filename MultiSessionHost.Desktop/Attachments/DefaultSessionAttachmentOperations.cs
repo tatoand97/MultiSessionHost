@@ -2,6 +2,7 @@ using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Observability;
+using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Models;
 
 namespace MultiSessionHost.Desktop.Attachments;
@@ -14,6 +15,7 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
     private readonly IAttachedSessionStore _attachedSessionStore;
     private readonly IDesktopTargetProfileResolver _targetProfileResolver;
     private readonly IDesktopTargetAdapterRegistry _adapterRegistry;
+    private readonly ISessionRecoveryStateStore _recoveryStateStore;
     private readonly IObservabilityRecorder _observabilityRecorder;
 
     public DefaultSessionAttachmentOperations(
@@ -23,6 +25,7 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
         IAttachedSessionStore attachedSessionStore,
         IDesktopTargetProfileResolver targetProfileResolver,
         IDesktopTargetAdapterRegistry adapterRegistry,
+        ISessionRecoveryStateStore recoveryStateStore,
         IObservabilityRecorder observabilityRecorder)
     {
         _sessionRegistry = sessionRegistry;
@@ -31,6 +34,7 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
         _attachedSessionStore = attachedSessionStore;
         _targetProfileResolver = targetProfileResolver;
         _adapterRegistry = adapterRegistry;
+        _recoveryStateStore = recoveryStateStore;
         _observabilityRecorder = observabilityRecorder;
     }
 
@@ -39,27 +43,74 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
         ResolvedDesktopTargetContext context,
         CancellationToken cancellationToken)
     {
+        var decision = await _recoveryStateStore.TryBeginAttemptAsync(snapshot.SessionId, SessionRecoveryAttemptKind.AttachmentEnsure, cancellationToken).ConfigureAwait(false);
+
+        if (!decision.CanAttempt)
+        {
+            await _observabilityRecorder.RecordActivityAsync(snapshot.SessionId, "recovery.backoff.skipped_attempt", SessionObservabilityOutcome.Blocked.ToString(), TimeSpan.Zero, decision.ReasonCode, decision.Reason, nameof(DefaultSessionAttachmentOperations), new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["attemptKind"] = SessionRecoveryAttemptKind.AttachmentEnsure.ToString()
+            }, cancellationToken).ConfigureAwait(false);
+
+            throw new InvalidOperationException(decision.Reason ?? "Recovery attempt is blocked.");
+        }
+
         var adapter = _adapterRegistry.Resolve(context.Profile.Kind);
         var current = await _attachedSessionStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
         var startedAt = DateTimeOffset.UtcNow;
+        var metadataDriftDetected = current is not null && !AreEquivalent(current.Target, context.Target);
 
         if (current is not null && AreEquivalent(current.Target, context.Target))
         {
-            await adapter.ValidateAttachmentAsync(snapshot, context, current, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await adapter.ValidateAttachmentAsync(snapshot, context, current, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                await HandleEnsureFailureAsync(snapshot.SessionId, exception, metadataDriftDetected, cancellationToken).ConfigureAwait(false);
+                throw;
+            }
+
+            await _recoveryStateStore.RegisterSuccessAsync(snapshot.SessionId, "attachment-refresh", "recovery.success_cleared_failures", "Existing attachment remains valid.", new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+            RuntimeObservability.RecoveryReattachDuration.Record((DateTimeOffset.UtcNow - startedAt).TotalMilliseconds, new KeyValuePair<string, object?>("session.id", snapshot.SessionId.Value));
             await _observabilityRecorder.RecordAttachmentAsync(snapshot.SessionId, "refresh", adapter.GetType().Name, SessionObservabilityOutcome.Success.ToString(), DateTimeOffset.UtcNow - startedAt, context.Profile.Kind.ToString(), null, null, nameof(DefaultSessionAttachmentOperations), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
             return current;
         }
 
         if (current is not null)
         {
+            if (metadataDriftDetected)
+            {
+                await _recoveryStateStore.MarkMetadataDriftDetectedAsync(snapshot.SessionId, "recovery.metadata_drift.detected", "Target metadata drift was detected during reattach.", new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+            }
+
             await adapter.DetachAsync(snapshot, context, current, cancellationToken).ConfigureAwait(false);
             await _attachedSessionStore.RemoveAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
         }
 
-        var attachment = await _attachmentResolver.ResolveAsync(snapshot, cancellationToken).ConfigureAwait(false);
-        await adapter.ValidateAttachmentAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
-        await adapter.AttachAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
+        DesktopSessionAttachment attachment;
+
+        try
+        {
+            attachment = await _attachmentResolver.ResolveAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            await adapter.ValidateAttachmentAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
+            await adapter.AttachAsync(snapshot, context, attachment, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await HandleEnsureFailureAsync(snapshot.SessionId, exception, metadataDriftDetected, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
         await _attachedSessionStore.SetAsync(attachment, cancellationToken).ConfigureAwait(false);
+        if (metadataDriftDetected)
+        {
+            await _recoveryStateStore.MarkMetadataDriftClearedAsync(snapshot.SessionId, "recovery.metadata_drift.cleared", "Target metadata drift was resolved by reattach.", new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+        }
+
+        await _recoveryStateStore.RegisterSuccessAsync(snapshot.SessionId, current is null ? "attachment.ensure" : "attachment.reattach", "recovery.success_cleared_failures", current is null ? "Attachment ensure succeeded." : "Attachment reattach succeeded.", new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+        RuntimeObservability.RecoveryReattachDuration.Record((DateTimeOffset.UtcNow - startedAt).TotalMilliseconds, new KeyValuePair<string, object?>("session.id", snapshot.SessionId.Value));
         await _observabilityRecorder.RecordAttachmentAsync(
             snapshot.SessionId,
             current is null ? "attach" : "reattach",
@@ -107,6 +158,8 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
         }
 
         await _attachedSessionStore.RemoveAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        await _recoveryStateStore.MarkAttachmentInvalidAsync(sessionId, "recovery.attachment.invalidated", "Attachment was invalidated explicitly.", new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+        await _recoveryStateStore.MarkSnapshotInvalidatedAsync(sessionId, "recovery.snapshot.invalidated", "Snapshot was invalidated alongside attachment invalidation.", new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
         await _observabilityRecorder.RecordAttachmentAsync(
             sessionId,
             "invalidate",
@@ -120,6 +173,31 @@ public sealed class DefaultSessionAttachmentOperations : ISessionAttachmentOpera
             new Dictionary<string, string>(StringComparer.Ordinal),
             cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    private async Task HandleEnsureFailureAsync(SessionId sessionId, Exception exception, bool metadataDriftDetected, CancellationToken cancellationToken)
+    {
+        var category = metadataDriftDetected
+            ? SessionRecoveryFailureCategory.MetadataDrift
+            : exception is InvalidOperationException or ArgumentException
+                ? SessionRecoveryFailureCategory.TargetInvalid
+                : SessionRecoveryFailureCategory.AttachmentEnsureFailed;
+
+        await _recoveryStateStore.RegisterFailureAsync(
+            sessionId,
+            category,
+            "attachment.ensure-failed",
+            category == SessionRecoveryFailureCategory.MetadataDrift ? "recovery.metadata_drift.detected" : category == SessionRecoveryFailureCategory.TargetInvalid ? "recovery.target.invalid" : "recovery.attachment.ensure.failed",
+            exception.Message,
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            cancellationToken).ConfigureAwait(false);
+
+        if (category == SessionRecoveryFailureCategory.TargetInvalid)
+        {
+            await _recoveryStateStore.MarkTargetQuarantinedAsync(sessionId, "recovery.target.quarantined", exception.Message, new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+        }
+
+        await _observabilityRecorder.RecordAdapterErrorAsync(sessionId, "attachment", "attachment.ensure", exception, category == SessionRecoveryFailureCategory.MetadataDrift ? "recovery.metadata_drift.detected" : "recovery.attachment.ensure.failed", nameof(DefaultSessionAttachmentOperations), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
     }
 
     private static ResolvedDesktopTargetContext CreateFallbackContext(SessionSnapshot snapshot, DesktopSessionAttachment attachment)

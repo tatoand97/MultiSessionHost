@@ -1,6 +1,7 @@
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Observability;
+using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 
@@ -127,6 +128,11 @@ public sealed class DefaultSessionActivityStateEvaluator : ISessionActivityState
 
     private static bool IsFaulted(SessionActivityEvaluationContext context)
     {
+        if (context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.Quarantined or SessionRecoveryStatus.Exhausted or SessionRecoveryStatus.Faulted })
+        {
+            return true;
+        }
+
         // Check domain state warnings or error conditions
         if (context.DomainState.Warnings.Any(w => w.Contains("error", StringComparison.OrdinalIgnoreCase) ||
                                                   w.Contains("fault", StringComparison.OrdinalIgnoreCase) ||
@@ -158,6 +164,11 @@ public sealed class DefaultSessionActivityStateEvaluator : ISessionActivityState
 
     private static bool IsRecovering(SessionActivityEvaluationContext context, SessionActivityStateKind currentState)
     {
+        if (context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.Backoff or SessionRecoveryStatus.CircuitOpen or SessionRecoveryStatus.HalfOpen or SessionRecoveryStatus.Recovering })
+        {
+            return true;
+        }
+
         // Recovering applies when transitioning out of Withdrawing/Hiding/degraded states with recovery signals
         if (currentState != SessionActivityStateKind.Withdrawing && 
             currentState != SessionActivityStateKind.Hiding && 
@@ -240,12 +251,12 @@ public sealed class DefaultSessionActivityStateEvaluator : ISessionActivityState
     private static string GetReasonCode(SessionActivityEvaluationContext context, SessionActivityStateKind newState) =>
         newState switch
         {
-            SessionActivityStateKind.Faulted => "domain-fault-detected",
+            SessionActivityStateKind.Faulted => context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.Quarantined } ? "recovery-target-quarantined" : context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.Exhausted } ? "recovery-adapter-exhausted" : "domain-fault-detected",
             SessionActivityStateKind.Withdrawing => context.DecisionPlan.Directives.Any(d => d.DirectiveKind == DecisionDirectiveKind.Withdraw) 
                 ? "decision-plan-withdraw" 
                 : "risk-policy-withdraw",
             SessionActivityStateKind.Hiding => "decision-plan-pause-activity",
-            SessionActivityStateKind.Recovering => "recovery-path-active",
+            SessionActivityStateKind.Recovering => context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.Backoff } ? "recovery-backoff-active" : context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.CircuitOpen } ? "recovery-circuit-open" : context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.HalfOpen } ? "recovery-half-open-probe" : context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.Recovering } ? "recovery-path-active" : "recovery-path-active",
             SessionActivityStateKind.Traveling => "navigation-in-progress",
             SessionActivityStateKind.Arriving => "navigation-arrival-detected",
             SessionActivityStateKind.WaitingForSpawn => "awaiting-target-spawn",
@@ -258,12 +269,12 @@ public sealed class DefaultSessionActivityStateEvaluator : ISessionActivityState
     private static string GetReason(SessionActivityEvaluationContext context, SessionActivityStateKind newState) =>
         newState switch
         {
-            SessionActivityStateKind.Faulted => "Domain has encountered a fault or critical error",
+            SessionActivityStateKind.Faulted => context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.Quarantined } ? "Target is quarantined due to unrecoverable inconsistency." : context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.Exhausted } ? "Recovery attempts are exhausted and require external intervention." : "Domain has encountered a fault or critical error",
             SessionActivityStateKind.Withdrawing => context.DecisionPlan.Directives.Any(d => d.DirectiveKind == DecisionDirectiveKind.Withdraw)
                 ? "Decision plan contains Withdraw directive"
                 : "Risk policy indicates withdrawal required",
             SessionActivityStateKind.Hiding => "Decision plan contains PauseActivity directive for safety",
-            SessionActivityStateKind.Recovering => "Session is recovering from prior blocking or degraded state",
+            SessionActivityStateKind.Recovering => context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.Backoff } ? "Recovery backoff is active for the session." : context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.CircuitOpen } ? "Recovery circuit is open for the session." : context.RecoverySnapshot is { RecoveryStatus: SessionRecoveryStatus.HalfOpen } ? "Recovery is probing the session in half-open mode." : "Session is recovering from prior blocking or degraded state",
             SessionActivityStateKind.Traveling => "Navigation is in active progress toward destination",
             SessionActivityStateKind.Arriving => "Navigation has completed; session has arrived",
             SessionActivityStateKind.WaitingForSpawn => "At location awaiting target spawn or engagement opportunity",

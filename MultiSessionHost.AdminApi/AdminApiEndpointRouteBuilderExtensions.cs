@@ -14,6 +14,7 @@ using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Persistence;
+using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
@@ -491,6 +492,87 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 }
 
                 return Results.Ok(runtimePersistenceCoordinator.GetStatus().ToDto());
+            });
+
+        endpoints.MapGet(
+            "/recovery",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionRecoveryStateStore recoveryStateStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var states = new List<SessionRecoverySnapshot>();
+                foreach (var session in sessionCoordinator.GetSessions())
+                {
+                    states.Add(await recoveryStateStore.GetAsync(session.SessionId, cancellationToken).ConfigureAwait(false));
+                }
+
+                return Results.Ok(states.Select(static state => state.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/recovery",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionRecoveryStateStore recoveryStateStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var snapshot = await recoveryStateStore.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(snapshot.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/recovery/history",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionRecoveryStateStore recoveryStateStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var history = await recoveryStateStore.GetHistoryAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return Results.Ok(history.Select(static entry => entry.ToDto()).ToArray());
             });
 
         endpoints.MapPost(

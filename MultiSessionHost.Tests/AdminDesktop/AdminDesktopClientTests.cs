@@ -298,12 +298,12 @@ public sealed class AdminDesktopViewModelTests
 
         if (method == HttpMethod.Get && path == "/sessions/alpha/persistence")
         {
-            return Json(new RuntimePersistenceSessionStatusDto("alpha", true, DateTimeOffset.UtcNow.AddMinutes(-10), DateTimeOffset.UtcNow, null, "/tmp/alpha.json", 1, 1, 1, 1, 1));
+            return Json(new RuntimePersistenceSessionStatusDto("alpha", true, DateTimeOffset.UtcNow.AddMinutes(-10), DateTimeOffset.UtcNow, null, "/tmp/alpha.json", 1, 1, 1, 1, 1, 0));
         }
 
         if (method == HttpMethod.Get && path == "/persistence")
         {
-            return Json(new RuntimePersistenceStatusDto(true, "Json", "./data", 1, DateTimeOffset.UtcNow, new[] { new RuntimePersistenceSessionStatusDto("alpha", true, DateTimeOffset.UtcNow.AddMinutes(-10), DateTimeOffset.UtcNow, null, "/tmp/alpha.json", 1, 1, 1, 1, 1) }));
+            return Json(new RuntimePersistenceStatusDto(true, "Json", "./data", 1, DateTimeOffset.UtcNow, new[] { new RuntimePersistenceSessionStatusDto("alpha", true, DateTimeOffset.UtcNow.AddMinutes(-10), DateTimeOffset.UtcNow, null, "/tmp/alpha.json", 1, 1, 1, 1, 1, 0) }));
         }
 
         if (method == HttpMethod.Get && path == "/targets")

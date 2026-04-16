@@ -1,8 +1,10 @@
+using MultiSessionHost.Core.Configuration;
 using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Recovery;
 
 namespace MultiSessionHost.Desktop.Drivers;
 
@@ -16,6 +18,9 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
     private readonly IDesktopTargetAdapterRegistry _adapterRegistry;
     private readonly ISessionUiRefreshService _uiRefreshService;
     private readonly ISessionUiStateStore _sessionUiStateStore;
+    private readonly SessionHostOptions _options;
+    private readonly IClock _clock;
+    private readonly ISessionRecoveryStateStore _recoveryStateStore;
 
     public DesktopTargetSessionDriver(
         ISessionAttachmentRuntime sessionAttachmentRuntime,
@@ -25,7 +30,10 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
         IDesktopTargetProfileResolver targetProfileResolver,
         IDesktopTargetAdapterRegistry adapterRegistry,
         ISessionUiRefreshService uiRefreshService,
-        ISessionUiStateStore sessionUiStateStore)
+        ISessionUiStateStore sessionUiStateStore,
+        SessionHostOptions options,
+        IClock clock,
+        ISessionRecoveryStateStore recoveryStateStore)
     {
         _sessionAttachmentRuntime = sessionAttachmentRuntime;
         _attachmentOperations = attachmentOperations;
@@ -35,6 +43,9 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
         _adapterRegistry = adapterRegistry;
         _uiRefreshService = uiRefreshService;
         _sessionUiStateStore = sessionUiStateStore;
+        _options = options;
+        _clock = clock;
+        _recoveryStateStore = recoveryStateStore;
     }
 
     public async Task AttachAsync(SessionSnapshot snapshot, CancellationToken cancellationToken)
@@ -103,8 +114,9 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
     {
         var uiState = await _sessionUiStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"UI state for session '{snapshot.SessionId}' was not initialized.");
+        var recoveryState = await _recoveryStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
 
-        if (!string.IsNullOrWhiteSpace(uiState.RawSnapshotJson))
+        if (!ShouldForceFreshProjection(uiState, recoveryState))
         {
             await _uiRefreshService.ProjectAsync(snapshot, context, attachment: null, cancellationToken).ConfigureAwait(false);
             return;
@@ -116,5 +128,31 @@ public sealed class DesktopTargetSessionDriver : ISessionDriver
             workItem,
             async (attachment, ct) => await _uiRefreshService.ProjectAsync(snapshot, context, attachment, ct).ConfigureAwait(false),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private bool ShouldForceFreshProjection(SessionUiState uiState, SessionRecoverySnapshot recoveryState)
+    {
+        if (recoveryState.RecoveryStatus != SessionRecoveryStatus.Healthy)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(uiState.RawSnapshotJson))
+        {
+            return true;
+        }
+
+        if (recoveryState.IsAttachmentInvalid || recoveryState.IsTargetQuarantined || recoveryState.MetadataDriftDetected || recoveryState.IsSnapshotStale)
+        {
+            return true;
+        }
+
+        if (uiState.LastSnapshotCapturedAtUtc is null)
+        {
+            return true;
+        }
+
+        var staleAfter = uiState.LastSnapshotCapturedAtUtc.Value.AddMilliseconds(_options.Recovery.SnapshotStaleAfterMs);
+        return _clock.UtcNow >= staleAfter;
     }
 }

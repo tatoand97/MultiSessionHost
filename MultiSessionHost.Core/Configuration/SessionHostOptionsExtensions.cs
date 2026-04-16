@@ -112,6 +112,11 @@ public static class SessionHostOptionsExtensions
             return false;
         }
 
+        if (!TryValidateRecovery(options.Recovery, out error))
+        {
+            return false;
+        }
+
         if (!TryValidateObservability(options.Observability, out error))
         {
             return false;
@@ -303,6 +308,88 @@ public static class SessionHostOptionsExtensions
         if (options.MaxHistoryEntries <= 0)
         {
             error = "PolicyControl.MaxHistoryEntries must be greater than zero.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool TryValidateRecovery(
+        RecoveryOptions options,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.ConsecutiveFailureThresholdBeforeBackoff <= 0)
+        {
+            error = "Recovery.ConsecutiveFailureThresholdBeforeBackoff must be greater than zero.";
+            return false;
+        }
+
+        if (options.InitialBackoffMs <= 0)
+        {
+            error = "Recovery.InitialBackoffMs must be greater than zero.";
+            return false;
+        }
+
+        if (options.MaxBackoffMs < options.InitialBackoffMs)
+        {
+            error = "Recovery.MaxBackoffMs must be greater than or equal to Recovery.InitialBackoffMs.";
+            return false;
+        }
+
+        if (options.BackoffMultiplier < 1d)
+        {
+            error = "Recovery.BackoffMultiplier must be greater than or equal to 1.";
+            return false;
+        }
+
+        if (options.CircuitBreakerFailureThreshold <= 0)
+        {
+            error = "Recovery.CircuitBreakerFailureThreshold must be greater than zero.";
+            return false;
+        }
+
+        if (options.CircuitBreakerOpenDurationMs <= 0)
+        {
+            error = "Recovery.CircuitBreakerOpenDurationMs must be greater than zero.";
+            return false;
+        }
+
+        if (options.HalfOpenMaxProbeAttempts <= 0)
+        {
+            error = "Recovery.HalfOpenMaxProbeAttempts must be greater than zero.";
+            return false;
+        }
+
+        if (options.SnapshotStaleAfterMs <= 0)
+        {
+            error = "Recovery.SnapshotStaleAfterMs must be greater than zero.";
+            return false;
+        }
+
+        if (options.ConsecutiveMetadataDriftThreshold <= 0)
+        {
+            error = "Recovery.ConsecutiveMetadataDriftThreshold must be greater than zero.";
+            return false;
+        }
+
+        if (options.MaxReattachAttempts <= 0)
+        {
+            error = "Recovery.MaxReattachAttempts must be greater than zero.";
+            return false;
+        }
+
+        if (options.ExhaustedAdapterFailureThreshold <= 0)
+        {
+            error = "Recovery.ExhaustedAdapterFailureThreshold must be greater than zero.";
+            return false;
+        }
+
+        if (options.RecoveryHistoryLimit <= 0)
+        {
+            error = "Recovery.RecoveryHistoryLimit must be greater than zero.";
             return false;
         }
 

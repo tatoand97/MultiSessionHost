@@ -9,6 +9,7 @@ using MultiSessionHost.Desktop.DependencyInjection;
 using MultiSessionHost.Desktop.Drivers;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Snapshots;
 using MultiSessionHost.Desktop.Targets;
 using MultiSessionHost.Infrastructure.Coordination;
@@ -98,6 +99,7 @@ public sealed class DesktopTargetAdapterSystemTests
         var adapter = new SpyDesktopTargetAdapter(DesktopTargetKind.SelfHostedHttpDesktop);
         var attachmentRuntime = new StubSessionAttachmentRuntime(attachment);
         var attachmentOperations = new StubSessionAttachmentOperations(attachment);
+        var recoveryStore = new InMemorySessionRecoveryStateStore(options, clock);
         var driver = new DesktopTargetSessionDriver(
             attachmentRuntime,
             attachmentOperations,
@@ -106,7 +108,10 @@ public sealed class DesktopTargetAdapterSystemTests
             new StubDesktopTargetProfileResolver(context),
             new DesktopTargetAdapterRegistry([adapter]),
             new StubSessionUiRefreshService(),
-            uiStateStore);
+            uiStateStore,
+            options,
+            clock,
+            recoveryStore);
 
         await driver.ExecuteWorkItemAsync(
             snapshot,

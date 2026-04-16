@@ -41,6 +41,8 @@ public sealed class SessionHostOptions
 
     public PolicyControlOptions PolicyControl { get; init; } = new();
 
+    public RecoveryOptions Recovery { get; init; } = new();
+
     public IReadOnlyList<DesktopTargetProfileOptions> DesktopTargets { get; init; } = [];
 
     public IReadOnlyList<SessionTargetBindingOptions> SessionTargetBindings { get; init; } = [];
@@ -120,6 +122,43 @@ public sealed class PolicyControlOptions
     public bool BlockManualExecutionWhenPaused { get; init; } = true;
 
     public bool EmitPausedDecisionPlan { get; init; } = true;
+}
+
+public sealed class RecoveryOptions
+{
+    public bool EnableRecovery { get; init; } = true;
+
+    public int ConsecutiveFailureThresholdBeforeBackoff { get; init; } = 3;
+
+    public int InitialBackoffMs { get; init; } = 250;
+
+    public int MaxBackoffMs { get; init; } = 15_000;
+
+    public double BackoffMultiplier { get; init; } = 2d;
+
+    public int CircuitBreakerFailureThreshold { get; init; } = 5;
+
+    public int CircuitBreakerOpenDurationMs { get; init; } = 5_000;
+
+    public int HalfOpenMaxProbeAttempts { get; init; } = 1;
+
+    public int SnapshotStaleAfterMs { get; init; } = 30_000;
+
+    public bool MetadataDriftRecoveryEnabled { get; init; } = true;
+
+    public int ConsecutiveMetadataDriftThreshold { get; init; } = 3;
+
+    public bool AutoReattachEnabled { get; init; } = true;
+
+    public int MaxReattachAttempts { get; init; } = 3;
+
+    public bool QuarantineInvalidTargets { get; init; } = true;
+
+    public bool PersistRecoveryState { get; init; } = true;
+
+    public int ExhaustedAdapterFailureThreshold { get; init; } = 6;
+
+    public int RecoveryHistoryLimit { get; init; } = 100;
 }
 
 public sealed class ObservabilityOptions

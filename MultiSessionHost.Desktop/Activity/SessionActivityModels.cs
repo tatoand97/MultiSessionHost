@@ -1,4 +1,5 @@
 using MultiSessionHost.Core.Models;
+using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 
@@ -63,6 +64,7 @@ public sealed record SessionActivityEvaluationContext(
     DecisionPlan DecisionPlan,
     RiskAssessmentResult? RiskAssessment,
     SessionActivitySnapshot? PreviousSnapshot,
+    SessionRecoverySnapshot? RecoverySnapshot,
     DateTimeOffset EvaluatedAtUtc);
 
 /// <summary>

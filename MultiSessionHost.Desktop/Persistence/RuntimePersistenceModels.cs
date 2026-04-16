@@ -2,6 +2,7 @@ using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Memory;
+using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 
@@ -20,6 +21,8 @@ public sealed record SessionRuntimePersistenceEnvelope(
     IReadOnlyList<DecisionPlanExecutionRecord> DecisionExecutionHistory,
     SessionPolicyControlState? PolicyControlState,
     IReadOnlyList<SessionPolicyControlHistoryEntry> PolicyControlHistory,
+    SessionRecoverySnapshot? RecoveryState,
+    IReadOnlyList<SessionRecoveryHistoryEntry> RecoveryHistory,
     IReadOnlyDictionary<string, string> Metadata);
 
 public sealed record RuntimePersistenceSessionStatus(
@@ -33,7 +36,8 @@ public sealed record RuntimePersistenceSessionStatus(
     int OperationalMemoryHistoryCount,
     int DecisionPlanHistoryCount,
     int DecisionExecutionHistoryCount,
-    int PolicyControlHistoryCount);
+    int PolicyControlHistoryCount,
+    int RecoveryHistoryCount);
 
 public sealed record RuntimePersistenceStatusSnapshot(
     bool Enabled,

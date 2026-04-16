@@ -4,6 +4,7 @@ using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Tests.Common;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
+using MultiSessionHost.Desktop.Recovery;
 
 namespace MultiSessionHost.Tests.Activity;
 
@@ -21,7 +22,7 @@ public class SessionActivityStateEvaluatorTests
         var risk = RiskAssessmentResult.Empty(sessionId, _testNow);
 
         var context = new SessionActivityEvaluationContext(
-            sessionId, domain, plan, risk, null, _testNow);
+            sessionId, domain, plan, risk, null, null, _testNow);
 
         var result = await _evaluator.EvaluateAsync(context, CancellationToken.None);
 
@@ -41,7 +42,7 @@ public class SessionActivityStateEvaluatorTests
         var previousSnapshot = SessionActivitySnapshot.CreateBootstrap(sessionId, _testNow);
 
         var context = new SessionActivityEvaluationContext(
-            sessionId, domain, plan, risk, previousSnapshot, _testNow);
+            sessionId, domain, plan, risk, previousSnapshot, null, _testNow);
 
         var result = await _evaluator.EvaluateAsync(context, CancellationToken.None);
 
@@ -73,7 +74,7 @@ public class SessionActivityStateEvaluatorTests
         var previousSnapshot = SessionActivitySnapshot.CreateBootstrap(sessionId, _testNow);
 
         var context = new SessionActivityEvaluationContext(
-            sessionId, domain, plan, risk, previousSnapshot, _testNow);
+            sessionId, domain, plan, risk, previousSnapshot, null, _testNow);
 
         var result = await _evaluator.EvaluateAsync(context, CancellationToken.None);
 
@@ -105,7 +106,7 @@ public class SessionActivityStateEvaluatorTests
         var previousSnapshot = SessionActivitySnapshot.CreateBootstrap(sessionId, _testNow);
 
         var context = new SessionActivityEvaluationContext(
-            sessionId, domain, plan, risk, previousSnapshot, _testNow);
+            sessionId, domain, plan, risk, previousSnapshot, null, _testNow);
 
         var result = await _evaluator.EvaluateAsync(context, CancellationToken.None);
 
@@ -131,7 +132,7 @@ public class SessionActivityStateEvaluatorTests
         var previousSnapshot = SessionActivitySnapshot.CreateBootstrap(sessionId, _testNow);
 
         var context = new SessionActivityEvaluationContext(
-            sessionId, domain, plan, risk, previousSnapshot, _testNow);
+            sessionId, domain, plan, risk, previousSnapshot, null, _testNow);
 
         var result = await _evaluator.EvaluateAsync(context, CancellationToken.None);
 
@@ -157,7 +158,7 @@ public class SessionActivityStateEvaluatorTests
         var previousSnapshot = SessionActivitySnapshot.CreateBootstrap(sessionId, _testNow);
 
         var context = new SessionActivityEvaluationContext(
-            sessionId, domain, plan, risk, previousSnapshot, _testNow);
+            sessionId, domain, plan, risk, previousSnapshot, null, _testNow);
 
         var result = await _evaluator.EvaluateAsync(context, CancellationToken.None);
 
@@ -185,7 +186,7 @@ public class SessionActivityStateEvaluatorTests
         var risk = RiskAssessmentResult.Empty(sessionId, _testNow);
 
         var context1 = new SessionActivityEvaluationContext(
-            sessionId, domain1, plan, risk, previousSnapshot, _testNow);
+            sessionId, domain1, plan, risk, previousSnapshot, null, _testNow);
         var result1 = await _evaluator.EvaluateAsync(context1, CancellationToken.None);
 
         Assert.Single(result1.NewSnapshot.History);
@@ -199,11 +200,72 @@ public class SessionActivityStateEvaluatorTests
         var domain2 = domain1 with { Navigation = navigation2 };
 
         var context2 = new SessionActivityEvaluationContext(
-            sessionId, domain2, plan, risk, result1.NewSnapshot, _testNow.AddSeconds(10));
+            sessionId, domain2, plan, risk, result1.NewSnapshot, null, _testNow.AddSeconds(10));
         var result2 = await _evaluator.EvaluateAsync(context2, CancellationToken.None);
 
         Assert.Equal(2, result2.NewSnapshot.History.Count);
         Assert.Equal(SessionActivityStateKind.Arriving, result2.NewSnapshot.CurrentState);
         Assert.Equal(SessionActivityStateKind.Traveling, result2.NewSnapshot.PreviousState);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_RecoveryBackoff_TransitionsToRecovering()
+    {
+        var sessionId = new SessionId("test-recovery-backoff");
+        var domain = SessionDomainState.CreateBootstrap(sessionId, _testNow);
+        var plan = DecisionPlan.Empty(sessionId, _testNow);
+        var risk = RiskAssessmentResult.Empty(sessionId, _testNow);
+        var recovery = SessionRecoverySnapshot.Create(sessionId) with
+        {
+            RecoveryStatus = SessionRecoveryStatus.Backoff,
+            CircuitBreakerState = SessionRecoveryCircuitState.Closed,
+            IsBlockedFromRecoveryAttempts = true
+        };
+
+        var context = new SessionActivityEvaluationContext(
+            sessionId,
+            domain,
+            plan,
+            risk,
+            SessionActivitySnapshot.CreateBootstrap(sessionId, _testNow),
+            recovery,
+            _testNow);
+
+        var result = await _evaluator.EvaluateAsync(context, CancellationToken.None);
+
+        Assert.Equal(SessionActivityStateKind.Recovering, result.NewSnapshot.CurrentState);
+        Assert.NotNull(result.Transition);
+        Assert.Equal("recovery-backoff-active", result.Transition.ReasonCode);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_RecoveryExhausted_TransitionsToFaulted()
+    {
+        var sessionId = new SessionId("test-recovery-exhausted");
+        var domain = SessionDomainState.CreateBootstrap(sessionId, _testNow);
+        var plan = DecisionPlan.Empty(sessionId, _testNow);
+        var risk = RiskAssessmentResult.Empty(sessionId, _testNow);
+        var recovery = SessionRecoverySnapshot.Create(sessionId) with
+        {
+            RecoveryStatus = SessionRecoveryStatus.Exhausted,
+            CircuitBreakerState = SessionRecoveryCircuitState.Open,
+            AdapterHealthState = SessionAdapterHealthState.Exhausted,
+            IsBlockedFromRecoveryAttempts = true
+        };
+
+        var context = new SessionActivityEvaluationContext(
+            sessionId,
+            domain,
+            plan,
+            risk,
+            SessionActivitySnapshot.CreateBootstrap(sessionId, _testNow),
+            recovery,
+            _testNow);
+
+        var result = await _evaluator.EvaluateAsync(context, CancellationToken.None);
+
+        Assert.Equal(SessionActivityStateKind.Faulted, result.NewSnapshot.CurrentState);
+        Assert.NotNull(result.Transition);
+        Assert.Equal("recovery-adapter-exhausted", result.Transition.ReasonCode);
     }
 }

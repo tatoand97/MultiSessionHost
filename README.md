@@ -157,14 +157,20 @@ Distinción importante:
   - construye y rehidrata envelopes durables por sesión
   - centraliza flush, errores, status y backend pluggable
   - usa backend local JSON primero, con escritura atómica
+- `ISessionRecoveryStateStore`
+  - mantiene estado de recuperación por sesión
+  - aplica backoff, circuit breaker, cuarentena, salud de adapter y flags de snapshot/attachment
+  - conserva historial acotado para Admin API, observabilidad y persistencia runtime
 
 ## Flujo runtime
 
 ```text
 Worker session
   -> target resolution
+  -> recovery gate/backoff/circuit probe
   -> attachment ensure
   -> UI capture/project
+  -> stale snapshot invalidation
   -> UiTree query helpers
   -> semantic classifier
   -> detector extractors
@@ -185,6 +191,7 @@ Worker session
   -> decision plan store
   -> activity state evaluation
   -> SessionActivityStateStore
+  -> recovery snapshot/history update
   -> optional decision plan execution
   -> SessionDecisionPlanExecutionStore
   -> operational memory update
@@ -528,6 +535,109 @@ Los endpoints de status exponen:
 - `LastError` si hubo error de carga o guardado.
 - si la sesión fue rehidratada desde disco.
 - path del archivo cuando aplica.
+
+## Reconciliación y self-healing (Fase 5.1)
+
+Fase 5.1 agrega recuperación explícita al runtime Worker-first sin reemplazar el Admin API, AdminDesktop, observabilidad, policy engine, lifecycle de attachments ni persistencia. La recuperación vive por sesión en `ISessionRecoveryStateStore` y se integra en los puntos target-facing existentes: resolución/attachment, refresh/proyección UI, driver desktop, evaluación de actividad, observabilidad y persistence envelope.
+
+### Modelo de recuperación
+
+Cada sesión expone un `SessionRecoverySnapshot` con:
+
+- `RecoveryStatus`: `Healthy`, `Recovering`, `Backoff`, `CircuitOpen`, `HalfOpen`, `Quarantined`, `Exhausted` o `Faulted`.
+- `CircuitBreakerState`: `Closed`, `Open` o `HalfOpen`.
+- contador consecutivo de fallos y conteos por categoría.
+- timestamps de último fallo, último éxito, backoff y próximo intento elegible.
+- flags `IsSnapshotStale`, `IsAttachmentInvalid`, `IsTargetQuarantined` y `MetadataDriftDetected`.
+- `AdapterHealthState`: `Healthy`, `Degraded` o `Exhausted`.
+- última acción/reason code/reason y metadata pequeña.
+
+Categorías genéricas incluidas: `AttachmentEnsureFailed`, `AttachmentLost`, `SnapshotCaptureFailed`, `SnapshotStale`, `TargetInvalid`, `MetadataDrift`, `AdapterTransientFailure`, `AdapterDegraded`, `AdapterExhausted`, `RefreshProjectionFailure` y `CommandExecutionFailure`.
+
+### Backoff y circuit breaker
+
+Los fallos repetidos incrementan presión por sesión. Al alcanzar `ConsecutiveFailureThresholdBeforeBackoff`, el store calcula `BackoffUntilUtc`/`NextRecoveryAttemptAtUtc` con backoff exponencial acotado. Mientras el backoff está activo, los intentos target-facing se bloquean para esa sesión y se emite `recovery.backoff.skipped_attempt`; otras sesiones no se bloquean.
+
+Al alcanzar `CircuitBreakerFailureThreshold`, el circuito de la sesión pasa a `Open` durante `CircuitBreakerOpenDurationMs`. Cuando vence el intervalo, el siguiente intento entra en `HalfOpen` y permite hasta `HalfOpenMaxProbeAttempts`. Un probe exitoso cierra el breaker y limpia presión; un probe fallido vuelve a abrirlo.
+
+### Snapshots, targets y reattach
+
+`DefaultSessionUiRefreshService.ProjectAsync` detecta snapshots viejos con `SnapshotStaleAfterMs`. Un snapshot stale se invalida conservadoramente: se borra el raw/proyección/diff/work items del `SessionUiState`, se marca recuperación y se fuerza captura nueva cuando hay attachment disponible.
+
+`DefaultSessionAttachmentOperations` usa el recovery gate antes de asegurar attachment. Si el attachment existente no coincide con el target resuelto, se trata como drift/reattach: detach del viejo, resolve/validate/attach usando el runtime existente y limpieza de recuperación en éxito. Fallos de resolución/validación clasifican la categoría y pueden activar backoff, circuito, cuarentena o adapter exhaustion.
+
+La cuarentena de target es runtime state, no muta perfiles ni bindings. Se usa para condiciones inválidas persistentes o metadata drift repetido. Una corrección posterior de binding/target o resolución válida puede limpiar la cuarentena mediante el store de recuperación.
+
+### Metadata drift y adapter health
+
+El runtime compara metadata de identidad ya disponible en target/profile/binding/attachment. Si el target renderizado ya no equivale al attachment confiado, se marca `MetadataDriftDetected`, se invalida la confianza del attachment/snapshot según el camino, y se intenta re-resolver/reattach. Drift repetido puede escalar a cuarentena.
+
+La salud del adapter distingue degradación recuperable de exhaustion. `Degraded` mantiene la sesión en recuperación inspeccionable; `Exhausted` bloquea nuevos intentos de recuperación hasta intervención externa o cambio runtime relevante.
+
+### Actividad
+
+`ISessionActivityStateEvaluator` consume `SessionRecoverySnapshot` como input adicional. No reemplaza la máquina de estados: solo añade razones recovery-aware. Backoff, circuito abierto y half-open producen `Recovering`; cuarentena, exhaustion o fault terminal producen `Faulted`. Reason codes destacados:
+
+- `recovery-backoff-active`
+- `recovery-circuit-open`
+- `recovery-half-open-probe`
+- `recovery-target-quarantined`
+- `recovery-adapter-exhausted`
+
+### Configuración
+
+`MultiSessionHost:Recovery`:
+
+```json
+{
+  "Recovery": {
+    "EnableRecovery": true,
+    "ConsecutiveFailureThresholdBeforeBackoff": 3,
+    "InitialBackoffMs": 250,
+    "MaxBackoffMs": 15000,
+    "BackoffMultiplier": 2,
+    "CircuitBreakerFailureThreshold": 5,
+    "CircuitBreakerOpenDurationMs": 5000,
+    "HalfOpenMaxProbeAttempts": 1,
+    "SnapshotStaleAfterMs": 30000,
+    "MetadataDriftRecoveryEnabled": true,
+    "ConsecutiveMetadataDriftThreshold": 3,
+    "AutoReattachEnabled": true,
+    "MaxReattachAttempts": 3,
+    "QuarantineInvalidTargets": true,
+    "PersistRecoveryState": true,
+    "ExhaustedAdapterFailureThreshold": 6,
+    "RecoveryHistoryLimit": 100
+  }
+}
+```
+
+### Persistencia
+
+Cuando `Recovery.PersistRecoveryState=true`, el runtime persistence envelope incluye el snapshot de recuperación y su historial acotado. La rehidratación es tolerante como el resto de persistence: datos ausentes o corruptos no reemplazan el arranque seguro de la sesión. No se persisten raw snapshots, payloads grandes, attachments, handles, procesos ni ventanas.
+
+### Admin API de recuperación
+
+- `GET /recovery`: snapshots de recuperación de todas las sesiones configuradas, incluyendo sesiones saludables que todavía no tuvieron fallos.
+- `GET /sessions/{id}/recovery`: snapshot actual de una sesión.
+- `GET /sessions/{id}/recovery/history`: historial acotado de eventos/transiciones de recuperación.
+
+Los payloads exponen modo actual, breaker, fallos consecutivos y por categoría, backoff/próximo intento, flags stale/attachment/quarantine/drift, salud de adapter, última acción/reason y si la sesión está bloqueada para intentos.
+
+### Observabilidad
+
+Fase 5.1 reutiliza `RuntimeObservability` y `IObservabilityRecorder`. Eventos/reasons emitidos incluyen backoff, circuit open/half-open/closed, stale snapshot, invalidación, cuarentena, reattach iniciado/exitoso/fallido, metadata drift detectado/limpiado, adapter degraded/exhausted y limpieza por éxito.
+
+Métricas nuevas:
+
+- `recovery.attempts.total`
+- `recovery.success.total`
+- `recovery.failure.total`
+- `recovery.circuit.open.total`
+- `recovery.snapshot.stale.total`
+- `recovery.target.quarantine.total`
+- `recovery.backoff.current.ms`
+- `recovery.reattach.duration.ms`
 - conteos de historiales persistidos.
 
 ## Modelo de dominio por sesión
@@ -1473,6 +1583,11 @@ La sección sigue siendo `MultiSessionHost`.
 - `RuntimePersistence.SchemaVersion` debe ser mayor que cero.
 - `RuntimePersistence.MaxDecisionHistoryEntries` debe ser mayor que cero.
 - `RuntimePersistence.Mode=None` solo es válido cuando `RuntimePersistence.EnableRuntimePersistence=false`.
+- `Recovery.ConsecutiveFailureThresholdBeforeBackoff` debe ser mayor que cero.
+- `Recovery.InitialBackoffMs` debe ser mayor que cero.
+- `Recovery.MaxBackoffMs` debe ser mayor o igual que `Recovery.InitialBackoffMs`.
+- `Recovery.BackoffMultiplier` debe ser mayor o igual que 1.
+- `Recovery.CircuitBreakerFailureThreshold`, `CircuitBreakerOpenDurationMs`, `HalfOpenMaxProbeAttempts`, `SnapshotStaleAfterMs`, `ConsecutiveMetadataDriftThreshold`, `MaxReattachAttempts`, `ExhaustedAdapterFailureThreshold` y `RecoveryHistoryLimit` deben ser mayores que cero.
 
 ## Admin API
 
@@ -1512,6 +1627,9 @@ Endpoints existentes mantenidos:
 - `POST /sessions/{id}/decision-plan/evaluate`
 - `GET /persistence`
 - `GET /sessions/{id}/persistence`
+- `GET /recovery`
+- `GET /sessions/{id}/recovery`
+- `GET /sessions/{id}/recovery/history`
 - `POST /persistence/flush`
 - `POST /sessions/{id}/persistence/flush`
 - `GET /policy`

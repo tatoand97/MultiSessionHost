@@ -9,6 +9,7 @@ using MultiSessionHost.Desktop.Activity;
 using MultiSessionHost.Desktop.Behavior;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Persistence;
+using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Infrastructure.Registry;
@@ -90,6 +91,8 @@ public sealed class RuntimePersistenceTests
             DecisionExecutionHistory: [],
             PolicyControlState: SessionPolicyControlState.Create(sessionId),
             PolicyControlHistory: [],
+            RecoveryState: null,
+            RecoveryHistory: [],
             Metadata: new Dictionary<string, string>());
 
         await backend.SaveSessionAsync(envelope, CancellationToken.None);
@@ -191,6 +194,49 @@ public sealed class RuntimePersistenceTests
     }
 
     [Fact]
+    public async Task Coordinator_PersistsAndRehydratesRecoveryState()
+    {
+        var root = CreateTempDirectory();
+        var options = CreatePersistenceOptions(
+            root,
+            "persist-recovery",
+            runtimePersistence: new RuntimePersistenceOptions
+            {
+                EnableRuntimePersistence = true,
+                Mode = RuntimePersistenceMode.JsonFile,
+                BasePath = root,
+                AutoFlushAfterStateChanges = true
+            });
+        var sessionId = new SessionId("persist-recovery");
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-04-15T12:00:00Z"));
+        var first = CreateStores(options, clock);
+
+        await RegisterSessionsAsync(first.Registry, options, clock);
+        await first.RecoveryStore.RegisterFailureAsync(
+            sessionId,
+            SessionRecoveryFailureCategory.AttachmentEnsureFailed,
+            "attach",
+            "recovery.attachment.ensure.failed",
+            "failed once",
+            new Dictionary<string, string> { ["source"] = "test" },
+            CancellationToken.None);
+        await first.Coordinator.FlushAllAsync(CancellationToken.None);
+
+        var second = CreateStores(options, clock);
+        await RegisterSessionsAsync(second.Registry, options, clock);
+        await second.Coordinator.RehydrateAsync(CancellationToken.None);
+
+        var state = await second.RecoveryStore.GetAsync(sessionId, CancellationToken.None);
+        var history = await second.RecoveryStore.GetHistoryAsync(sessionId, CancellationToken.None);
+
+        Assert.Equal(SessionRecoveryStatus.Recovering, state.RecoveryStatus);
+        Assert.Equal(1, state.ConsecutiveFailureCount);
+        Assert.Equal(1, state.FailureCountsByCategory[SessionRecoveryFailureCategory.AttachmentEnsureFailed]);
+        Assert.Single(history);
+        Assert.Equal("attach", history[0].Action);
+    }
+
+    [Fact]
     public async Task Coordinator_IgnoresPersistedSessionsOutsideCurrentConfiguration()
     {
         var root = CreateTempDirectory();
@@ -280,6 +326,7 @@ public sealed class RuntimePersistenceTests
         var planStore = new InMemorySessionDecisionPlanStore(options);
         var executionStore = new InMemorySessionDecisionPlanExecutionStore(options);
         var policyControlStore = new InMemorySessionPolicyControlStore(options, clock);
+        var recoveryStore = new InMemorySessionRecoveryStateStore(options, clock);
         var backend = CreateBackend(options);
         var coordinator = new RuntimePersistenceCoordinator(
             options,
@@ -291,10 +338,11 @@ public sealed class RuntimePersistenceTests
             planStore,
             executionStore,
             policyControlStore,
+            recoveryStore,
             new NoOpObservabilityRecorder(),
             NullLogger<RuntimePersistenceCoordinator>.Instance);
 
-        return new TestStores(registry, activityStore, memoryStore, planStore, executionStore, policyControlStore, coordinator);
+        return new TestStores(registry, activityStore, memoryStore, planStore, executionStore, policyControlStore, recoveryStore, coordinator);
     }
 
     private static JsonFileRuntimePersistenceBackend CreateBackend(SessionHostOptions options) =>
@@ -352,6 +400,7 @@ public sealed class RuntimePersistenceTests
         InMemorySessionDecisionPlanStore DecisionPlanStore,
         InMemorySessionDecisionPlanExecutionStore ExecutionStore,
         InMemorySessionPolicyControlStore PolicyControlStore,
+        InMemorySessionRecoveryStateStore RecoveryStore,
         RuntimePersistenceCoordinator Coordinator);
 
     private sealed class TestHostEnvironment : IHostEnvironment

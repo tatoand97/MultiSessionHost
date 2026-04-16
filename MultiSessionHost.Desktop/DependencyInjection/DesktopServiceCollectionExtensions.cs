@@ -13,6 +13,7 @@ using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Observability;
+using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Processes;
@@ -64,6 +65,7 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<IAttachedSessionStore, InMemoryAttachedSessionStore>();
         services.AddSingleton<ISessionAttachmentOperations, DefaultSessionAttachmentOperations>();
         services.AddSingleton<ISessionAttachmentRuntime, DefaultSessionAttachmentRuntime>();
+        services.AddSingleton<ISessionRecoveryStateStore, InMemorySessionRecoveryStateStore>();
         services.AddSingleton<ISessionObservabilityStore, InMemorySessionObservabilityStore>();
         services.AddSingleton<IObservabilityRecorder, DefaultObservabilityRecorder>();
         services.AddSingleton<IUiSnapshotSerializer, JsonUiSnapshotSerializer>();

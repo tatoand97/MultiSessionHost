@@ -8,6 +8,7 @@ using MultiSessionHost.Desktop.Bindings;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
+using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Models;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Observability;
@@ -102,6 +103,44 @@ public static class DtoMappingExtensions
             state.ProjectedTree,
             state.LastDiff,
             state.PlannedWorkItems);
+
+    public static SessionRecoverySnapshotDto ToDto(this SessionRecoverySnapshot snapshot) =>
+        new(
+            snapshot.SessionId.Value,
+            snapshot.RecoveryStatus.ToString(),
+            snapshot.CircuitBreakerState.ToString(),
+            snapshot.ConsecutiveFailureCount,
+            snapshot.FailureCountsByCategory.ToDictionary(static entry => entry.Key.ToString(), static entry => entry.Value),
+            snapshot.LastFailureAtUtc,
+            snapshot.LastSuccessAtUtc,
+            snapshot.BackoffUntilUtc,
+            snapshot.NextRecoveryAttemptAtUtc,
+            snapshot.IsSnapshotStale,
+            snapshot.IsAttachmentInvalid,
+            snapshot.IsTargetQuarantined,
+            snapshot.TargetQuarantineReasonCode,
+            snapshot.MetadataDriftDetected,
+            snapshot.AdapterHealthState.ToString(),
+            snapshot.LastRecoveryAction,
+            snapshot.LastRecoveryReasonCode,
+            snapshot.LastRecoveryReason,
+            snapshot.LastTransitionAtUtc,
+            snapshot.IsBlockedFromRecoveryAttempts,
+            snapshot.HalfOpenProbeAttempts,
+            snapshot.Metadata);
+
+    public static SessionRecoveryHistoryEntryDto ToDto(this SessionRecoveryHistoryEntry entry) =>
+        new(
+            entry.SessionId.Value,
+            entry.OccurredAtUtc,
+            entry.Action,
+            entry.RecoveryStatus.ToString(),
+            entry.CircuitBreakerState.ToString(),
+            entry.AdapterHealthState.ToString(),
+            entry.FailureCategory?.ToString(),
+            entry.ReasonCode,
+            entry.Reason,
+            entry.Metadata);
 
     public static SessionDomainStateDto ToDto(this SessionDomainState state) =>
         new(
@@ -982,7 +1021,8 @@ public static class DtoMappingExtensions
             status.OperationalMemoryHistoryCount,
             status.DecisionPlanHistoryCount,
             status.DecisionExecutionHistoryCount,
-            status.PolicyControlHistoryCount);
+            status.PolicyControlHistoryCount,
+            status.RecoveryHistoryCount);
 
     public static SessionPolicyControlStateDto ToDto(this SessionPolicyControlState state) =>
         new(

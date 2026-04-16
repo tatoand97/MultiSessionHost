@@ -11,6 +11,7 @@ using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Models;
 using MultiSessionHost.Desktop.Persistence;
+using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Targets;
@@ -41,6 +42,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly ISessionOperationalMemoryStore _operationalMemoryStore;
     private readonly ISessionOperationalMemoryUpdater _operationalMemoryUpdater;
     private readonly IRuntimePersistenceCoordinator _runtimePersistenceCoordinator;
+    private readonly ISessionRecoveryStateStore _recoveryStateStore;
     private readonly IObservabilityRecorder _observabilityRecorder;
     private readonly IServiceProvider _serviceProvider;
     private readonly IClock _clock;
@@ -67,6 +69,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         ISessionOperationalMemoryStore operationalMemoryStore,
         ISessionOperationalMemoryUpdater operationalMemoryUpdater,
         IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
+        ISessionRecoveryStateStore recoveryStateStore,
         IObservabilityRecorder observabilityRecorder,
         IServiceProvider serviceProvider,
         IClock clock,
@@ -92,6 +95,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _operationalMemoryStore = operationalMemoryStore;
         _operationalMemoryUpdater = operationalMemoryUpdater;
         _runtimePersistenceCoordinator = runtimePersistenceCoordinator;
+        _recoveryStateStore = recoveryStateStore;
         _observabilityRecorder = observabilityRecorder;
         _serviceProvider = serviceProvider;
         _clock = clock;
@@ -128,6 +132,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 },
                 cancellationToken).ConfigureAwait(false);
 
+            await _recoveryStateStore.RegisterSuccessAsync(snapshot.SessionId, "ui-capture", "recovery.success_cleared_failures", "UI snapshot captured successfully.", new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+
             return await _sessionUiStateStore.UpdateAsync(
                 snapshot.SessionId,
                 current => current with
@@ -142,6 +148,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         catch (Exception exception)
         {
             await RecordUiRefreshErrorAsync(snapshot.SessionId, exception, cancellationToken).ConfigureAwait(false);
+            await _recoveryStateStore.RegisterFailureAsync(snapshot.SessionId, SessionRecoveryFailureCategory.SnapshotCaptureFailed, "ui-capture-failed", "recovery.snapshot.capture.failed", exception.Message, new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
@@ -159,15 +166,34 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
             var projectionStart = System.Diagnostics.Stopwatch.StartNew();
             var uiState = await _sessionUiStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"UI state for session '{snapshot.SessionId}' was not initialized.");
+            var recoverySnapshot = await _recoveryStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
+            var forceCapture = IsSnapshotStale(uiState, recoverySnapshot) || recoverySnapshot.IsAttachmentInvalid || recoverySnapshot.IsTargetQuarantined || recoverySnapshot.MetadataDriftDetected || string.IsNullOrWhiteSpace(uiState.RawSnapshotJson);
+
+            if (IsSnapshotStale(uiState, recoverySnapshot))
+            {
+                await _recoveryStateStore.MarkSnapshotStaleAsync(snapshot.SessionId, "recovery.snapshot.stale_detected", "The UI snapshot is stale and must be refreshed.", new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+                uiState = await _sessionUiStateStore.UpdateAsync(
+                    snapshot.SessionId,
+                    current => current with
+                    {
+                        RawSnapshotJson = null,
+                        ProjectedTree = null,
+                        LastDiff = null,
+                        PlannedWorkItems = [],
+                        LastRefreshError = "The UI snapshot is stale and was invalidated.",
+                        LastRefreshErrorAtUtc = _clock.UtcNow
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
 
             UiSnapshotEnvelope uiSnapshot;
             string rawJson;
 
-            if (string.IsNullOrWhiteSpace(uiState.RawSnapshotJson))
+            if (forceCapture)
             {
                 if (attachment is null)
                 {
-                    throw new InvalidOperationException($"Session '{snapshot.SessionId}' does not have a raw UI snapshot to project.");
+                    throw new InvalidOperationException($"Session '{snapshot.SessionId}' does not have a usable UI snapshot or attachment to project.");
                 }
 
                 var adapter = _adapterRegistry.Resolve(context.Profile.Kind);
@@ -185,6 +211,11 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
             }
             else
             {
+                if (string.IsNullOrWhiteSpace(uiState.RawSnapshotJson))
+                {
+                    throw new InvalidOperationException($"Session '{snapshot.SessionId}' does not have a raw UI snapshot to project.");
+                }
+
                 rawJson = uiState.RawSnapshotJson;
                 uiSnapshot = _uiSnapshotSerializer.Deserialize(rawJson);
             }
@@ -299,6 +330,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 currentDecisionPlan,
                 currentRiskAssessment,
                 previousActivitySnapshot,
+                recoverySnapshot,
                 _clock.UtcNow);
 
             var activityEvaluationResult = await _activityStateEvaluator.EvaluateAsync(activityEvaluationContext, cancellationToken).ConfigureAwait(false);
@@ -346,6 +378,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 new Dictionary<string, string>(StringComparer.Ordinal),
                 cancellationToken).ConfigureAwait(false);
 
+            await _recoveryStateStore.RegisterSuccessAsync(snapshot.SessionId, "ui-refresh", "recovery.success_cleared_failures", "UI refresh completed successfully.", new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
+
             return await _sessionUiStateStore.UpdateAsync(
                 snapshot.SessionId,
                 current => current with
@@ -360,6 +394,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         {
             await RecordUiRefreshErrorAsync(snapshot.SessionId, exception, cancellationToken).ConfigureAwait(false);
             await RecordDomainRefreshErrorAsync(snapshot.SessionId, exception, cancellationToken).ConfigureAwait(false);
+            await _recoveryStateStore.RegisterFailureAsync(snapshot.SessionId, SessionRecoveryFailureCategory.RefreshProjectionFailure, "ui-refresh-failed", "recovery.refresh_projection.failed", exception.Message, new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
             await _observabilityRecorder.RecordAdapterErrorAsync(snapshot.SessionId, context.Profile.ProfileName, "ui-refresh", exception, "ui-refresh-failure", nameof(DefaultSessionUiRefreshService), new Dictionary<string, string>(StringComparer.Ordinal), cancellationToken).ConfigureAwait(false);
             throw;
         }
@@ -408,6 +443,22 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         {
             throw new InvalidOperationException("UI snapshots are disabled. Set EnableUiSnapshots=true to request raw or projected UI state.");
         }
+    }
+
+    private bool IsSnapshotStale(SessionUiState uiState, SessionRecoverySnapshot recoverySnapshot)
+    {
+        if (uiState.LastSnapshotCapturedAtUtc is null)
+        {
+            return false;
+        }
+
+        if (_options.Recovery.SnapshotStaleAfterMs <= 0)
+        {
+            return false;
+        }
+
+        var staleAfter = uiState.LastSnapshotCapturedAtUtc.Value.AddMilliseconds(_options.Recovery.SnapshotStaleAfterMs);
+        return recoverySnapshot.IsSnapshotStale || _clock.UtcNow >= staleAfter;
     }
 
     private async ValueTask UpdateOperationalMemoryAsync(

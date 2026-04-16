@@ -25,6 +25,14 @@ public static class RuntimeObservability
     public static readonly Counter<long> AttachmentsReattachTotal = Meter.CreateCounter<long>("attachments.reattach.total");
     public static readonly Counter<long> AttachmentsInvalidateTotal = Meter.CreateCounter<long>("attachments.invalidate.total");
     public static readonly Counter<long> AdapterErrorsTotal = Meter.CreateCounter<long>("adapter.errors.total");
+    public static readonly Counter<long> RecoveryAttemptsTotal = Meter.CreateCounter<long>("recovery.attempts.total");
+    public static readonly Counter<long> RecoverySuccessTotal = Meter.CreateCounter<long>("recovery.success.total");
+    public static readonly Counter<long> RecoveryFailureTotal = Meter.CreateCounter<long>("recovery.failure.total");
+    public static readonly Counter<long> RecoveryCircuitOpenTotal = Meter.CreateCounter<long>("recovery.circuit.open.total");
+    public static readonly Counter<long> RecoveryStaleSnapshotTotal = Meter.CreateCounter<long>("recovery.snapshot.stale.total");
+    public static readonly Counter<long> RecoveryTargetQuarantineTotal = Meter.CreateCounter<long>("recovery.target.quarantine.total");
+    public static readonly Histogram<double> RecoveryBackoffDuration = Meter.CreateHistogram<double>("recovery.backoff.current.ms");
+    public static readonly Histogram<double> RecoveryReattachDuration = Meter.CreateHistogram<double>("recovery.reattach.duration.ms");
     public static readonly Counter<long> DecisionsWithdrawTotal = Meter.CreateCounter<long>("decisions.withdraw.total");
     public static readonly Counter<long> DecisionsAbortTotal = Meter.CreateCounter<long>("decisions.abort.total");
     public static readonly Counter<long> DecisionsHideTotal = Meter.CreateCounter<long>("decisions.hide.total");
