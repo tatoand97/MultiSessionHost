@@ -12,6 +12,11 @@ internal static class DesktopTargetMetadata
     public const string FramePreprocessingProfile = "FramePreprocessingProfile";
     public const string FramePreprocessingRegionSet = "FramePreprocessingRegionSet";
     public const string FramePreprocessingIncludeThreshold = "FramePreprocessingIncludeThreshold";
+    public const string EnableOcr = "EnableOcr";
+    public const string OcrProfile = "OcrProfile";
+    public const string OcrRegionSet = "OcrRegionSet";
+    public const string OcrPreferredArtifactKinds = "OcrPreferredArtifactKinds";
+    public const string OcrIncludeFullFrameFallback = "OcrIncludeFullFrameFallback";
     public const string SemanticPackage = "SemanticPackage";
     public const string BehaviorPack = "BehaviorPack";
     public const string UiClickNodePathTemplate = "UiClickNodePathTemplate";

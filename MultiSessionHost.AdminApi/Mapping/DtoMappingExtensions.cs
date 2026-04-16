@@ -12,6 +12,7 @@ using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Models;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Observability;
+using MultiSessionHost.Desktop.Ocr;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
@@ -281,6 +282,106 @@ public static class DtoMappingExtensions
             summary.ObservabilityBackend,
             summary.CaptureBackend,
             summary.PreprocessingProfileName,
+            summary.TotalArtifactCount,
+            summary.SuccessfulArtifactCount,
+            summary.FailedArtifactCount,
+            summary.Artifacts.Select(static artifact => artifact.ToDto()).ToArray(),
+            summary.Warnings,
+            summary.Errors,
+            summary.Metadata);
+
+    public static OcrTextFragmentDto ToDto(this OcrTextFragment fragment) =>
+        new(
+            fragment.Text,
+            fragment.NormalizedText,
+            fragment.Confidence,
+            fragment.Bounds,
+            fragment.SourceArtifactName,
+            fragment.SourceRegionName);
+
+    public static OcrTextLineDto ToDto(this OcrTextLine line) =>
+        new(
+            line.Text,
+            line.NormalizedText,
+            line.Confidence,
+            line.Bounds,
+            line.SourceArtifactName,
+            line.SourceRegionName);
+
+    public static OcrArtifactResultDto ToDto(this OcrArtifactResult artifact) =>
+        new(
+            artifact.ArtifactName,
+            artifact.SourceRegionName,
+            artifact.SourceArtifactKind,
+            artifact.PreprocessingSteps,
+            artifact.RecognizedText,
+            artifact.NormalizedText,
+            artifact.Confidence,
+            artifact.FragmentCount,
+            artifact.LineCount,
+            artifact.SelectionStrategy,
+            artifact.UsedFullFrameFallback,
+            artifact.Fragments.Select(static fragment => fragment.ToDto()).ToArray(),
+            artifact.Lines.Select(static line => line.ToDto()).ToArray(),
+            artifact.Warnings,
+            artifact.Errors,
+            artifact.Metadata);
+
+    public static OcrArtifactResultSummaryDto ToDto(this OcrArtifactResultSummary artifact) =>
+        new(
+            artifact.ArtifactName,
+            artifact.SourceRegionName,
+            artifact.SourceArtifactKind,
+            artifact.PreprocessingSteps,
+            artifact.RecognizedText,
+            artifact.NormalizedText,
+            artifact.Confidence,
+            artifact.FragmentCount,
+            artifact.LineCount,
+            artifact.SelectionStrategy,
+            artifact.UsedFullFrameFallback,
+            artifact.Warnings,
+            artifact.Errors,
+            artifact.Metadata);
+
+    public static SessionOcrExtractionResultDto ToDto(this SessionOcrExtractionResult result) =>
+        new(
+            result.SessionId.Value,
+            result.ExtractedAtUtc,
+            result.SourceSnapshotSequence,
+            result.SourceSnapshotCapturedAtUtc,
+            result.SourceRegionResolutionSequence,
+            result.SourceRegionResolutionResolvedAtUtc,
+            result.SourcePreprocessingProcessedAtUtc,
+            result.TargetKind.ToString(),
+            result.ObservabilityBackend,
+            result.CaptureBackend,
+            result.OcrProfileName,
+            result.OcrEngineName,
+            result.OcrEngineBackend,
+            result.TotalArtifactCount,
+            result.SuccessfulArtifactCount,
+            result.FailedArtifactCount,
+            result.Artifacts.Select(static artifact => artifact.ToDto()).ToArray(),
+            result.Warnings,
+            result.Errors,
+            result.Metadata);
+
+    public static SessionOcrExtractionSummaryDto ToDto(this SessionOcrExtractionSummary summary) =>
+        new(
+            summary.SessionId.Value,
+            summary.ExtractedAtUtc,
+            summary.SourceSnapshotSequence,
+            summary.SourceSnapshotCapturedAtUtc,
+            summary.SourceRegionResolutionSequence,
+            summary.SourceRegionResolutionResolvedAtUtc,
+            summary.SourcePreprocessingProcessedAtUtc,
+            summary.TargetKind.ToString(),
+            summary.ObservabilityBackend,
+            summary.CaptureBackend,
+            summary.OcrProfileName,
+            summary.OcrEngineName,
+            summary.OcrEngineBackend,
             summary.TotalArtifactCount,
             summary.SuccessfulArtifactCount,
             summary.FailedArtifactCount,

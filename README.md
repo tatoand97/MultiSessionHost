@@ -231,6 +231,25 @@ Para targets `ScreenCaptureDesktop`, el refresh ahora incluye una capa aditiva d
 
 La capa es genérica y no introduce OCR, template matching ni semántica específica de EVE.
 
+### OCR extraction (Fase 9.2)
+
+Para targets `ScreenCaptureDesktop`, el refresh puede ejecutar una capa OCR genérica sobre artefactos ya preprocesados (no sobre raw directo). La capa selecciona artefactos de forma determinística con prioridad por región y tipo (`threshold`, `high-contrast`, `grayscale`, `raw`), persiste el último resultado por sesión en un store dedicado y expone lectura administrativa en:
+
+- `GET /sessions/{id}/ocr`
+- `GET /sessions/{id}/ocr/summary`
+- `GET /ocr`
+- `GET /ocr/summaries`
+
+Metadata de target soportada para OCR:
+
+- `EnableOcr`
+- `OcrProfile`
+- `OcrRegionSet`
+- `OcrPreferredArtifactKinds`
+- `OcrIncludeFullFrameFallback`
+
+La salida se mantiene genérica (texto reconocido, texto normalizado, confianza y metadatos diagnósticos por artefacto) y no realiza interpretación semántica específica de EVE.
+
 ### Paquetes semánticos por target
 
 La Fase 6.3 introduce una capa de paquetes semánticos target-specific sobre el pipeline genérico. La selección es determinística y sale de la metadata del perfil de target, usando la clave `SemanticPackage`. Si no hay paquete configurado, el pipeline genérico sigue funcionando sin cambios.

@@ -6,6 +6,7 @@ using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Ocr;
 using MultiSessionHost.Desktop.Preprocessing;
 using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
@@ -233,6 +234,104 @@ public sealed class ScreenCaptureUiRefreshServiceTests
         Assert.Equal(1, regionResolution!.SourceSnapshotSequence);
     }
 
+    [Fact]
+    public async Task RefreshAsync_StoresLatestOcrResult_ForScreenCaptureTargets()
+    {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var options = CreateOptions();
+        var process = new DesktopProcessInfo(321, "ScreenApp", null, 456);
+        var window = new DesktopWindowInfo(456, 321, "Screen Fixture", true);
+        var capture = new WindowFrameCaptureResult(
+            new UiBounds(50, 60, 800, 600),
+            800,
+            600,
+            "image/png",
+            "Format32bppArgb",
+            [10, 20, 30],
+            "FakeCapture");
+
+        var services = new ServiceCollection();
+        services.AddSingleton(options);
+        services.AddMultiSessionHostRuntime();
+        services.AddSingleton<IClock>(clock);
+        services.AddSingleton<IProcessLocator>(new StubProcessLocator(process));
+        services.AddSingleton<IWindowLocator>(new StubWindowLocator(window));
+        services.AddSingleton<IWindowFrameCapture>(new StubWindowFrameCapture(capture));
+        await using var provider = services.BuildServiceProvider();
+
+        var coordinator = provider.GetRequiredService<ISessionCoordinator>();
+        await coordinator.InitializeAsync(CancellationToken.None);
+
+        var sessionId = new SessionId("alpha");
+        var snapshot = coordinator.GetSession(sessionId)!;
+        var context = provider.GetRequiredService<IDesktopTargetProfileResolver>().Resolve(snapshot);
+        var attachment = new DesktopSessionAttachment(sessionId, context.Target, process, window, null, clock.UtcNow);
+        var refreshService = provider.GetRequiredService<ISessionUiRefreshService>();
+        var ocrStore = provider.GetRequiredService<ISessionOcrExtractionStore>();
+
+        _ = await refreshService.RefreshAsync(snapshot, context, attachment, CancellationToken.None);
+        var ocrResult = await ocrStore.GetLatestAsync(sessionId, CancellationToken.None);
+        var ocrSummary = await ocrStore.GetLatestSummaryAsync(sessionId, CancellationToken.None);
+
+        Assert.NotNull(ocrResult);
+        Assert.NotNull(ocrSummary);
+        Assert.Equal("DefaultRegionOcrWithFullFrameFallback", ocrResult!.OcrProfileName);
+        Assert.True(ocrResult.TotalArtifactCount >= 1);
+        Assert.Equal(ocrResult.SourceSnapshotSequence, ocrSummary!.SourceSnapshotSequence);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_OcrFailure_DoesNotCorruptSnapshotRegionOrPreprocessingState()
+    {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var options = CreateOptions();
+        var process = new DesktopProcessInfo(321, "ScreenApp", null, 456);
+        var window = new DesktopWindowInfo(456, 321, "Screen Fixture", true);
+        var capture = new WindowFrameCaptureResult(
+            new UiBounds(50, 60, 800, 600),
+            800,
+            600,
+            "image/png",
+            "Format32bppArgb",
+            [10, 20, 30],
+            "FakeCapture");
+
+        var services = new ServiceCollection();
+        services.AddSingleton(options);
+        services.AddMultiSessionHostRuntime();
+        services.AddSingleton<IClock>(clock);
+        services.AddSingleton<IProcessLocator>(new StubProcessLocator(process));
+        services.AddSingleton<IWindowLocator>(new StubWindowLocator(window));
+        services.AddSingleton<IWindowFrameCapture>(new StubWindowFrameCapture(capture));
+        services.AddSingleton<IOcrExtractionService, ThrowingOcrExtractionService>();
+        await using var provider = services.BuildServiceProvider();
+
+        var coordinator = provider.GetRequiredService<ISessionCoordinator>();
+        await coordinator.InitializeAsync(CancellationToken.None);
+
+        var sessionId = new SessionId("alpha");
+        var snapshot = coordinator.GetSession(sessionId)!;
+        var context = provider.GetRequiredService<IDesktopTargetProfileResolver>().Resolve(snapshot);
+        var attachment = new DesktopSessionAttachment(sessionId, context.Target, process, window, null, clock.UtcNow);
+        var refreshService = provider.GetRequiredService<ISessionUiRefreshService>();
+        var snapshotStore = provider.GetRequiredService<ISessionScreenSnapshotStore>();
+        var regionStore = provider.GetRequiredService<ISessionScreenRegionStore>();
+        var preprocessingStore = provider.GetRequiredService<ISessionFramePreprocessingStore>();
+
+        var state = await refreshService.RefreshAsync(snapshot, context, attachment, CancellationToken.None);
+        var storedSnapshot = await snapshotStore.GetLatestAsync(sessionId, CancellationToken.None);
+        var regionResolution = await regionStore.GetLatestAsync(sessionId, CancellationToken.None);
+        var preprocessing = await preprocessingStore.GetLatestAsync(sessionId, CancellationToken.None);
+
+        Assert.NotNull(state.LastRefreshCompletedAtUtc);
+        Assert.NotNull(storedSnapshot);
+        Assert.NotNull(regionResolution);
+        Assert.NotNull(preprocessing);
+        Assert.Equal(1, storedSnapshot!.Sequence);
+        Assert.Equal(1, regionResolution!.SourceSnapshotSequence);
+        Assert.Equal(1, preprocessing!.SourceSnapshotSequence);
+    }
+
 
     private static SessionHostOptions CreateOptions() =>
         new()
@@ -259,7 +358,10 @@ public sealed class ScreenCaptureUiRefreshServiceTests
                     Metadata =
                     {
                         ["UiSource"] = "ScreenCapture",
-                        ["ObservabilityBackend"] = "ScreenCapture"
+                        ["ObservabilityBackend"] = "ScreenCapture",
+                        ["EnableOcr"] = true.ToString(),
+                        ["OcrProfile"] = "DefaultRegionOcrWithFullFrameFallback",
+                        ["OcrIncludeFullFrameFallback"] = true.ToString()
                     }
                 }
             ],
@@ -342,5 +444,11 @@ public sealed class ScreenCaptureUiRefreshServiceTests
     {
         public ValueTask<SessionFramePreprocessingResult?> PreprocessLatestAsync(SessionId sessionId, ResolvedDesktopTargetContext context, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Frame preprocessing failed deterministically.");
+    }
+
+    private sealed class ThrowingOcrExtractionService : IOcrExtractionService
+    {
+        public ValueTask<SessionOcrExtractionResult?> ExtractLatestAsync(SessionId sessionId, ResolvedDesktopTargetContext context, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("OCR extraction failed deterministically.");
     }
 }

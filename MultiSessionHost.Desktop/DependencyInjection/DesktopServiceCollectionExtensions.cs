@@ -12,6 +12,7 @@ using MultiSessionHost.Desktop.Drivers;
 using MultiSessionHost.Desktop.Extraction;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
+using MultiSessionHost.Desktop.Ocr;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Preprocessing;
@@ -74,6 +75,9 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionScreenRegionStore, InMemorySessionScreenRegionStore>();
         services.AddSingleton<ISessionFramePreprocessingStore, InMemorySessionFramePreprocessingStore>();
         services.AddSingleton<IFramePreprocessingService, DefaultFramePreprocessingService>();
+        services.AddSingleton<ISessionOcrExtractionStore, InMemorySessionOcrExtractionStore>();
+        services.AddSingleton<IOcrEngine, NoOpOcrEngine>();
+        services.AddSingleton<IOcrExtractionService, DefaultOcrExtractionService>();
         services.AddSingleton<IObservabilityRecorder, DefaultObservabilityRecorder>();
         services.AddSingleton<IUiSnapshotSerializer, JsonUiSnapshotSerializer>();
         services.AddSingleton<IUiSnapshotProvider, SelfHostedHttpUiSnapshotProvider>();
