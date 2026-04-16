@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MultiSessionHost.Core.Configuration;
+using MultiSessionHost.Core.Enums;
 using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Activity;
@@ -232,39 +233,64 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 uiSnapshot.Window.WindowHandle,
                 uiSnapshot.Window.Title,
                 uiSnapshot.Metadata);
-            var treeNormalizer = _uiTreeNormalizerResolver.Resolve(context);
-            var planner = _workItemPlannerResolver.Resolve(context);
-            var tree = treeNormalizer.Normalize(metadata, uiSnapshot.Root);
-            var diff = _uiStateProjector.Project(uiState.ProjectedTree, tree);
-            var plannedWorkItems = planner.Plan(tree);
+            SessionUiState projectedUiState;
+            UiSemanticExtractionResult semanticExtraction;
 
-            var projectedUiState = await _sessionUiStateStore.UpdateAsync(
-                snapshot.SessionId,
-                current => current with
-                {
-                    RawSnapshotJson = rawJson,
-                    LastSnapshotCapturedAtUtc = uiSnapshot.CapturedAtUtc,
-                    ProjectedTree = tree,
-                    LastDiff = diff,
-                    PlannedWorkItems = plannedWorkItems,
-                    LastRefreshError = null,
-                    LastRefreshErrorAtUtc = null
-                },
-                cancellationToken).ConfigureAwait(false);
+            if (SupportsProjectedTree(context.Profile.Kind))
+            {
+                var treeNormalizer = _uiTreeNormalizerResolver.Resolve(context);
+                var planner = _workItemPlannerResolver.Resolve(context);
+                var tree = treeNormalizer.Normalize(metadata, uiSnapshot.Root);
+                var diff = _uiStateProjector.Project(uiState.ProjectedTree, tree);
+                var plannedWorkItems = planner.Plan(tree);
 
-            var currentDomainState = await _sessionDomainStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidOperationException($"Domain state for session '{snapshot.SessionId}' was not initialized.");
-            var now = _clock.UtcNow;
-            var semanticContext = new UiSemanticExtractionContext(
-                snapshot.SessionId,
-                projectedUiState,
-                tree,
-                currentDomainState,
-                snapshot,
-                context,
-                attachment,
-                now);
-            var semanticExtraction = await _semanticExtractionPipeline.ExtractAsync(semanticContext, cancellationToken).ConfigureAwait(false);
+                projectedUiState = await _sessionUiStateStore.UpdateAsync(
+                    snapshot.SessionId,
+                    current => current with
+                    {
+                        RawSnapshotJson = rawJson,
+                        LastSnapshotCapturedAtUtc = uiSnapshot.CapturedAtUtc,
+                        ProjectedTree = tree,
+                        LastDiff = diff,
+                        PlannedWorkItems = plannedWorkItems,
+                        LastRefreshError = null,
+                        LastRefreshErrorAtUtc = null
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                var currentDomainState = await _sessionDomainStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"Domain state for session '{snapshot.SessionId}' was not initialized.");
+                var now = _clock.UtcNow;
+                var semanticContext = new UiSemanticExtractionContext(
+                    snapshot.SessionId,
+                    projectedUiState,
+                    tree,
+                    currentDomainState,
+                    snapshot,
+                    context,
+                    attachment,
+                    now);
+                semanticExtraction = await _semanticExtractionPipeline.ExtractAsync(semanticContext, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                projectedUiState = await _sessionUiStateStore.UpdateAsync(
+                    snapshot.SessionId,
+                    current => current with
+                    {
+                        RawSnapshotJson = rawJson,
+                        LastSnapshotCapturedAtUtc = uiSnapshot.CapturedAtUtc,
+                        ProjectedTree = null,
+                        LastDiff = null,
+                        PlannedWorkItems = [],
+                        LastRefreshError = null,
+                        LastRefreshErrorAtUtc = null
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                semanticExtraction = CreateRawOnlySemanticExtraction(snapshot.SessionId, context.Profile.Kind, _clock.UtcNow);
+            }
+
             await _semanticExtractionStore.UpdateAsync(snapshot.SessionId, semanticExtraction, cancellationToken).ConfigureAwait(false);
             await _observabilityRecorder.RecordActivityAsync(
                 snapshot.SessionId,
@@ -293,6 +319,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     ["pipeline"] = nameof(IRiskClassificationPipeline)
                 },
                 cancellationToken).ConfigureAwait(false);
+            var latestDomainState = await _sessionDomainStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Domain state for session '{snapshot.SessionId}' was not initialized.");
 
             await _sessionDomainStateStore.UpdateAsync(
                 snapshot.SessionId,
@@ -404,6 +432,21 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
             throw;
         }
     }
+
+    private static bool SupportsProjectedTree(DesktopTargetKind kind) =>
+        kind != DesktopTargetKind.ScreenCaptureDesktop;
+
+    private static UiSemanticExtractionResult CreateRawOnlySemanticExtraction(
+        SessionId sessionId,
+        DesktopTargetKind kind,
+        DateTimeOffset now) =>
+        UiSemanticExtractionResult.Empty(sessionId, now) with
+        {
+            Warnings =
+            [
+                $"Projected UI tree is not available for target kind '{kind}'. Raw {kind} capture was stored without tree projection."
+            ]
+        };
 
     private Task FlushIfEnabledAsync(SessionId sessionId, CancellationToken cancellationToken) =>
         _options.RuntimePersistence.AutoFlushAfterStateChanges

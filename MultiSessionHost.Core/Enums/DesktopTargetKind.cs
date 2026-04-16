@@ -4,5 +4,6 @@ public enum DesktopTargetKind
 {
     SelfHostedHttpDesktop = 0,
     DesktopTestApp = 1,
-    WindowsUiAutomationDesktop = 2
+    WindowsUiAutomationDesktop = 2,
+    ScreenCaptureDesktop = 3
 }

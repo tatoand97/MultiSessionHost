@@ -835,7 +835,7 @@ public static class SessionHostOptionsExtensions
         bool supportsStateEndpoint,
         out string? error)
     {
-        if (kind != DesktopTargetKind.WindowsUiAutomationDesktop)
+        if (kind is not (DesktopTargetKind.WindowsUiAutomationDesktop or DesktopTargetKind.ScreenCaptureDesktop))
         {
             error = null;
             return true;
@@ -843,13 +843,13 @@ public static class SessionHostOptionsExtensions
 
         if (!supportsUiSnapshots)
         {
-            error = $"{scope} must set SupportsUiSnapshots=true when Kind=WindowsUiAutomationDesktop.";
+            error = $"{scope} must set SupportsUiSnapshots=true when Kind={kind}.";
             return false;
         }
 
         if (supportsStateEndpoint)
         {
-            error = $"{scope} cannot set SupportsStateEndpoint=true when Kind=WindowsUiAutomationDesktop because native attachment is non-cooperative.";
+            error = $"{scope} cannot set SupportsStateEndpoint=true when Kind={kind} because native attachment is non-cooperative.";
             return false;
         }
 

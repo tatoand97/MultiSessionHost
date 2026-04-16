@@ -28,6 +28,7 @@ public sealed class DefaultUiTreeNormalizerResolver : IUiTreeNormalizerResolver
             DesktopTargetKind.SelfHostedHttpDesktop => _selfHostedHttpUiTreeNormalizer,
             DesktopTargetKind.DesktopTestApp => _testAppUiTreeNormalizer,
             DesktopTargetKind.WindowsUiAutomationDesktop => _windowsUiAutomationUiTreeNormalizer,
+            DesktopTargetKind.ScreenCaptureDesktop => throw new InvalidOperationException("ScreenCaptureDesktop does not provide a UI tree normalizer in Phase 8.1."),
             _ => throw new InvalidOperationException($"Desktop target kind '{context.Profile.Kind}' is not supported.")
         };
 }

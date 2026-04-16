@@ -1617,6 +1617,42 @@ Respuesta de ejemplo para `GET /sessions/alpha/activity/history`:
 - **Append-only history**: las transiciones solo se añaden cuando el estado cambia; historial acotado evita crescimiento ilimitado.
 - **Explícito y centralizado**: toda lógica de transición vive en `ISessionActivityStateEvaluator`; evita decisiones de estado esparcidas entre políticas.
 
+## Fase 8.1: backend visual por captura de pantalla
+
+Fase 8.1 agrega `DesktopTargetKind.ScreenCaptureDesktop` como backend visual aditivo. No reemplaza `WindowsUiAutomationDesktop`: ambos conviven en el mismo registry de `IDesktopTargetAdapter`, comparten binding/attach por ventana y siguen usando los mismos endpoints `/sessions/{id}/ui`, `/sessions/{id}/ui/raw` y `POST /sessions/{id}/ui/refresh`.
+
+El adapter nuevo es `ScreenCaptureDesktopTargetAdapter`. Valida el proceso y la ventana adjunta, captura un frame de la ventana por handle y serializa un `ScreenSnapshot` raw dentro de `UiSnapshotEnvelope.Root`. La metadata del raw snapshot deja explícito que el backend es visual:
+
+- `captureSource=ScreenCapture`
+- `targetKind=ScreenCaptureDesktop`
+- `adapter=ScreenCaptureDesktopTargetAdapter`
+- `captureBackend=Graphics.CopyFromScreen`
+- `imageWidth` / `imageHeight`
+- `pixelFormat`
+- `captureSucceeded`
+- `captureDurationMs`
+- `targetWindowHandle`
+- `targetProcessId`
+
+En esta fase no hay OCR ni árbol sintético. Cuando el target usa `ScreenCaptureDesktop`, el refresh conserva `RawSnapshotJson`, permite `ProjectedTree=null` y completa el refresh igualmente. `/sessions/{id}/ui/raw` devuelve el payload visual raw; `/sessions/{id}/ui` puede quedar sin tree hasta que exista una capa semántica visual posterior.
+
+Ejemplo de profile:
+
+```json
+{
+  "ProfileName": "screen-notepad",
+  "Kind": "ScreenCaptureDesktop",
+  "ProcessName": "notepad",
+  "WindowTitleFragment": "Untitled",
+  "MatchingMode": "WindowTitle",
+  "SupportsUiSnapshots": true,
+  "SupportsStateEndpoint": false,
+  "Metadata": {
+    "UiSource": "ScreenCapture"
+  }
+}
+```
+
 ## Store de bindings editable en runtime
 
 `DesktopTargetProfile` sigue siendo **config-driven** e inmutable durante la ejecución. Lo que ahora es editable en caliente es `SessionTargetBinding`.

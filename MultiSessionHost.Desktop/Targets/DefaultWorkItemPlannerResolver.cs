@@ -25,6 +25,7 @@ public sealed class DefaultWorkItemPlannerResolver : IWorkItemPlannerResolver
             DesktopTargetKind.SelfHostedHttpDesktop => _defaultButtonWorkItemPlanner,
             DesktopTargetKind.DesktopTestApp => _testAppWorkItemPlanner,
             DesktopTargetKind.WindowsUiAutomationDesktop => _defaultButtonWorkItemPlanner,
+            DesktopTargetKind.ScreenCaptureDesktop => throw new InvalidOperationException("ScreenCaptureDesktop does not provide projected-tree work item planning in Phase 8.1."),
             _ => throw new InvalidOperationException($"Desktop target kind '{context.Profile.Kind}' is not supported.")
         };
 }

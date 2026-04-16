@@ -132,6 +132,46 @@ public sealed class SessionHostOptionsValidationTests
     }
 
     [Fact]
+    public void TryValidate_AcceptsScreenCaptureDesktopTargetWithoutBaseAddress()
+    {
+        var options = new SessionHostOptions
+        {
+            DriverMode = DriverMode.DesktopTargetAdapter,
+            EnableUiSnapshots = true,
+            DesktopTargets =
+            [
+                new DesktopTargetProfileOptions
+                {
+                    ProfileName = "screen-app",
+                    Kind = DesktopTargetKind.ScreenCaptureDesktop,
+                    ProcessName = "notepad",
+                    WindowTitleFragment = "Untitled",
+                    MatchingMode = DesktopSessionMatchingMode.WindowTitle,
+                    SupportsUiSnapshots = true,
+                    SupportsStateEndpoint = false,
+                    Metadata =
+                    {
+                        ["UiSource"] = "ScreenCapture"
+                    }
+                }
+            ],
+            SessionTargetBindings =
+            [
+                new SessionTargetBindingOptions
+                {
+                    SessionId = "alpha",
+                    TargetProfileName = "screen-app"
+                }
+            ],
+            Sessions = [TestOptionsFactory.Session("alpha", startupDelayMs: 0)]
+        };
+
+        var valid = options.TryValidate(out var error);
+
+        Assert.True(valid, error);
+    }
+
+    [Fact]
     public void TryValidate_FailsWhenWindowsUiAutomationTargetDisablesSnapshots()
     {
         var options = new SessionHostOptions

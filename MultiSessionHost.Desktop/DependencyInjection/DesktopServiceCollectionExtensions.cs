@@ -178,9 +178,11 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<INativeUiAutomationElementProvider, WindowsUiAutomationElementProvider>();
         services.AddSingleton<INativeUiAutomationElementLocator, NativeUiAutomationElementLocator>();
         services.AddSingleton<INativeInputFallbackExecutor, DisabledNativeInputFallbackExecutor>();
+        services.AddSingleton<IWindowFrameCapture, Win32WindowFrameCapture>();
         services.AddSingleton<IDesktopTargetAdapter, SelfHostedHttpDesktopTargetAdapter>();
         services.AddSingleton<IDesktopTargetAdapter, DesktopTestAppTargetAdapter>();
         services.AddSingleton<IDesktopTargetAdapter, WindowsUiAutomationDesktopTargetAdapter>();
+        services.AddSingleton<IDesktopTargetAdapter, ScreenCaptureDesktopTargetAdapter>();
         services.AddSingleton<IDesktopTargetAdapterRegistry, DesktopTargetAdapterRegistry>();
         services.AddSingleton<IUiInteractionAdapter, TestDesktopAppUiInteractionAdapter>();
         services.AddSingleton<IUiInteractionAdapter, WindowsUiAutomationUiInteractionAdapter>();

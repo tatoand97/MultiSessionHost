@@ -36,6 +36,7 @@ public sealed class DesktopTargetAdapterSystemTests
         Assert.IsType<SelfHostedHttpDesktopTargetAdapter>(registry.Resolve(DesktopTargetKind.SelfHostedHttpDesktop));
         Assert.IsType<DesktopTestAppTargetAdapter>(registry.Resolve(DesktopTargetKind.DesktopTestApp));
         Assert.IsType<WindowsUiAutomationDesktopTargetAdapter>(registry.Resolve(DesktopTargetKind.WindowsUiAutomationDesktop));
+        Assert.IsType<ScreenCaptureDesktopTargetAdapter>(registry.Resolve(DesktopTargetKind.ScreenCaptureDesktop));
     }
 
     [Fact]
