@@ -14,6 +14,7 @@ using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Observability;
+using MultiSessionHost.Desktop.Preprocessing;
 using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
@@ -71,6 +72,8 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionObservabilityStore, InMemorySessionObservabilityStore>();
         services.AddSingleton<ISessionScreenSnapshotStore, InMemorySessionScreenSnapshotStore>();
         services.AddSingleton<ISessionScreenRegionStore, InMemorySessionScreenRegionStore>();
+        services.AddSingleton<ISessionFramePreprocessingStore, InMemorySessionFramePreprocessingStore>();
+        services.AddSingleton<IFramePreprocessingService, DefaultFramePreprocessingService>();
         services.AddSingleton<IObservabilityRecorder, DefaultObservabilityRecorder>();
         services.AddSingleton<IUiSnapshotSerializer, JsonUiSnapshotSerializer>();
         services.AddSingleton<IUiSnapshotProvider, SelfHostedHttpUiSnapshotProvider>();

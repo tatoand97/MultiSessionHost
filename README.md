@@ -220,6 +220,17 @@ Worker session
   -> Admin API inspection
 ```
 
+### Frame preprocessing (Fase 9.1)
+
+Para targets `ScreenCaptureDesktop`, el refresh ahora incluye una capa aditiva de preprocesamiento de frame después de persistir snapshot y regiones. Esta capa genera artefactos derivados genéricos (frame completo y crops por región), persiste el último resultado por sesión en un store dedicado y expone lectura administrativa en:
+
+- `GET /sessions/{id}/preprocessing`
+- `GET /sessions/{id}/preprocessing/summary`
+- `GET /preprocessing`
+- `GET /preprocessing/summaries`
+
+La capa es genérica y no introduce OCR, template matching ni semántica específica de EVE.
+
 ### Paquetes semánticos por target
 
 La Fase 6.3 introduce una capa de paquetes semánticos target-specific sobre el pipeline genérico. La selección es determinística y sale de la metadata del perfil de target, usando la clave `SemanticPackage`. Si no hay paquete configurado, el pipeline genérico sigue funcionando sin cambios.

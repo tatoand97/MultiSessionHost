@@ -6,6 +6,7 @@ using MultiSessionHost.Core.Interfaces;
 using MultiSessionHost.Core.Models;
 using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Preprocessing;
 using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
 using MultiSessionHost.Infrastructure.DependencyInjection;
@@ -50,6 +51,7 @@ public sealed class ScreenCaptureUiRefreshServiceTests
         var attachment = new DesktopSessionAttachment(sessionId, context.Target, process, window, null, clock.UtcNow);
         var refreshService = provider.GetRequiredService<ISessionUiRefreshService>();
         var screenSnapshotStore = provider.GetRequiredService<ISessionScreenSnapshotStore>();
+        var preprocessingStore = provider.GetRequiredService<ISessionFramePreprocessingStore>();
 
         var state = await refreshService.RefreshAsync(snapshot, context, attachment, CancellationToken.None);
         var storedSnapshot = await screenSnapshotStore.GetLatestAsync(sessionId, CancellationToken.None);
@@ -57,6 +59,8 @@ public sealed class ScreenCaptureUiRefreshServiceTests
         var regionStore = provider.GetRequiredService<ISessionScreenRegionStore>();
         var regionResolution = await regionStore.GetLatestAsync(sessionId, CancellationToken.None);
         var regionSummary = await regionStore.GetLatestSummaryAsync(sessionId, CancellationToken.None);
+        var preprocessing = await preprocessingStore.GetLatestAsync(sessionId, CancellationToken.None);
+        var preprocessingSummary = await preprocessingStore.GetLatestSummaryAsync(sessionId, CancellationToken.None);
 
         Assert.NotNull(state.RawSnapshotJson);
         Assert.Null(state.ProjectedTree);
@@ -89,6 +93,11 @@ public sealed class ScreenCaptureUiRefreshServiceTests
         Assert.Equal("window.full", regionResolution.Regions[0].RegionName);
         Assert.Equal("DefaultDesktopGridRegionLocator", regionSummary!.LocatorName);
         Assert.Equal(7, regionSummary.TotalRegionsRequested);
+        Assert.NotNull(preprocessing);
+        Assert.NotNull(preprocessingSummary);
+        Assert.True(preprocessing!.TotalArtifactCount >= 3);
+        Assert.True(preprocessing.SuccessfulArtifactCount >= 1);
+        Assert.Equal(storedSnapshot.Sequence, preprocessing.SourceSnapshotSequence);
     }
 
     [Fact]
@@ -175,6 +184,55 @@ public sealed class ScreenCaptureUiRefreshServiceTests
         Assert.Equal(firstSnapshot.Sequence + 1, secondSnapshot!.Sequence);
         Assert.Equal(2, secondSnapshot.PayloadByteLength);
     }
+
+    [Fact]
+    public async Task RefreshAsync_PreprocessingFailure_DoesNotCorruptSnapshotOrRegionState()
+    {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var options = CreateOptions();
+        var process = new DesktopProcessInfo(321, "ScreenApp", null, 456);
+        var window = new DesktopWindowInfo(456, 321, "Screen Fixture", true);
+        var capture = new WindowFrameCaptureResult(
+            new UiBounds(50, 60, 800, 600),
+            800,
+            600,
+            "image/png",
+            "Format32bppArgb",
+            [10, 20, 30],
+            "FakeCapture");
+
+        var services = new ServiceCollection();
+        services.AddSingleton(options);
+        services.AddMultiSessionHostRuntime();
+        services.AddSingleton<IClock>(clock);
+        services.AddSingleton<IProcessLocator>(new StubProcessLocator(process));
+        services.AddSingleton<IWindowLocator>(new StubWindowLocator(window));
+        services.AddSingleton<IWindowFrameCapture>(new StubWindowFrameCapture(capture));
+        services.AddSingleton<IFramePreprocessingService, ThrowingFramePreprocessingService>();
+        await using var provider = services.BuildServiceProvider();
+
+        var coordinator = provider.GetRequiredService<ISessionCoordinator>();
+        await coordinator.InitializeAsync(CancellationToken.None);
+
+        var sessionId = new SessionId("alpha");
+        var snapshot = coordinator.GetSession(sessionId)!;
+        var context = provider.GetRequiredService<IDesktopTargetProfileResolver>().Resolve(snapshot);
+        var attachment = new DesktopSessionAttachment(sessionId, context.Target, process, window, null, clock.UtcNow);
+        var refreshService = provider.GetRequiredService<ISessionUiRefreshService>();
+        var screenSnapshotStore = provider.GetRequiredService<ISessionScreenSnapshotStore>();
+        var regionStore = provider.GetRequiredService<ISessionScreenRegionStore>();
+
+        var state = await refreshService.RefreshAsync(snapshot, context, attachment, CancellationToken.None);
+        var storedSnapshot = await screenSnapshotStore.GetLatestAsync(sessionId, CancellationToken.None);
+        var regionResolution = await regionStore.GetLatestAsync(sessionId, CancellationToken.None);
+
+        Assert.NotNull(state.LastRefreshCompletedAtUtc);
+        Assert.NotNull(storedSnapshot);
+        Assert.NotNull(regionResolution);
+        Assert.Equal(1, storedSnapshot!.Sequence);
+        Assert.Equal(1, regionResolution!.SourceSnapshotSequence);
+    }
+
 
     private static SessionHostOptions CreateOptions() =>
         new()
@@ -278,5 +336,11 @@ public sealed class ScreenCaptureUiRefreshServiceTests
 
         public DesktopWindowInfo? GetWindowByHandle(long handle) =>
             _window is not null && _window.WindowHandle == handle ? _window : null;
+    }
+
+    private sealed class ThrowingFramePreprocessingService : IFramePreprocessingService
+    {
+        public ValueTask<SessionFramePreprocessingResult?> PreprocessLatestAsync(SessionId sessionId, ResolvedDesktopTargetContext context, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Frame preprocessing failed deterministically.");
     }
 }

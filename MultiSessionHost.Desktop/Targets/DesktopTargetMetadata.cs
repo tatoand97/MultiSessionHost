@@ -6,7 +6,12 @@ internal static class DesktopTargetMetadata
     public const string TickPath = "TickPath";
     public const string UiSnapshotPath = "UiSnapshotPath";
     public const string UiSource = "UiSource";
+    public const string ObservabilityBackend = "ObservabilityBackend";
     public const string RegionLayoutProfile = "RegionLayoutProfile";
+    public const string EnableFramePreprocessing = "EnableFramePreprocessing";
+    public const string FramePreprocessingProfile = "FramePreprocessingProfile";
+    public const string FramePreprocessingRegionSet = "FramePreprocessingRegionSet";
+    public const string FramePreprocessingIncludeThreshold = "FramePreprocessingIncludeThreshold";
     public const string SemanticPackage = "SemanticPackage";
     public const string BehaviorPack = "BehaviorPack";
     public const string UiClickNodePathTemplate = "UiClickNodePathTemplate";

@@ -19,6 +19,7 @@ using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
 using MultiSessionHost.Desktop.Observability;
+using MultiSessionHost.Desktop.Preprocessing;
 using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
 using MultiSessionHost.UiModel.Models;
@@ -454,6 +455,98 @@ public static class AdminApiEndpointRouteBuilderExtensions
                 }
 
                 var summaries = await screenRegionStore.GetAllLatestSummariesAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(summaries.Select(static summary => summary.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/preprocessing",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionFramePreprocessingStore preprocessingStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var result = await preprocessingStore.GetLatestAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return result is null ? Results.NotFound() : Results.Ok(result.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/sessions/{id}/preprocessing/summary",
+            async Task<IResult> (
+                string id,
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionCoordinator sessionCoordinator,
+                ISessionFramePreprocessingStore preprocessingStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                if (!TryParseSessionId(id, out var sessionId, out var error))
+                {
+                    return Results.BadRequest(new { Error = error });
+                }
+
+                if (sessionCoordinator.GetSession(sessionId) is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var summary = await preprocessingStore.GetLatestSummaryAsync(sessionId, cancellationToken).ConfigureAwait(false);
+                return summary is null ? Results.NotFound() : Results.Ok(summary.ToDto());
+            });
+
+        endpoints.MapGet(
+            "/preprocessing",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionFramePreprocessingStore preprocessingStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var results = await preprocessingStore.GetAllLatestAsync(cancellationToken).ConfigureAwait(false);
+                return Results.Ok(results.Select(static result => result.ToDto()).ToArray());
+            });
+
+        endpoints.MapGet(
+            "/preprocessing/summaries",
+            async Task<IResult> (
+                HttpContext httpContext,
+                IAdminAuthorizationPolicy authorizationPolicy,
+                ISessionFramePreprocessingStore preprocessingStore,
+                CancellationToken cancellationToken) =>
+            {
+                if (!await IsAuthorizedAsync(httpContext, authorizationPolicy, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Unauthorized();
+                }
+
+                var summaries = await preprocessingStore.GetAllLatestSummariesAsync(cancellationToken).ConfigureAwait(false);
                 return Results.Ok(summaries.Select(static summary => summary.ToDto()).ToArray());
             });
 

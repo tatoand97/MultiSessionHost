@@ -15,6 +15,7 @@ using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Policy;
 using MultiSessionHost.Desktop.PolicyControl;
 using MultiSessionHost.Desktop.Risk;
+using MultiSessionHost.Desktop.Preprocessing;
 using MultiSessionHost.Desktop.Regions;
 using MultiSessionHost.Desktop.Snapshots;
 
@@ -213,6 +214,77 @@ public static class DtoMappingExtensions
             summary.TotalRegionsRequested,
             summary.MatchedRegionCount,
             summary.MissingRegionCount,
+            summary.Warnings,
+            summary.Errors,
+            summary.Metadata);
+
+    public static ProcessedFrameArtifactDto ToDto(this ProcessedFrameArtifact artifact) =>
+        new(
+            artifact.ArtifactName,
+            artifact.ArtifactKind,
+            artifact.SourceSnapshotSequence,
+            artifact.SourceRegionName,
+            artifact.OutputWidth,
+            artifact.OutputHeight,
+            artifact.ImageFormat,
+            artifact.PayloadByteLength,
+            artifact.PreprocessingSteps,
+            artifact.Warnings,
+            artifact.Errors,
+            artifact.Metadata,
+            artifact.ImageBytes);
+
+    public static ProcessedFrameArtifactSummaryDto ToDto(this ProcessedFrameArtifactSummary artifact) =>
+        new(
+            artifact.ArtifactName,
+            artifact.ArtifactKind,
+            artifact.SourceSnapshotSequence,
+            artifact.SourceRegionName,
+            artifact.OutputWidth,
+            artifact.OutputHeight,
+            artifact.ImageFormat,
+            artifact.PayloadByteLength,
+            artifact.PreprocessingSteps,
+            artifact.Warnings,
+            artifact.Errors,
+            artifact.Metadata);
+
+    public static SessionFramePreprocessingResultDto ToDto(this SessionFramePreprocessingResult result) =>
+        new(
+            result.SessionId.Value,
+            result.ProcessedAtUtc,
+            result.SourceSnapshotSequence,
+            result.SourceSnapshotCapturedAtUtc,
+            result.SourceRegionResolutionSequence,
+            result.SourceRegionResolutionResolvedAtUtc,
+            result.TargetKind.ToString(),
+            result.ObservabilityBackend,
+            result.CaptureBackend,
+            result.PreprocessingProfileName,
+            result.TotalArtifactCount,
+            result.SuccessfulArtifactCount,
+            result.FailedArtifactCount,
+            result.Artifacts.Select(static artifact => artifact.ToDto()).ToArray(),
+            result.Warnings,
+            result.Errors,
+            result.Metadata);
+
+    public static SessionFramePreprocessingSummaryDto ToDto(this SessionFramePreprocessingSummary summary) =>
+        new(
+            summary.SessionId.Value,
+            summary.ProcessedAtUtc,
+            summary.SourceSnapshotSequence,
+            summary.SourceSnapshotCapturedAtUtc,
+            summary.SourceRegionResolutionSequence,
+            summary.SourceRegionResolutionResolvedAtUtc,
+            summary.TargetKind.ToString(),
+            summary.ObservabilityBackend,
+            summary.CaptureBackend,
+            summary.PreprocessingProfileName,
+            summary.TotalArtifactCount,
+            summary.SuccessfulArtifactCount,
+            summary.FailedArtifactCount,
+            summary.Artifacts.Select(static artifact => artifact.ToDto()).ToArray(),
             summary.Warnings,
             summary.Errors,
             summary.Metadata);

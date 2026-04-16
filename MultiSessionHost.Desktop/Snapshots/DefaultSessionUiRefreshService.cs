@@ -12,6 +12,7 @@ using MultiSessionHost.Desktop.Interfaces;
 using MultiSessionHost.Desktop.Memory;
 using MultiSessionHost.Desktop.Observability;
 using MultiSessionHost.Desktop.Models;
+using MultiSessionHost.Desktop.Preprocessing;
 using MultiSessionHost.Desktop.Persistence;
 using MultiSessionHost.Desktop.Recovery;
 using MultiSessionHost.Desktop.Policy;
@@ -51,6 +52,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly ISessionRecoveryStateStore _recoveryStateStore;
     private readonly ISessionScreenSnapshotStore _screenSnapshotStore;
     private readonly IScreenRegionResolutionService _screenRegionResolutionService;
+    private readonly IFramePreprocessingService _framePreprocessingService;
     private readonly IObservabilityRecorder _observabilityRecorder;
     private readonly IServiceProvider _serviceProvider;
     private readonly IClock _clock;
@@ -81,6 +83,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         ISessionRecoveryStateStore recoveryStateStore,
         ISessionScreenSnapshotStore screenSnapshotStore,
         IScreenRegionResolutionService screenRegionResolutionService,
+        IFramePreprocessingService framePreprocessingService,
         IObservabilityRecorder observabilityRecorder,
         IServiceProvider serviceProvider,
         IClock clock,
@@ -110,6 +113,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _recoveryStateStore = recoveryStateStore;
         _screenSnapshotStore = screenSnapshotStore;
         _screenRegionResolutionService = screenRegionResolutionService;
+        _framePreprocessingService = framePreprocessingService;
         _observabilityRecorder = observabilityRecorder;
         _serviceProvider = serviceProvider;
         _clock = clock;
@@ -186,6 +190,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
             if (pendingScreenSnapshot is not null)
             {
                 await _screenRegionResolutionService.ResolveLatestAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
+                await RunFramePreprocessingIfNeededAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
             }
 
             return updatedUiState;
@@ -279,6 +284,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                 if (pendingScreenSnapshot is not null)
                 {
                     await _screenRegionResolutionService.ResolveLatestAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
+                    await RunFramePreprocessingIfNeededAsync(snapshot.SessionId, context, cancellationToken).ConfigureAwait(false);
                 }
             }
             else
@@ -588,6 +594,42 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
             sessionId,
             current => _domainStateProjectionService.ProjectRefreshFailure(current, exception, _clock.UtcNow),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask RunFramePreprocessingIfNeededAsync(
+        SessionId sessionId,
+        ResolvedDesktopTargetContext context,
+        CancellationToken cancellationToken)
+    {
+        if (context.Target.Kind != DesktopTargetKind.ScreenCaptureDesktop)
+        {
+            return;
+        }
+
+        var preprocessingEnabled = !context.Target.Metadata.TryGetValue(DesktopTargetMetadata.EnableFramePreprocessing, out var rawValue)
+            || !string.Equals(rawValue, bool.FalseString, StringComparison.OrdinalIgnoreCase);
+
+        if (!preprocessingEnabled)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = await _framePreprocessingService.PreprocessLatestAsync(sessionId, context, cancellationToken).ConfigureAwait(false);
+
+            if (result is not null && result.FailedArtifactCount > 0)
+            {
+                _logger.LogWarning(
+                    "Frame preprocessing completed with failures for session '{SessionId}'. Failed artifacts: {FailedArtifactCount}.",
+                    sessionId,
+                    result.FailedArtifactCount);
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Frame preprocessing failed for session '{SessionId}' but UI refresh will continue.", sessionId);
+        }
     }
 
     private void EnsureUiSnapshotsEnabled()
