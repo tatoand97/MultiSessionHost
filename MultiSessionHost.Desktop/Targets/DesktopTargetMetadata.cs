@@ -7,6 +7,7 @@ internal static class DesktopTargetMetadata
     public const string UiSnapshotPath = "UiSnapshotPath";
     public const string UiSource = "UiSource";
     public const string SemanticPackage = "SemanticPackage";
+    public const string BehaviorPack = "BehaviorPack";
     public const string UiClickNodePathTemplate = "UiClickNodePathTemplate";
     public const string UiInvokeNodePathTemplate = "UiInvokeNodePathTemplate";
     public const string UiSetTextNodePathTemplate = "UiSetTextNodePathTemplate";

@@ -41,6 +41,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
     private readonly ISessionActivityStateStore _activityStateStore;
     private readonly ISessionOperationalMemoryStore _operationalMemoryStore;
     private readonly ISessionOperationalMemoryUpdater _operationalMemoryUpdater;
+    private readonly ITargetBehaviorPackPlanner _targetBehaviorPackPlanner;
     private readonly IRuntimePersistenceCoordinator _runtimePersistenceCoordinator;
     private readonly ISessionRecoveryStateStore _recoveryStateStore;
     private readonly IObservabilityRecorder _observabilityRecorder;
@@ -68,6 +69,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         ISessionActivityStateStore activityStateStore,
         ISessionOperationalMemoryStore operationalMemoryStore,
         ISessionOperationalMemoryUpdater operationalMemoryUpdater,
+        ITargetBehaviorPackPlanner targetBehaviorPackPlanner,
         IRuntimePersistenceCoordinator runtimePersistenceCoordinator,
         ISessionRecoveryStateStore recoveryStateStore,
         IObservabilityRecorder observabilityRecorder,
@@ -94,6 +96,7 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
         _activityStateStore = activityStateStore;
         _operationalMemoryStore = operationalMemoryStore;
         _operationalMemoryUpdater = operationalMemoryUpdater;
+        _targetBehaviorPackPlanner = targetBehaviorPackPlanner;
         _runtimePersistenceCoordinator = runtimePersistenceCoordinator;
         _recoveryStateStore = recoveryStateStore;
         _observabilityRecorder = observabilityRecorder;
@@ -316,6 +319,8 @@ public sealed class DefaultSessionUiRefreshService : ISessionUiRefreshService
                     cancellationToken).ConfigureAwait(false);
 
             await _policyEngine.EvaluateAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
+
+            _ = await _targetBehaviorPackPlanner.TryPlanAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false);
 
             var updatedDomainState = await _sessionDomainStateStore.GetAsync(snapshot.SessionId, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"Domain state for session '{snapshot.SessionId}' was not refreshed.");

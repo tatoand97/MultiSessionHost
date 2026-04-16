@@ -125,6 +125,14 @@ Distinción importante:
   - interpreta presencia/local, ruta de viaje, overview, probe scanner, táctico y seguridad/hide desde el árbol UIA normalizado
   - alimenta candidaturas de riesgo y proyección de dominio sin introducir lógica de comportamiento
   - no usa OCR, CV ni decisiones de combate/autopiloto; solo semántica derivada del UI tree y metadata
+- `ITargetBehaviorPackResolver` y `ITargetBehaviorPack`
+  - seleccionan behavior packs por metadata de perfil, por ejemplo `BehaviorPack = EveLikeTravelAutopilot`
+  - consumen semántica, riesgo, dominio, policy control, recovery, actividad y memoria operacional
+  - emiten `DecisionPlan` acotados y razones inspectables; no ejecutan UIA ni comandos nativos directamente
+- Behavior pack `EveLikeTravelAutopilot`
+  - primer pack concreto de Fase 7.1 para progresión de ruta/autopiloto
+  - usa el paquete semántico `EveLike` como señal primaria y conserva el core genérico
+  - bloquea o espera ante policy pause, plan de policy bloqueante, recovery/backoff/circuit, riesgo alto o transición activa
 - `IRiskClassificationPipeline`
   - capa dedicada encima de la extracción semántica
   - construye candidatos de riesgo, aplica reglas configuradas y persiste `RiskAssessmentResult`
@@ -199,6 +207,9 @@ Worker session
   -> decision plan aggregator
   -> DecisionPlan
   -> decision plan store
+  -> target behavior pack resolver/planner
+  -> bounded behavior DecisionPlan when a pack is selected
+  -> decision plan store
   -> activity state evaluation
   -> SessionActivityStateStore
   -> recovery snapshot/history update
@@ -225,6 +236,26 @@ El primer paquete concreto es `EveLike`. Su objetivo es enriquecer la inspecció
 El resultado del paquete se expone en los endpoints semánticos existentes, via `UiSemanticExtractionResult` y sus DTOs. Esas señales luego alimentan `IRiskCandidateBuilder` e `ISessionDomainStateProjectionService` de manera aditiva. La fase 6.3 no agrega behavior packs ni toma decisiones de combate, navegación o autopiloto.
 
 La observabilidad reutiliza `RuntimeObservability` y `IObservabilityRecorder` para registrar selección, inicio, éxito, fallo y contadores del paquete semántico.
+
+### Behavior packs por target (Fase 7.1)
+
+Fase 7.1 agrega una capa target-specific de planificación encima del core genérico. La selección es determinística y sale de la metadata del target/profile con la clave `BehaviorPack`. Si no hay metadata, el runtime conserva el flujo genérico: policy engine, `DecisionPlan`, activity state, execution bridge, memoria y Admin API siguen funcionando sin behavior pack.
+
+El primer pack concreto es `EveLikeTravelAutopilot`. Requiere el paquete semántico `EveLike` y consume su `TravelRouteSnapshot`, señales de seguridad, presencia/local y snapshot táctico. También consume `SessionDomainState`, `RiskAssessmentResult`, policy control, el último `DecisionPlan` de policy, recovery state, activity state y memoria operacional. El pack no ejecuta comandos UIA directamente: emite un `DecisionPlan` pequeño con directivas `Navigate` o `Wait`, y esas directivas se ejecutan por el puente existente `DecisionPlan -> IDecisionPlanExecutor -> UiCommandExecutor`.
+
+La interpretación de viaje es explícita e inspectable mediante razones y metadata:
+
+- `NoRoute` y `Arrived` no producen comandos de progreso.
+- `RouteReady` produce como máximo una acción concreta, por ejemplo seleccionar el siguiente waypoint, activar autopiloto o invocar un control de viaje.
+- `AwaitingTravelTransition` y `AwaitingRouteProgress` evitan repetir comandos mientras la ruta está cambiando, la actividad está viajando/arribando o una acción reciente sigue dentro de `RepeatSuppressionWindowMs`.
+- `BlockedByPolicy`, `BlockedByRecovery` y `BlockedByRisk` bloquean el avance automático. Esta fase no inicia hide/safe workflows.
+- `RefreshRequired` produce un plan de refresh cuando el árbol proyectado falta o recovery marca snapshot/drift.
+
+La memoria operacional guarda solo metadata compacta de viaje: fingerprint de ruta, destino, ubicación actual, siguiente waypoint, última acción, timestamp, progreso observado, ticks sin cambio y llegada detectada. Esto evita spam de comandos y permite que un cambio real de ubicación/progreso libere nuevamente la planificación.
+
+La observabilidad reutiliza `IObservabilityRecorder`: se registran actividades `behavior.pack`, decision plans, razones `behavior.travel.*` y metadata de estado/pack. La inspección Admin API se apoya en las superficies existentes de decision plan, semántica, dominio, memoria, observabilidad y recovery; AdminDesktop no se reconstruye.
+
+Límites actuales de 7.1: solo planifica travel/autopilot. No agrega combate/anomalías, priorización táctica, OCR/CV, ni flujos de hide/safe. Las condiciones inseguras bloquean o pausan la planificación de viaje en vez de disparar una rutina de escape.
 
 ## DecisionPlan execution bridge (Fase 2.4)
 

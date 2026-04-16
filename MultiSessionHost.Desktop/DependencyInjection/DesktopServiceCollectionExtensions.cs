@@ -127,6 +127,7 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionDecisionPlanExecutionStore, InMemorySessionDecisionPlanExecutionStore>();
         services.AddSingleton<ISessionControlGateway, DefaultSessionControlGateway>();
         services.AddSingleton<IDecisionDirectiveHandler, ObserveDirectiveHandler>();
+        services.AddSingleton<IDecisionDirectiveHandler, NavigateDirectiveHandler>();
         services.AddSingleton<IDecisionDirectiveHandler, WaitDirectiveHandler>();
         services.AddSingleton<IDecisionDirectiveHandler, PauseActivityDirectiveHandler>();
         services.AddSingleton<IDecisionDirectiveHandler, AbortDirectiveHandler>();
@@ -138,6 +139,10 @@ public static class DesktopServiceCollectionExtensions
         services.AddSingleton<ISessionOperationalMemoryReader>(static serviceProvider => serviceProvider.GetRequiredService<InMemorySessionOperationalMemoryStore>());
         services.AddSingleton<ISessionOperationalMemoryUpdater, DefaultSessionOperationalMemoryUpdater>();
         services.AddSingleton<IPolicyMemoryContextBuilder, DefaultPolicyMemoryContextBuilder>();
+        services.AddSingleton<ITravelAutopilotActionSelector, TravelAutopilotActionSelector>();
+        services.AddSingleton<ITargetBehaviorPack, EveLikeTravelAutopilotBehaviorPack>();
+        services.AddSingleton<ITargetBehaviorPackResolver, DefaultTargetBehaviorPackResolver>();
+        services.AddSingleton<ITargetBehaviorPackPlanner, DefaultTargetBehaviorPackPlanner>();
         services.AddSingleton<IRuntimePersistenceBackend>(
             static serviceProvider =>
             {
